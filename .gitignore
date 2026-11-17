@@ -1,0 +1,29 @@
+# The app's local data (settings with folder paths, the user's project, caches, the built patch)
+/backend/data/
+
+# Game files never go in this repository
+*.big
+*.bh
+*.db
+*.dds
+*.rx3
+*.ttf
+*.sma
+*.sh
+*.dll
+*.exe
+*.pdb
+*.zip
+
+# Tooling
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+dist/
+.vite/
+/backend/build/
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/
+/desktop/release/
