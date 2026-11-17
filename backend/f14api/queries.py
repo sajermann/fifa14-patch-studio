@@ -4,11 +4,43 @@ import json
 import math
 import sqlite3
 
-from f14mod import catalog, fifa14
+from f14mod import catalog, fields, fifa14
 
 PAGE_SIZES = (25, 50, 100)
 DEFAULT_PAGE_SIZE = 50
 FALLBACK_LANG = 'eng_us'
+
+
+def _saved_sql(kind: str, alias: str, field: str) -> str:
+    return (f"(SELECT json_extract(value, '$') FROM p.fields WHERE kind = '{kind}' AND id = {alias}.id "
+            f"AND field = '{field}')")
+
+
+# the originals and what the project created, as one table each (temporary views of this connection)
+VIEWS = [
+    f"""CREATE TEMP VIEW v_nations AS
+        SELECT id, name, 0 AS is_new, has_flag, search FROM nations
+        UNION ALL
+        SELECT c.id, COALESCE(
+            (SELECT text FROM p.country_names WHERE country_id = c.id AND key = 'full' AND lang = '*'),
+            (SELECT text FROM p.country_names WHERE country_id = c.id AND key = 'full' ORDER BY lang LIMIT 1),
+            'Country ' || c.id), 1, 1, ''
+        FROM p.created c WHERE c.kind = 'country'""",
+    f"""CREATE TEMP VIEW v_leagues AS
+        SELECT l.id, l.db_name, COALESCE({_saved_sql('league', 'l', 'countryid')}, l.country_id) AS country_id,
+               COALESCE({_saved_sql('league', 'l', 'level')}, l.level) AS level, l.has_logo, l.search, l.raw,
+               0 AS is_new
+        FROM leagues l
+        UNION ALL
+        SELECT c.id, {_saved_sql('league', 'c', 'leaguename')}, {_saved_sql('league', 'c', 'countryid')},
+               COALESCE({_saved_sql('league', 'c', 'level')}, 1), 0, '', '{{}}', 1
+        FROM p.created c WHERE c.kind = 'league'""",
+    """CREATE TEMP VIEW v_league_teams AS
+        SELECT league_id, team_id, 0 AS ord FROM league_teams
+        WHERE league_id NOT IN (SELECT league_id FROM p.league_members_set)
+        UNION ALL
+        SELECT league_id, team_id, ord FROM p.league_members""",
+]
 
 TEAM_NAME_KEYS = list(fifa14.TEAM_NAME_STRINGS)  # full, abbr15, abbr10, abbr7, abbr3, commentary
 LEAGUE_NAME_KEYS = list(fifa14.LEAGUE_NAME_STRINGS)
@@ -19,6 +51,8 @@ def connect(catalog_path: str, project_path: str) -> sqlite3.Connection:
     con.row_factory = sqlite3.Row
     con.create_function('fold', 1, catalog.fold, deterministic=True)
     con.execute('ATTACH DATABASE ? AS p', (project_path,))
+    for view in VIEWS:
+        con.execute(view)
     return con
 
 
@@ -33,15 +67,35 @@ def _team_name(key: str, alias: str = 't') -> str:
         {alias}.db_name)"""
 
 
-def _league_name(alias: str = 'l') -> str:
+def _league_name(alias: str = 'l', key: str = 'full') -> str:
     return f"""COALESCE(
-        (SELECT text FROM names WHERE kind = 'league' AND id = {alias}.id AND key = 'full' AND lang = :lang),
-        (SELECT text FROM names WHERE kind = 'league' AND id = {alias}.id AND key = 'full' AND lang = '{FALLBACK_LANG}'),
-        {alias}.db_name)"""
+        (SELECT text FROM p.league_names WHERE league_id = {alias}.id AND key = '{key}' AND lang = :lang),
+        (SELECT text FROM p.league_names WHERE league_id = {alias}.id AND key = '{key}' AND lang = '*'),
+        (SELECT text FROM names WHERE kind = 'league' AND id = {alias}.id AND key = '{key}' AND lang = :lang),
+        (SELECT text FROM names WHERE kind = 'league' AND id = {alias}.id AND key = '{key}' AND lang = '{FALLBACK_LANG}'),
+        {_saved('league', alias, 'leaguename')}, {alias}.db_name)"""
+
+
+def _saved(kind: str, alias: str, field: str) -> str:
+    """SQL for one saved field of the project (the value as SQL text/number)."""
+    return f"(SELECT json_extract(value, '$') FROM p.fields WHERE kind = '{kind}' AND id = {alias}.id "            f"AND field = '{field}')"
+
+
+def _edited(kind: str, alias: str) -> str:
+    return f"EXISTS (SELECT 1 FROM p.edited WHERE kind = '{kind}' AND id = {alias}.id)"
+
+
+def _player_name(alias: str = 'pl') -> str:
+    """The shown name: the common name (saved, then the game's), else first + last (saved or the game's)."""
+    first, last = _saved('player', alias, 'name.first'), _saved('player', alias, 'name.last')
+    return f"""COALESCE({_saved('player', alias, 'name.common')},
+        CASE WHEN {alias}.common IS NULL AND ({first} IS NOT NULL OR {last} IS NOT NULL)
+             THEN TRIM(COALESCE({first}, {alias}.first, '') || ' ' || COALESCE({last}, {alias}.last, '')) END,
+        {alias}.name)"""
 
 
 def _first_league(team_alias: str = 't') -> str:
-    return f'(SELECT MIN(league_id) FROM league_teams WHERE team_id = {team_alias}.id)'
+    return f'(SELECT MIN(league_id) FROM v_league_teams WHERE team_id = {team_alias}.id)'
 
 
 def _search(column: str, q: str, params: dict) -> str:
@@ -75,13 +129,18 @@ def _page(con, select: str, where: list[str], params: dict, sorts: dict[str, str
 
 # ---- lists ----------------------------------------------------------------------------------------------------------
 
-def leagues(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAULT_PAGE_SIZE) -> dict:
+def leagues(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAULT_PAGE_SIZE,
+            country: int | None = None) -> dict:
     params: dict = {'lang': lang}
     select = f"""SELECT l.id, {_league_name()} AS name, l.db_name, l.level, l.country_id,
-                 (SELECT name FROM nations WHERE id = l.country_id) AS country, l.has_logo,
-                 (SELECT COUNT(*) FROM league_teams WHERE league_id = l.id) AS team_count, l.search AS search
-                 FROM leagues l"""
+                 (SELECT name FROM v_nations WHERE id = l.country_id) AS country, l.has_logo, l.is_new,
+                 (SELECT COUNT(*) FROM v_league_teams WHERE league_id = l.id) AS team_count,
+                 {_edited('league', 'l')} AS edited, l.search AS search
+                 FROM v_leagues l"""
     where = []
+    if country is not None:
+        params['country'] = country
+        where.append('country_id = :country')
     if q.strip():
         where.append(_search('fold(name) || \' \' || search', q, params))
     sorts = {'name': 'fold(name)', 'id': 'id', 'level': 'level', 'country': 'fold(country)',
@@ -89,6 +148,9 @@ def leagues(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAUL
     out = _page(con, select, where, params, sorts, sort, direction, ('name', 'asc'), page, size)
     for r in out['items']:
         r.pop('search', None)
+        r['edited'] = bool(r['edited'])
+        r['is_new'] = bool(r['is_new'])
+        r['has_logo'] = bool(r['has_logo'])
     return out
 
 
@@ -98,9 +160,9 @@ def teams(con, lang: str, q='', league: int | None = None, edited: bool | None =
     select = f"""SELECT t.id, {_team_name('full')} AS name, {_team_name('abbr15')} AS abbr15,
                  {_team_name('abbr3')} AS abbr3, t.overall, t.attack, t.midfield, t.defense, t.color, t.has_crest,
                  t.national_of, {_first_league()} AS league_id,
-                 (SELECT {_league_name('l')} FROM leagues l WHERE l.id = {_first_league()}) AS league,
+                 (SELECT {_league_name('l')} FROM v_leagues l WHERE l.id = {_first_league()}) AS league,
                  (SELECT COUNT(*) FROM team_players WHERE team_id = t.id) AS player_count,
-                 EXISTS (SELECT 1 FROM p.edited WHERE kind = 'team' AND id = t.id) AS edited,
+                 {_edited('team', 't')} AS edited,
                  t.search AS search
                  FROM teams t"""
     where = []
@@ -109,7 +171,7 @@ def teams(con, lang: str, q='', league: int | None = None, edited: bool | None =
         where.append('id = :only')
     if league is not None:
         params['league'] = league
-        where.append('id IN (SELECT team_id FROM league_teams WHERE league_id = :league)')
+        where.append('id IN (SELECT team_id FROM v_league_teams WHERE league_id = :league)')
     if edited is not None:
         where.append('edited = 1' if edited else 'edited = 0')
     if q.strip():
@@ -130,10 +192,11 @@ def players(con, lang: str, q='', team: int | None = None, position: int | None 
     params: dict = {'lang': lang}
     club = '(SELECT MIN(tp.team_id) FROM team_players tp JOIN teams x ON x.id = tp.team_id ' \
            'WHERE tp.player_id = pl.id AND x.national_of IS NULL)'
-    select = f"""SELECT pl.id, pl.name, pl.overall, pl.potential, pl.position, pl.birthdate, pl.height,
-                 pl.nationality, (SELECT name FROM nations WHERE id = pl.nationality) AS nationality_name,
+    select = f"""SELECT pl.id, {_player_name()} AS name, pl.overall, pl.potential, pl.position, pl.birthdate, pl.height,
+                 pl.nationality, (SELECT name FROM v_nations WHERE id = pl.nationality) AS nationality_name,
                  pl.has_photo, {club} AS team_id,
-                 (SELECT {_team_name('abbr15')} FROM teams t WHERE t.id = {club}) AS team, pl.search AS search
+                 (SELECT {_team_name('abbr15')} FROM teams t WHERE t.id = {club}) AS team,
+                 {_edited('player', 'pl')} AS edited, pl.search || ' ' || fold({_player_name()}) AS search_all
                  FROM players pl"""
     where = []
     if team is not None:
@@ -143,13 +206,15 @@ def players(con, lang: str, q='', team: int | None = None, position: int | None 
         params['position'] = position
         where.append('position = :position')
     if q.strip():
-        where.append(_search('search', q, params))
+        where.append(_search('search_all', q, params))
     sorts = {'name': 'fold(name)', 'id': 'id', 'overall': 'overall', 'potential': 'potential',
              'position': 'position', 'team': 'fold(team)', 'height': 'height', 'birthdate': 'birthdate'}
     out = _page(con, select, where, params, sorts, sort, direction, ('overall', 'desc'), page, size)
     for r in out['items']:
         r.pop('search', None)
+        r.pop('search_all', None)
         r['has_photo'] = bool(r['has_photo'])
+        r['edited'] = bool(r['edited'])
         r['position_name'] = fifa14.position_name(r['position'])
     return out
 
@@ -167,16 +232,36 @@ def _names(con, kind: str, oid: int) -> dict[str, dict[str, str]]:
     return out
 
 
+def _project_fields(con, kind: str, oid: int) -> dict:
+    return {r['field']: json.loads(r['value'])
+            for r in con.execute('SELECT field, value FROM p.fields WHERE kind = ? AND id = ?', (kind, oid))}
+
+
+def _project_names(con, kind: str, oid: int) -> dict[str, dict[str, str]]:
+    table, column = {'team': ('team_names', 'team_id'), 'league': ('league_names', 'league_id'),
+                     'country': ('country_names', 'country_id')}[kind]
+    out: dict[str, dict[str, str]] = {}
+    for r in con.execute(f'SELECT key, lang, text FROM p.{table} WHERE {column} = ?', (oid,)):
+        out.setdefault(r['key'], {})[r['lang']] = r['text']
+    return out
+
+
+def _form(con, kind: str, oid: int, raw: dict, names: dict | None = None) -> dict:
+    """What an edit screen needs: the field specs, the game's values and the project's."""
+    return {'fields': fields.specs(kind), 'values': fields.original_values(kind, raw, names),
+            'saved': _project_fields(con, kind, oid),
+            'edited': bool(con.execute('SELECT 1 FROM p.edited WHERE kind = ? AND id = ?', (kind, oid)).fetchone())}
+
+
 def team(con, lang: str, tid: int) -> dict | None:
     row = con.execute('SELECT * FROM teams WHERE id = ?', (tid,)).fetchone()
     if not row:
         return None
     head = teams(con, lang, only=tid)['items'][0]
-    saved: dict[str, dict[str, str]] = {}
-    for r in con.execute('SELECT key, lang, text FROM p.team_names WHERE team_id = ?', (tid,)):
-        saved.setdefault(r['key'], {})[r['lang']] = r['text']
+    saved = _project_names(con, 'team', tid)
+    raw = json.loads(row['raw'])
     roster = [dict(r) for r in con.execute(
-        """SELECT pl.id, pl.name, pl.overall, pl.position, tp.jersey, tp.position AS link_position, pl.has_photo
+        f"""SELECT pl.id, {_player_name()} AS name, pl.overall, pl.position, tp.jersey, tp.position AS link_position, pl.has_photo
            FROM team_players tp JOIN players pl ON pl.id = tp.player_id WHERE tp.team_id = ?
            ORDER BY tp.position, pl.overall DESC""", (tid,))]
     for r in roster:
@@ -184,30 +269,38 @@ def team(con, lang: str, tid: int) -> dict | None:
         r['link_position_name'] = fifa14.position_name(r['link_position'])
         r['has_photo'] = bool(r['has_photo'])
     leagues_of = [dict(r) for r in con.execute(
-        f'SELECT l.id, {_league_name()} AS name FROM leagues l WHERE l.id IN '
-        '(SELECT league_id FROM league_teams WHERE team_id = :tid)', {'lang': lang, 'tid': tid})]
+        f'SELECT l.id, {_league_name()} AS name, l.is_new FROM v_leagues l WHERE l.id IN '
+        '(SELECT league_id FROM v_league_teams WHERE team_id = :tid)', {'lang': lang, 'tid': tid})]
     return {**head, 'db_name': row['db_name'], 'name_keys': TEAM_NAME_KEYS, 'languages': languages(con),
             'original_names': _names(con, 'team', tid), 'saved_names': saved, 'roster': roster,
-            'leagues': leagues_of, 'raw': json.loads(row['raw'])}
+            'leagues': leagues_of, **_form(con, 'team', tid, raw), 'raw': raw}
 
 
 def league(con, lang: str, lid: int) -> dict | None:
-    row = con.execute('SELECT * FROM leagues WHERE id = ?', (lid,)).fetchone()
+    row = con.execute('SELECT * FROM v_leagues WHERE id = ?', (lid,)).fetchone()
     if not row:
         return None
     head = con.execute(f"""SELECT l.id, {_league_name()} AS name, l.level, l.country_id,
-                           (SELECT name FROM nations WHERE id = l.country_id) AS country, l.has_logo
-                           FROM leagues l WHERE l.id = :lid""", {'lang': lang, 'lid': lid}).fetchone()
-    return {**dict(head), 'db_name': row['db_name'], 'has_logo': bool(row['has_logo']),
-            'names': _names(con, 'league', lid), 'name_keys': LEAGUE_NAME_KEYS,
-            'teams': teams(con, lang, league=lid, size=100)['items'], 'raw': json.loads(row['raw'])}
+                           (SELECT name FROM v_nations WHERE id = l.country_id) AS country, l.has_logo, l.is_new
+                           FROM v_leagues l WHERE l.id = :lid""", {'lang': lang, 'lid': lid}).fetchone()
+    raw = json.loads(row['raw'])
+    original = _names(con, 'league', lid)
+    team_ids = [r[0] for r in con.execute(
+        'SELECT team_id FROM v_league_teams WHERE league_id = ? ORDER BY ord, team_id', (lid,))]
+    custom = con.execute('SELECT 1 FROM p.league_members_set WHERE league_id = ?', (lid,)).fetchone() is not None
+    return {**dict(head), 'db_name': row['db_name'], 'has_logo': bool(row['has_logo']), 'is_new': bool(head['is_new']),
+            'names': original, 'original_names': original, 'saved_names': _project_names(con, 'league', lid),
+            'name_keys': LEAGUE_NAME_KEYS, 'languages': languages(con), 'team_ids': team_ids,
+            'teams_changed': custom, 'teams': teams(con, lang, league=lid, size=100)['items'],
+            **_form(con, 'league', lid, raw), 'raw': raw}
 
 
 def player(con, lang: str, pid: int) -> dict | None:
-    row = con.execute('SELECT * FROM players WHERE id = ?', (pid,)).fetchone()
+    row = con.execute(f'SELECT pl.*, {_player_name()} AS shown FROM players pl WHERE pl.id = ?', (pid,)).fetchone()
     if not row:
         return None
     raw = json.loads(row['raw'])
+    names = {k: row[k] for k in ('first', 'last', 'common', 'jersey_name') if row[k]}
     links = [dict(r) for r in con.execute(
         f"""SELECT t.id, {_team_name('abbr15')} AS name, tp.jersey, tp.position, t.national_of
             FROM team_players tp JOIN teams t ON t.id = tp.team_id WHERE tp.player_id = :pid""",
@@ -215,14 +308,79 @@ def player(con, lang: str, pid: int) -> dict | None:
     for r in links:
         r['position_name'] = fifa14.position_name(r['position'])
     return {
-        'id': pid, 'name': row['name'],
-        'names': {k: row[k] for k in ('first', 'last', 'common', 'jersey_name') if row[k]},
+        'id': pid, 'name': row['shown'], 'names': names,
         'overall': row['overall'], 'potential': row['potential'], 'position': row['position'],
         'position_name': fifa14.position_name(row['position']), 'birthdate': row['birthdate'],
         'height': row['height'], 'weight': raw.get('weight'), 'nationality': row['nationality'],
-        'nationality_name': (con.execute('SELECT name FROM nations WHERE id = ?', (row['nationality'],)).fetchone()
+        'nationality_name': (con.execute('SELECT name FROM v_nations WHERE id = ?', (row['nationality'],)).fetchone()
                              or [None])[0],
         'has_photo': bool(row['has_photo']),
         'attributes': {name: raw[col] for col, name in fifa14.ATTRIBUTES.items() if col in raw},
-        'teams': links, 'raw': raw,
+        'teams': links, **_form(con, 'player', pid, raw, names), 'raw': raw,
     }
+
+
+# ---- countries ------------------------------------------------------------------------------------------------------
+
+COUNTRY_NAME_KEYS = list(fifa14.COUNTRY_NAME_STRINGS)
+
+
+def _country_name(alias: str = 'n') -> str:
+    return f"""COALESCE(
+        (SELECT text FROM p.country_names WHERE country_id = {alias}.id AND key = 'full' AND lang = :lang),
+        (SELECT text FROM p.country_names WHERE country_id = {alias}.id AND key = 'full' AND lang = '*'),
+        (SELECT text FROM names WHERE kind = 'country' AND id = {alias}.id AND key = 'full' AND lang = :lang),
+        (SELECT text FROM names WHERE kind = 'country' AND id = {alias}.id AND key = 'full' AND lang = '{FALLBACK_LANG}'),
+        {alias}.name)"""
+
+
+def countries(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAULT_PAGE_SIZE,
+              only: int | None = None) -> dict:
+    params: dict = {'lang': lang}
+    select = f"""SELECT n.id, {_country_name()} AS name, n.is_new, n.has_flag,
+                 COALESCE({_saved('country', 'n', 'flag_from')}, n.id) AS flag_id,
+                 (SELECT COUNT(*) FROM v_leagues WHERE country_id = n.id) AS league_count,
+                 {_edited('country', 'n')} AS edited, n.search AS search
+                 FROM v_nations n"""
+    where = []
+    if only is not None:
+        params['only'] = only
+        where.append('id = :only')
+    if q.strip():
+        where.append(_search("fold(name) || ' ' || id || ' ' || search", q, params))
+    sorts = {'name': 'fold(name)', 'id': 'id', 'league_count': 'league_count'}
+    out = _page(con, select, where, params, sorts, sort, direction, ('name', 'asc'), page, size)
+    for r in out['items']:
+        r.pop('search', None)
+        r['is_new'] = bool(r['is_new'])
+        r['edited'] = bool(r['edited'])
+        if r['is_new'] and r['flag_id'] == r['id']:
+            r['flag_id'] = fifa14.TEMPLATE_NATION  # a created country without a choice: Rest of World's flag
+        r['has_flag'] = bool(r['has_flag'])
+    return out
+
+
+def country(con, lang: str, cid: int) -> dict | None:
+    found = countries(con, lang, only=cid)['items']
+    if not found:
+        return None
+    head = found[0]
+    leagues_in = leagues(con, lang, country=cid, size=100)['items']
+    return {**head, 'name_keys': COUNTRY_NAME_KEYS, 'languages': languages(con),
+            'original_names': {} if head['is_new'] else _names(con, 'country', cid),
+            'saved_names': _project_names(con, 'country', cid), 'leagues': leagues_in,
+            **_form(con, 'country', cid, {})}
+
+
+def free_country_id(con) -> int | None:
+    used = {r[0] for r in con.execute('SELECT id FROM v_nations')}
+    return next((i for i in range(1, fifa14.MAX_NATION_ID + 1) if i not in used), None)
+
+
+def free_league_id(con) -> int | None:
+    used = {r[0] for r in con.execute('SELECT id FROM v_leagues')} | set(fifa14.RESERVED_LEAGUES)
+    return next((i for i in range(fifa14.FIRST_FREE_LEAGUE, fifa14.MAX_LEAGUE_ID + 1) if i not in used), None)
+
+
+def league_link_count(con) -> int:
+    return con.execute('SELECT COUNT(*) FROM v_league_teams').fetchone()[0]

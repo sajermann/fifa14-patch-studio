@@ -1,4 +1,4 @@
-import { ImageOff, Shield, User } from 'lucide-react'
+import { Flag, ImageOff, Shield, User } from 'lucide-react'
 import { useState } from 'react'
 import { useToken } from '@/state/queries'
 import { cn } from '@/lib/utils'
@@ -30,6 +30,11 @@ export function Photo({ id, size = 64, className, available }: { id: number; siz
 
 export function LeagueImage({ id, size, className, available }: { id: number; size?: number; className?: string; available?: boolean }) {
   return <GameImage url={`/api/image/league/${id}${size ? `?size=${size}` : ''}`} alt="" className={className} available={available} fallback={<ImageOff className="size-1/2" />} />
+}
+
+/** A country's flag (`id` = the country whose flag is shown: a created country shows the one it copies). */
+export function CountryFlag({ id, size = 64, className, available }: { id: number; size?: number; className?: string; available?: boolean }) {
+  return <GameImage url={`/api/image/flag/${id}?size=${size}`} alt="" className={className} available={available} fallback={<Flag className="size-1/2" />} />
 }
 
 export function ColorDot({ rgb, className }: { rgb: (number | null)[] | null | undefined; className?: string }) {

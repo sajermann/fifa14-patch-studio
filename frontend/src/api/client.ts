@@ -1,5 +1,5 @@
 import { hasMessage, translate } from '@/i18n'
-import type { Config, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, NameTable, Options, Page, PlayerDetail, PlayerRow, Status, TeamDetail, TeamRow } from './types'
+import type { Config, CountryDetail, CountryRow, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, NameTable, Options, Page, PlayerDetail, PlayerRow, Status, TeamDetail, TeamRow } from './types'
 
 /** Error of the backend; `message` is in the interface language when the app knows its code. */
 export class ApiError extends Error {
@@ -49,6 +49,8 @@ export function query(params: Record<string, string | number | boolean | null | 
   return s ? `?${s}` : ''
 }
 
+type Fields = Record<string, FieldValue>
+
 export type ListParams = Record<string, string | number | undefined>
 
 export const api = {
@@ -66,9 +68,24 @@ export const api = {
   options: () => get<Options>('/api/options'),
   league: (id: number) => get<LeagueDetail>(`/api/leagues/${id}`),
   team: (id: number) => get<TeamDetail>(`/api/teams/${id}`),
-  saveTeam: (id: number, names: NameTable) => request<TeamDetail>('PUT', `/api/teams/${id}`, { names }),
+  saveTeam: (id: number, names: NameTable, fields: Fields) => request<TeamDetail>('PUT', `/api/teams/${id}`, { names, fields }),
   resetTeam: (id: number) => request<TeamDetail>('DELETE', `/api/teams/${id}/edits`),
+  saveLeague: (id: number, names: NameTable, fields: Fields) => request<LeagueDetail>('PUT', `/api/leagues/${id}`, { names, fields }),
+  resetLeague: (id: number) => request<LeagueDetail>('DELETE', `/api/leagues/${id}/edits`),
+  createLeague: (names: NameTable, fields: Fields) => post<LeagueDetail>('/api/leagues', { names, fields }),
+  deleteLeague: (id: number) => request<{ deleted: number }>('DELETE', `/api/leagues/${id}`),
+  saveLeagueTeams: (id: number, teamIds: number[]) => request<LeagueDetail>('PUT', `/api/leagues/${id}/teams`, { team_ids: teamIds }),
+  resetLeagueTeams: (id: number) => request<LeagueDetail>('DELETE', `/api/leagues/${id}/teams`),
+  countries: (p: ListParams) => get<Page<CountryRow>>(`/api/countries${query(p)}`),
+  country: (id: number) => get<CountryDetail>(`/api/countries/${id}`),
+  createCountry: (names: NameTable, fields: Fields = {}) => post<CountryDetail>('/api/countries', { names, fields }),
+  saveCountry: (id: number, names: NameTable, fields: Fields) => request<CountryDetail>('PUT', `/api/countries/${id}`, { names, fields }),
+  resetCountry: (id: number) => request<CountryDetail>('DELETE', `/api/countries/${id}/edits`),
+  deleteCountry: (id: number) => request<{ deleted: number }>('DELETE', `/api/countries/${id}`),
+  limits: () => get<Limits>('/api/limits'),
   player: (id: number) => get<PlayerDetail>(`/api/players/${id}`),
+  savePlayer: (id: number, fields: Fields) => request<PlayerDetail>('PUT', `/api/players/${id}`, { fields }),
+  resetPlayer: (id: number) => request<PlayerDetail>('DELETE', `/api/players/${id}/edits`),
 
   buildPatch: () => post<Job>('/api/patch/build'),
   installPatch: () => post<Job>('/api/patch/install'),

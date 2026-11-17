@@ -7,6 +7,8 @@ import { api } from '@/api/client'
 import { AppShell, RequireGame } from '@/components/layout/AppShell'
 import { I18nProvider, useI18n } from '@/i18n'
 import { ThemeProvider } from '@/lib/theme'
+import { CountriesPage } from '@/pages/CountriesPage'
+import { CountryPage } from '@/pages/CountryPage'
 import { GamePage } from '@/pages/GamePage'
 import { LeaguePage } from '@/pages/LeaguePage'
 import { LeaguesPage } from '@/pages/LeaguesPage'
@@ -51,6 +53,8 @@ const router = createBrowserRouter([
       {
         element: <RequireGame />,
         children: [
+          { path: 'countries', element: <CountriesPage /> },
+          { path: 'countries/:id', element: <CountryPage /> },
           { path: 'leagues', element: <LeaguesPage /> },
           { path: 'leagues/:id', element: <LeaguePage /> },
           { path: 'teams', element: <TeamsPage /> },

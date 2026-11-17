@@ -32,10 +32,39 @@ LEAGUE_NAME_STRINGS = {
     'trophy_abbr15': 'TrophyName_Abbr15_',
 }
 
+COUNTRY_NAME_STRINGS = {
+    'full': 'NationName_',
+    'abbr3': 'nationname_abbr3_',
+}
+
+# limits measured in the game and in the database fields
+MAX_NATION_ID = 250        # nations.nationid has 8 bits and the meta allows up to 250
+FIRST_FREE_LEAGUE = 400    # new leagues get the first free id from here (385-389 are hidden slots of the game)
+MAX_LEAGUE_ID = 4095
+RESERVED_LEAGUES = frozenset({2000, 2028, 385, 386, 387, 388, 389})
+MAX_LEAGUE_LINKS = 4095    # leagueteamlinks.artificialkey has 12 bits: every team-league link of the game
+MAX_SQUAD = 41             # players a team shows in the game (more appear as "undefined")
+TEMPLATE_LEAGUE = 76       # Rest of World: the model row of a new league (no career, no competition)
+TEMPLATE_NATION = 211      # Rest of World: the model row and the default flag of a new country
+TABLE_POSITIONS = 64       # leagueteamlinks.currenttableposition has 6 bits (1-64)
+
 # pictures (game paths; {} = the id)
 CREST = 'data/ui/imgassets/crest/l{}.dds'
 PHOTO = 'data/ui/imgassets/heads/p{}.dds'
 LEAGUE_IMAGES = {'logo': 'data/ui/imgassets/league/l{}.dds', 'banner': 'data/ui/imgassets/league512x128/l{}.dds'}
+LEAGUE_PICTURES = {  # every picture of a league the game reads: game path -> (size, dark background)
+    'data/ui/imgassets/league/l{}.dds': ((256, 256), False),
+    'data/ui/imgassets/league/dark/l{}.dds': ((256, 256), True),
+    'data/ui/imgassets/league512x128/l{}.dds': ((512, 128), False),
+    'data/ui/imgassets/league512x128/dark/l{}.dds': ((512, 128), True),
+    'data/ui/imgassets/leaguelogos_sm/l{}.dds': ((256, 256), False),
+    'data/ui/imgassets/leaguelogos_sm/dark/l{}.dds': ((256, 256), True),
+    'data/ui/imgassets/leaguelogos_tiny/l{}.dds': ((256, 64), False),
+    'data/ui/imgassets/leaguelogos_tiny/dark/l{}.dds': ((256, 64), True),
+}
+FLAG_PICTURE = 'data/ui/imgassets/flags512x512/f_{}.dds'  # the one the screens show
+FLAG_FILES = ('data/ui/artassets/cardflags/{}.big', 'data/ui/artassets/countryflags/f_{}.big',
+              'data/ui/artassets/miniflags/flag_{}.big', 'data/ui/imgassets/flags512x512/f_{}.dds')
 FLAG_FOLDERS = re.compile(r'data/ui/imgassets/flags(\d+)x(\d+)/')
 KIT = 'data/sceneassets/kit/kit_{}_{}_0.rx3'  # team, kit type
 NAME_FONT = 'data/sceneassets/jerseyfonts/font_{}.ttf'

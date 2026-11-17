@@ -91,9 +91,11 @@ export function OverallBadge({ value }: { value: number | null | undefined }) {
   return <span className={cn('inline-block w-9 rounded py-0.5 text-center text-xs font-semibold tabular-nums', tone)}>{value}</span>
 }
 
-/** "original" for a game item the project does not change; "updated" when the project saved changes to it. */
-export function OriginalBadge({ edited }: { edited?: boolean }) {
+/** "original" for a game item the project does not change; "updated" when the project saved changes to it; "new" for
+ * an item the user created. */
+export function OriginalBadge({ edited, isNew }: { edited?: boolean; isNew?: boolean }) {
   const { t } = useI18n()
+  if (isNew) return <UiBadge className="font-normal">{t('common.new')}</UiBadge>
   return (
     <UiBadge variant="secondary" className="font-normal" title={edited ? t('common.updatedHint') : undefined}>
       {edited ? t('common.updated') : t('common.original')}

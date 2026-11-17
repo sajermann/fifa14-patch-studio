@@ -1,4 +1,4 @@
-import { AlertTriangle, FolderOpen, Hammer, Heart, Loader2, Settings, Shield, Trophy, Users } from 'lucide-react'
+import { AlertTriangle, Flag, FolderOpen, Hammer, Heart, Loader2, Settings, Shield, Trophy, Users } from 'lucide-react'
 import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { useI18n, type MessageKey } from '@/i18n'
@@ -10,6 +10,7 @@ import { JobWatcher, PatchActions } from './PatchActions'
 import { PreferencesMenu } from './PreferencesMenu'
 
 const NAV: { to: string; label: MessageKey; icon: typeof Trophy }[] = [
+  { to: '/countries', label: 'nav.countries', icon: Flag },
   { to: '/leagues', label: 'nav.leagues', icon: Trophy },
   { to: '/teams', label: 'nav.teams', icon: Shield },
   { to: '/players', label: 'nav.players', icon: Users },

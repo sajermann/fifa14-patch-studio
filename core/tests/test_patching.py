@@ -6,7 +6,7 @@ import shutil
 import fakegame
 import pytest
 
-from f14mod import bh, builder, catalog, dbedit, install_check, installer, t3db
+from f14mod import bh, builder, catalog, dbedit, fields, fifa14, install_check, installer, t3db
 from f14mod.big import BigArchive, rebuild
 from f14mod.project import Project
 
@@ -146,3 +146,69 @@ def test_project_keeps_one_entity_at_a_time(tmp_path):
     project.reset_team(1)
     assert project.team_names(1) == {}
     assert project.counts() == {'team': 1}
+
+
+def test_database_fields_names_and_league_strings(installed, tmp_path):
+    project = Project(str(tmp_path / 'project.sqlite'))
+    project.save('player', fakegame.STAR, fields={
+        'name.common': 'Brand New', 'name.first': 'Player0', 'height': 190, 'birthdate': '1990-05-04'})
+    project.save('team', fakegame.TEAM, fields={'teamcolor1': [201, 11, 21]})
+    project.save('league', fakegame.LEAGUE, names={'abbr15': {'*': 'New League'}}, fields={'leaguename': 'DB League'})
+    assert project.counts() == {'player': 1, 'team': 1, 'league': 1}
+
+    patch_dir = str(tmp_path / 'patch')
+    summary = builder.build(catalog.open_game(installed), project, patch_dir)
+    assert summary['database'] == {'changed': {'player': 1, 'team': 1, 'league': 1}, 'skipped': [],
+                                   'created': {}, 'league_links': 0}
+    assert 'data/db/fifa_ng_db.db' in summary['loose'] and 'data/db/fifa_ng_db-meta.xml' in summary['loose']
+    with open(os.path.join(patch_dir, 'data', 'db', 'fifa_ng_db-meta.xml'), 'rb') as f:
+        meta = t3db.load_meta(f.read())
+    with open(os.path.join(patch_dir, 'data', 'db', 'fifa_ng_db.db'), 'rb') as f:
+        tables = t3db.read_tables(f.read(), meta)
+    names = {r['nameid']: r['name'] for r in tables['playernames']['rows']}
+    star = next(r for r in tables['players']['rows'] if r['playerid'] == fakegame.STAR)
+    assert names[star['commonnameid']] == 'Brand New'
+    assert star['commonnameid'] == max(names)  # a new row after the last one
+    assert names[star['firstnameid']] == 'Player0'  # an existing text keeps its row
+    assert len(names) == len(fakegame._players()[1]) + 1
+    assert star['height'] == 190 and fifa14.to_date(star['birthdate']) == '1990-05-04'
+    team = next(r for r in tables['teams']['rows'] if r['teamid'] == fakegame.TEAM)
+    assert (team['teamcolor1r'], team['teamcolor1g'], team['teamcolor1b']) == (201, 11, 21)
+    league = next(r for r in tables['leagues']['rows'] if r['leagueid'] == fakegame.LEAGUE)
+    assert league['leaguename'] == 'DB League'
+    loc = BigArchive(os.path.join(patch_dir, 'data', 'loc', 'locale.big'))
+    en = t3db.read_strings(loc.read('data/loc/eng_us.db'), lambda s: True)
+    assert en[f'LeagueName_Abbr15_{fakegame.LEAGUE}'] == 'New League'
+
+
+def test_fields_clean_and_columns():
+    original = fields.original_values('team', {'teamcolor1r': 1, 'teamcolor1g': 2, 'teamcolor1b': 3,
+                                               'domesticprestige': 5})
+    assert original['teamcolor1'] == [1, 2, 3]
+    kept = fields.clean('team', {'teamcolor1': [1, 2, 3], 'domesticprestige': 6, 'rivalteam': None}, original)
+    assert kept == {'domesticprestige': 6}
+    for bad, code in (({'domesticprestige': 21}, 'out_of_range'), ({'nope': 1}, 'unknown_field'),
+                      ({'skillmoves': 5}, 'out_of_range'), ({'teamcolor2': [0, 0]}, 'bad_value')):
+        with pytest.raises(fields.FieldError) as e:
+            fields.clean('team' if 'skillmoves' not in bad else 'player', bad, {})
+        assert e.value.code == code
+    assert fields.to_columns('player', {'birthdate': '1582-10-15', 'name.first': 'X', 'height': 180}) == \
+        {'birthdate': 1, 'height': 180}
+
+
+def test_project_schema_1_opens(tmp_path):
+    import sqlite3
+    path = str(tmp_path / 'old.sqlite')
+    con = sqlite3.connect(path)
+    con.executescript("""CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE edited (kind TEXT, id INTEGER, updated_at INTEGER, PRIMARY KEY (kind, id));
+        CREATE TABLE team_names (team_id INTEGER, key TEXT, lang TEXT, text TEXT, PRIMARY KEY (team_id, key, lang));
+        INSERT INTO meta VALUES ('schema', '1'); INSERT INTO edited VALUES ('team', 5, 0);
+        INSERT INTO team_names VALUES (5, 'full', '*', 'Kept');""")
+    con.commit()
+    con.close()
+    project = Project(path)
+    assert project.team_names(5) == {'full': {'*': 'Kept'}}
+    assert project.fields('team', 5) == {} and project.counts() == {'team': 1}
+    project.save('league', 1, names={'full': {'*': 'L'}})
+    assert project.all_names('league') == {1: {'full': {'*': 'L'}}}

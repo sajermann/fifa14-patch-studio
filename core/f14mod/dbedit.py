@@ -409,15 +409,35 @@ class Database:
 
 # ---- language databases -----------------------------------------------------------------------------------------
 
+_CRC_TABLE = []
+for _i in range(256):
+    _c = _i
+    for _ in range(8):
+        _c = (_c >> 1) ^ 0xEDB88320 if _c & 1 else _c >> 1
+    _CRC_TABLE.append(_c)
+
+
+def string_hash(sid: str) -> int:
+    """The hashid of a language string: CRC-32 (reflected, starting at 0, no final xor) of the stringid's bytes, each
+    byte & 0xDF (case does not matter). The rows of a language database are kept in hashid order."""
+    c = 0
+    for b in sid.encode('utf-8'):
+        c = (c >> 8) ^ _CRC_TABLE[(c ^ (b & 0xDF)) & 0xFF]
+    return c
+
+
 class LanguageStrings:
-    """The one table of a language database (stringid -> text), editable."""
+    """The one table of a language database (stringid -> text), editable. A new string gets its hashid and the rows
+    are written back in hashid order, as the game keeps them."""
 
     def __init__(self, data: bytes):
         self.db = Database(data)
         self.table = self.db.first()
         self._sid = next(i for i, f in enumerate(self.table.fields) if f.type == 13)
         self._text = next(i for i, f in enumerate(self.table.fields) if f.type == 14)
+        self._hash = next((i for i, f in enumerate(self.table.fields) if f.type == 3), None)
         self._rows = {row[self._sid]: row for row in self.table.records if row[self._sid] is not None}
+        self._added = False
 
     def get(self, sid: str) -> str | None:
         row = self._rows.get(sid.encode('utf-8'))
@@ -437,10 +457,19 @@ class LanguageStrings:
             for i, f in enumerate(self.table.fields):
                 if f.type == 3:
                     row[i] = 0
+            if self._hash is not None:
+                row[self._hash] = string_hash(sid)
             self.table.records.append(row)
             self.table.raw_records.append(bytes(self.table.rec_size))
             self._rows[key] = row
+            self._added = True
         row[self._text] = text.encode('utf-8')
 
     def build(self) -> bytes:
+        if self._added and self._hash is not None:
+            t = self.table
+            raws = t.raw_records + [bytes(t.rec_size)] * (len(t.records) - len(t.raw_records))
+            pairs = sorted(zip(t.records, raws), key=lambda p: p[0][self._hash])  # stable: old order kept on ties
+            t.records, t.raw_records = [p[0] for p in pairs], [p[1] for p in pairs]
+            self._added = False
         return self.db.build()

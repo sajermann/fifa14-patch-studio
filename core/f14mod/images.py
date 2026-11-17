@@ -73,3 +73,29 @@ def remove_background(img: Image.Image) -> Image.Image:
     edge = near & light & ~clear
     arr[..., 3] = np.where(edge, arr[..., 3] // 2, arr[..., 3])
     return Image.fromarray(arr, 'RGBA')
+
+
+def league_picture(size: tuple[int, int], dark: bool, text: str) -> bytes:
+    """A plain picture for a league that has none of its own: its short name on a rounded tile (DDS, DXT5)."""
+    from PIL import ImageDraw, ImageFont
+    w, h = size
+    img = Image.new('RGBA', size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle((4, 4, w - 5, h - 5), radius=min(w, h) // 6, fill=(28, 58, 140, 255),
+                           outline=(255, 255, 255, 255) if dark else (20, 20, 20, 255), width=max(2, h // 64))
+    text = (text or '?')[:12]
+    font_size = int(h * 0.42)
+    font = None
+    while font_size > 6:
+        try:
+            font = ImageFont.truetype('arialbd.ttf', font_size)
+        except OSError:
+            font = ImageFont.load_default()
+            break
+        if draw.textlength(text, font=font) <= w * 0.86:
+            break
+        font_size -= 2
+    draw.text((w / 2, h / 2), text, fill=(255, 214, 0, 255), font=font, anchor='mm')
+    buf = io.BytesIO()
+    img.save(buf, 'DDS', pixel_format='DXT5')
+    return buf.getvalue()

@@ -71,8 +71,35 @@ export interface LeagueRow {
   level: number | null
   country_id: number | null
   country: string | null
-  has_logo: number
+  has_logo: number | boolean
+  is_new: boolean
   team_count: number
+  edited: boolean
+}
+
+export interface CountryRow {
+  id: number
+  name: string
+  is_new: boolean
+  has_flag: boolean
+  flag_id: number
+  league_count: number
+  edited: boolean
+}
+
+export interface CountryDetail extends CountryRow, EditForm {
+  name_keys: string[]
+  languages: string[]
+  original_names: NameTable
+  saved_names: NameTable
+  leagues: LeagueRow[]
+}
+
+export interface Limits {
+  countries_free: number
+  league_links: number
+  max_league_links: number
+  max_squad: number
 }
 
 export interface TeamRow {
@@ -107,10 +134,34 @@ export interface PlayerRow {
   has_photo: boolean
   team_id: number | null
   team: string | null
+  edited: boolean
 }
 
 /** {name key: {language code or '*': text}} */
 export type NameTable = Record<string, Record<string, string>>
+
+export type FieldKind = 'int' | 'select' | 'text' | 'date' | 'color' | 'nation' | 'team' | 'roster' | 'position'
+export type FieldValue = string | number | number[] | null
+
+/** One editable value of a database row (backend f14mod.fields). */
+export interface FieldSpec {
+  name: string
+  group: string
+  kind: FieldKind
+  min: number | null
+  max: number | null
+  options: number[]
+  max_length: number | null
+  optional: boolean
+}
+
+/** What every edit screen gets: the specs, the game's values and the values saved in the project. */
+export interface EditForm {
+  fields: FieldSpec[]
+  values: Record<string, FieldValue>
+  saved: Record<string, FieldValue>
+  edited: boolean
+}
 
 export interface RosterRow {
   id: number
@@ -124,7 +175,7 @@ export interface RosterRow {
   has_photo: boolean
 }
 
-export interface TeamDetail extends TeamRow {
+export interface TeamDetail extends TeamRow, EditForm {
   db_name: string | null
   name_keys: string[]
   languages: string[]
@@ -135,7 +186,7 @@ export interface TeamDetail extends TeamRow {
   raw: Raw
 }
 
-export interface LeagueDetail {
+export interface LeagueDetail extends EditForm {
   id: number
   name: string
   db_name: string | null
@@ -143,8 +194,14 @@ export interface LeagueDetail {
   country_id: number | null
   country: string | null
   has_logo: boolean
+  is_new: boolean
   names: NameTable
+  original_names: NameTable
+  saved_names: NameTable
+  languages: string[]
   name_keys: string[]
+  team_ids: number[]
+  teams_changed: boolean
   teams: TeamRow[]
   raw: Raw
 }
@@ -158,7 +215,7 @@ export interface PlayerTeam {
   national_of: number | null
 }
 
-export interface PlayerDetail {
+export interface PlayerDetail extends EditForm {
   id: number
   name: string
   names: Partial<Record<'first' | 'last' | 'common' | 'jersey_name', string>>
@@ -181,4 +238,6 @@ export interface Options {
   leagues: Ref[]
   positions: Ref[]
   languages: string[]
+  nations: Ref[]
+  teams: Ref[]
 }

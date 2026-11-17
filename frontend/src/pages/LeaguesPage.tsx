@@ -47,12 +47,12 @@ export function LeaguesPage() {
         </TableHeader>
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
           {data?.items.map((l) => (
-            <TableRow key={l.id} className="cursor-pointer text-muted-foreground" onClick={() => navigate(`/leagues/${l.id}`, from)}>
+            <TableRow key={l.id} className={l.is_new ? 'cursor-pointer' : 'cursor-pointer text-muted-foreground'} onClick={() => navigate(`/leagues/${l.id}`, from)}>
               <TableCell>
                 <LeagueImage id={l.id} size={64} available={!!l.has_logo} className="size-8" />
               </TableCell>
               <TableCell data-grow>
-                <span className="font-medium text-foreground">{l.name}</span> <OriginalBadge />
+                <span className="font-medium text-foreground">{l.name}</span> <OriginalBadge edited={l.edited} isNew={l.is_new} />
               </TableCell>
               <TableCell>{l.country ?? '—'}</TableCell>
               <TableCell className="tabular-nums">{l.level ?? '—'}</TableCell>

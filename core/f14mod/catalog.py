@@ -14,14 +14,14 @@ import unicodedata
 from . import fifa14, installer, t3db
 from .gamefs import DATABASE, GameFiles
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2: country names and flags
 LOCALE = 'data/loc/locale.big'
 
 SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE languages (code TEXT PRIMARY KEY);
 CREATE TABLE names (kind TEXT, id INTEGER, key TEXT, lang TEXT, text TEXT, PRIMARY KEY (kind, id, key, lang));
-CREATE TABLE nations (id INTEGER PRIMARY KEY, name TEXT);
+CREATE TABLE nations (id INTEGER PRIMARY KEY, name TEXT, has_flag INTEGER, search TEXT);
 CREATE TABLE leagues (id INTEGER PRIMARY KEY, db_name TEXT, country_id INTEGER, level INTEGER, has_logo INTEGER,
                       search TEXT, raw TEXT);
 CREATE TABLE teams (id INTEGER PRIMARY KEY, db_name TEXT, overall INTEGER, attack INTEGER, midfield INTEGER,
@@ -40,6 +40,7 @@ CREATE INDEX players_overall ON players (overall);
 
 TEAM_KEYS = fifa14.TEAM_NAME_STRINGS     # full, abbr15, abbr10, abbr7, abbr3, commentary
 LEAGUE_KEYS = fifa14.LEAGUE_NAME_STRINGS  # full, abbr15, abbr, trophy, trophy_abbr15
+COUNTRY_KEYS = fifa14.COUNTRY_NAME_STRINGS  # full, abbr3
 
 
 def fold(text) -> str:
@@ -107,12 +108,14 @@ def build(game_dir: str, path: str, progress=None) -> str:
 
     search_team: dict[int, set[str]] = {}
     search_league: dict[int, set[str]] = {}
-    prefixes = tuple(TEAM_KEYS.values()) + tuple(LEAGUE_KEYS.values())
+    search_country: dict[int, set[str]] = {}
+    prefixes = tuple(TEAM_KEYS.values()) + tuple(LEAGUE_KEYS.values()) + tuple(COUNTRY_KEYS.values())
     for i, lang in enumerate(langs):
         step(f'language {lang}', 0.1 + 0.5 * i / max(1, len(langs)))
         strings = _language_strings(files, lang, prefixes)
         rows = []
-        for kind, table, search in (('team', TEAM_KEYS, search_team), ('league', LEAGUE_KEYS, search_league)):
+        for kind, table, search in (('team', TEAM_KEYS, search_team), ('league', LEAGUE_KEYS, search_league),
+                                    ('country', COUNTRY_KEYS, search_country)):
             for oid, names in _split_names(strings, table).items():
                 for k, text in names.items():
                     rows.append((kind, oid, k, lang, text))
@@ -120,8 +123,10 @@ def build(game_dir: str, path: str, progress=None) -> str:
         con.executemany('INSERT OR REPLACE INTO names VALUES (?,?,?,?,?)', rows)
 
     step('teams', 0.65)
-    con.executemany('INSERT INTO nations VALUES (?,?)',
-                    [(nid, src.nation_name(nid)) for nid in src.nations])
+    con.executemany('INSERT INTO nations VALUES (?,?,?,?)', [
+        (nid, src.nation_name(nid), int(files.exists(fifa14.FLAG_PICTURE.format(nid))),
+         ' '.join(sorted({str(nid), fold(src.nation_name(nid))} | search_country.get(nid, set()))))
+        for nid in src.nations])
     con.executemany('INSERT INTO leagues VALUES (?,?,?,?,?,?,?)', [
         (lid, r.get('leaguename'), r.get('countryid'), r.get('level'), int('logo' in src.league_image_paths(lid)),
          ' '.join(sorted({str(lid), fold(r.get('leaguename'))} | search_league.get(lid, set()))),

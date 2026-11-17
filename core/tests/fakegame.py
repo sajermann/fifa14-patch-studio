@@ -50,6 +50,8 @@ STRINGS = [
     (f'Labbr_{LEAGUE}', 'TST 1'),
     (f'TrophyName_{LEAGUE}', 'Test Premier Trophy'),
     (f'TrophyName_Abbr15_{LEAGUE}', 'Test Cup'),
+    ('NationName_54', 'Nowhereland of Tests'),
+    ('nationname_abbr3_54', 'NWL'),
     ('Other_String_1', 'ignored'),
 ]
 STRINGS_UPD = [(f'TeamName_{TEAM}', 'Test Athletic Club')]
@@ -311,8 +313,8 @@ def build(root):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'wb') as f:
             f.write(blob)
-    _dds(os.path.join(img, 'flags512x512', 'f54.dds'), (16, 16), (0, 0, 255, 255))
-    _dds(os.path.join(img, 'flags64x64', 'f54.dds'), (8, 8), (0, 0, 255, 255))
+    _dds(os.path.join(img, 'flags512x512', 'f_54.dds'), (16, 16), (0, 0, 255, 255))
+    _dds(os.path.join(img, 'flags64x64', 'f_54.dds'), (8, 8), (0, 0, 255, 255))
     return root
 
 
