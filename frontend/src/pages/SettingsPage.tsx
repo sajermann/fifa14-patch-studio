@@ -1,10 +1,10 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { toast } from 'sonner'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/api/client'
 import type { Config } from '@/api/types'
 import { Facts, Section } from '@/components/common/detail'
 import { LANGS, useI18n, type Lang } from '@/i18n'
+import { toast } from '@/lib/notify'
 import { APP_NAME, APP_VERSION, AUTHOR_GITHUB, AUTHOR_NAME, REPO_URL } from '@/lib/about'
 import { useTheme } from '@/lib/theme'
 import { useOptions, useStatus } from '@/state/queries'
@@ -21,7 +21,7 @@ export function SettingsPage() {
   })
   const languages = useOptions().data?.languages ?? []
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="max-w-3xl space-y-4">
       <h1 className="text-2xl font-semibold">{t('settings.title')}</h1>
       <Section title={t('settings.interface')}>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -53,9 +53,9 @@ export function SettingsPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="system">{t('theme.system')}</SelectItem>
-                <SelectItem value="light">{t('theme.light')}</SelectItem>
-                <SelectItem value="dark">{t('theme.dark')}</SelectItem>
+                <SelectItem value="system">{t('prefs.themeSystem')}</SelectItem>
+                <SelectItem value="light">{t('prefs.themeLight')}</SelectItem>
+                <SelectItem value="dark">{t('prefs.themeDark')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -81,8 +81,18 @@ export function SettingsPage() {
         <Facts
           items={[
             [t('settings.app'), `${APP_NAME} ${APP_VERSION}`],
-            [t('settings.author'), <a key="a" href={AUTHOR_GITHUB} target="_blank" rel="noreferrer" className="hover:underline">{AUTHOR_NAME}</a>],
-            [t('settings.code'), <a key="c" href={REPO_URL} target="_blank" rel="noreferrer" className="hover:underline">{REPO_URL}</a>],
+            [
+              t('settings.author'),
+              <a key="a" href={AUTHOR_GITHUB} target="_blank" rel="noreferrer" className="hover:underline">
+                {AUTHOR_NAME}
+              </a>,
+            ],
+            [
+              t('settings.code'),
+              <a key="c" href={REPO_URL} target="_blank" rel="noreferrer" className="hover:underline">
+                {REPO_URL}
+              </a>,
+            ],
             [t('settings.license'), 'GPL-3.0'],
           ]}
         />

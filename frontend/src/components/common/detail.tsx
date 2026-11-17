@@ -1,31 +1,19 @@
-import { ArrowLeft } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge as UiBadge } from '@/components/ui/badge'
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import type { Raw } from '@/api/types'
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 
-/** "←": back to where the user came from (the list keeps its filters in the URL), or to `fallback`. */
-export function BackButton({ fallback }: { fallback: string }) {
-  const { t } = useI18n()
-  const navigate = useNavigate()
-  const location = useLocation()
-  return (
-    <Button variant="ghost" size="sm" onClick={() => (location.key !== 'default' ? navigate(-1) : navigate(fallback))}>
-      <ArrowLeft /> {t('common.back')}
-    </Button>
-  )
-}
-
-export function Section({ title, children, action, className }: { title: ReactNode; children: ReactNode; action?: ReactNode; className?: string }) {
+/** A card: title, optional description and action (top right), then the content. */
+export function Section({ title, description, children, action, className }: { title: ReactNode; description?: ReactNode; children: ReactNode; action?: ReactNode; className?: string }) {
   return (
     <Card className={className}>
-      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-        <CardTitle className="text-base">{title}</CardTitle>
-        {action}
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+        {description && <CardDescription>{description}</CardDescription>}
+        {action && <CardAction>{action}</CardAction>}
       </CardHeader>
       <CardContent>{children}</CardContent>
     </Card>
@@ -101,4 +89,14 @@ export function OverallBadge({ value }: { value: number | null | undefined }) {
   if (value === null || value === undefined) return <span className="text-muted-foreground">—</span>
   const tone = value >= 80 ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300' : value >= 70 ? 'bg-lime-500/15 text-lime-700 dark:text-lime-300' : value >= 60 ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-muted text-muted-foreground'
   return <span className={cn('inline-block w-9 rounded py-0.5 text-center text-xs font-semibold tabular-nums', tone)}>{value}</span>
+}
+
+/** "original" for a game item the project does not change; "updated" when the project saved changes to it. */
+export function OriginalBadge({ edited }: { edited?: boolean }) {
+  const { t } = useI18n()
+  return (
+    <UiBadge variant="secondary" className="font-normal" title={edited ? t('common.updatedHint') : undefined}>
+      {edited ? t('common.updated') : t('common.original')}
+    </UiBadge>
+  )
 }

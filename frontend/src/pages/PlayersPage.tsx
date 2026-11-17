@@ -1,7 +1,8 @@
 import { useNavigate } from 'react-router-dom'
+import { useFrom } from '@/lib/back'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
-import { OverallBadge } from '@/components/common/detail'
+import { OriginalBadge, OverallBadge } from '@/components/common/detail'
 import { Photo } from '@/components/common/pictures'
 import { useI18n } from '@/i18n'
 import { FilterBar, FilterSelect, LIST_PAGE, Pager, ScrollTable, SearchInput, SortHead, useListState } from '@/lib/list'
@@ -12,15 +13,24 @@ const FILTERS = ['q', 'position'] as const
 export function PlayersPage() {
   const { t } = useI18n()
   const navigate = useNavigate()
+  const from = useFrom(t('nav.players'))
   const list = useListState(FILTERS)
   const { data, isFetching } = useList('players', list.request, api.players)
   const options = useOptions().data
-  const sortState = { sort: list.sort, dir: list.dir, update: list.update, current: data?.sort ?? '', currentDir: data?.dir ?? '' }
+  const sortState = {
+    sort: list.sort,
+    dir: list.dir,
+    update: list.update,
+    current: data?.sort ?? '',
+    currentDir: data?.dir ?? '',
+  }
   return (
     <div className={LIST_PAGE}>
-      <div>
-        <h1 className="text-2xl font-semibold">{t('players.title')}</h1>
-        <p className="text-sm text-muted-foreground">{t('players.subtitle')}</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h1 className="text-2xl font-semibold">{t('players.title')}</h1>
+          <p className="text-sm text-muted-foreground">{t('players.subtitle')}</p>
+        </div>
       </div>
       <FilterBar active={list.active} onClear={list.clear}>
         <SearchInput value={list.values.q} onChange={(v) => list.update({ q: v })} placeholder={t('players.search')} />
@@ -29,7 +39,10 @@ export function PlayersPage() {
           onChange={(v) => list.update({ position: v })}
           allLabel={t('filter.allPositions')}
           className="w-40"
-          options={(options?.positions ?? []).map((p) => ({ value: String(p.id), label: p.name }))}
+          options={(options?.positions ?? []).map((p) => ({
+            value: String(p.id),
+            label: p.name,
+          }))}
         />
       </FilterBar>
       <ScrollTable>
@@ -48,12 +61,12 @@ export function PlayersPage() {
         </TableHeader>
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
           {data?.items.map((p) => (
-            <TableRow key={p.id} className="cursor-pointer" onClick={() => navigate(`/players/${p.id}`)}>
+            <TableRow key={p.id} className="cursor-pointer text-muted-foreground" onClick={() => navigate(`/players/${p.id}`, from)}>
               <TableCell>
                 <Photo id={p.id} size={64} available={p.has_photo} className="size-8" />
               </TableCell>
-              <TableCell data-grow className="font-medium">
-                {p.name}
+              <TableCell data-grow>
+                <span className="font-medium text-foreground">{p.name}</span> <OriginalBadge />
               </TableCell>
               <TableCell>{p.position_name ?? '—'}</TableCell>
               <TableCell>
@@ -77,7 +90,15 @@ export function PlayersPage() {
           )}
         </TableBody>
       </ScrollTable>
-      {data && <Pager page={data.page} pages={data.pages} total={data.total} size={data.size} onPage={(page, size) => list.update({ page, ...(size ? { size } : {}) }, false)} />}
+      {data && (
+        <Pager
+          page={data.page}
+          pages={data.pages}
+          total={data.total}
+          size={data.size}
+          onPage={(page, size) => list.update({ page, ...(size ? { size } : {}) }, false)}
+        />
+      )}
     </div>
   )
 }

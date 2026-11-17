@@ -18,6 +18,14 @@ export const ptBR = {
   'header.noGame': 'Nenhum jogo escolhido',
   'header.patchInstalled': 'patch instalado',
 
+  'prefs.language': 'Idioma',
+  'prefs.theme': 'Tema',
+  'common.original': 'original',
+  'common.updated': 'atualizado',
+  'common.updatedHint': 'Item original do jogo com alterações salvas no projeto',
+  'header.gameChanged': 'A instalação escolhida não está mais limpa: veja a tela Jogo.',
+  'header.patchChanged': 'Arquivos do patch instalado foram alterados por fora: veja a tela Jogo.',
+  'patch.more': 'Mais ações do patch',
   'common.back': 'Voltar',
   'common.cancel': 'Cancelar',
   'common.close': 'Fechar',
@@ -136,8 +144,8 @@ export const ptBR = {
   'teamName.commentary': 'Nome da narração',
   'teamName.commentary.hint': 'texto ligado à narração',
 
-  'edit.save': 'Salvar',
-  'edit.discard': 'Descartar',
+  'common.save': 'Salvar',
+  'common.discard': 'Descartar',
   'edit.saved': 'Salvo.',
   'edit.restore': 'Voltar ao original',
   'edit.restored': 'O original foi restaurado.',
@@ -237,9 +245,9 @@ export const ptBR = {
   'settings.license': 'Licença',
   'settings.disclaimer': 'Ferramenta independente feita por fãs. Não é afiliada, patrocinada nem aprovada pela Electronic Arts nem pela FIFA. O app não traz nenhum arquivo do jogo: ele só lê e altera a instalação que você tem.',
 
-  'theme.system': 'Do sistema',
-  'theme.light': 'Claro',
-  'theme.dark': 'Escuro',
+  'prefs.themeSystem': 'Do sistema',
+  'prefs.themeLight': 'Claro',
+  'prefs.themeDark': 'Escuro',
 } as const
 
 export type MessageKey = keyof typeof ptBR

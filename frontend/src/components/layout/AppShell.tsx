@@ -1,4 +1,4 @@
-import { FolderOpen, Hammer, Heart, Loader2, Settings, Shield, Trophy, Users } from 'lucide-react'
+import { AlertTriangle, FolderOpen, Hammer, Heart, Loader2, Settings, Shield, Trophy, Users } from 'lucide-react'
 import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { useI18n, type MessageKey } from '@/i18n'
@@ -6,6 +6,8 @@ import { APP_NAME, APP_VERSION, AUTHOR_GITHUB, AUTHOR_NAME, DONATE_URL, REPO_URL
 import { cn } from '@/lib/utils'
 import { useStatus } from '@/state/queries'
 import { LoadingBlock } from './LoadingBlock'
+import { JobWatcher, PatchActions } from './PatchActions'
+import { PreferencesMenu } from './PreferencesMenu'
 
 const NAV: { to: string; label: MessageKey; icon: typeof Trophy }[] = [
   { to: '/leagues', label: 'nav.leagues', icon: Trophy },
@@ -16,7 +18,12 @@ const NAV: { to: string; label: MessageKey; icon: typeof Trophy }[] = [
 function NavItem({ to, label, icon: Icon, extra }: { to: string; label: MessageKey; icon: typeof Trophy; extra?: React.ReactNode }) {
   const { t } = useI18n()
   return (
-    <NavLink to={to} className={({ isActive }) => cn('flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent', isActive && 'bg-accent font-medium')}>
+    <NavLink
+      to={to}
+      className={({ isActive }) =>
+        cn('flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent', isActive && 'bg-accent font-medium')
+      }
+    >
       <Icon className="size-4" />
       <span className="flex-1">{t(label)}</span>
       {extra}
@@ -53,6 +60,13 @@ export function AppShell() {
   const { pathname } = useLocation()
   const game = status?.game
   const edited = Object.values(status?.project ?? {}).reduce((a, b) => a + (b ?? 0), 0)
+  const check = game?.check
+  const warning =
+    check?.state === 'modified' || check?.state === 'invalid'
+      ? t('header.gameChanged')
+      : check?.issues.some((i) => i.code === 'patch_changed')
+        ? t('header.patchChanged')
+        : null
   return (
     <div className="flex h-svh overflow-hidden">
       <aside className="flex w-56 shrink-0 flex-col overflow-y-auto border-r bg-muted/30 p-3">
@@ -64,7 +78,12 @@ export function AppShell() {
           </div>
         </div>
         <nav className="space-y-1">
-          <NavItem to="/game" label="nav.game" icon={FolderOpen} extra={game?.state === 'building' ? <Loader2 className="size-3.5 animate-spin" /> : undefined} />
+          <NavItem
+            to="/game"
+            label="nav.game"
+            icon={FolderOpen}
+            extra={game?.state === 'building' ? <Loader2 className="size-3.5 animate-spin" /> : undefined}
+          />
           <div className="my-2 border-t" />
           {NAV.map((n) => (
             <NavItem key={n.to} {...n} />
@@ -79,6 +98,9 @@ export function AppShell() {
         </nav>
         <div className="mt-auto space-y-2">
           <NavItem to="/settings" label="nav.settings" icon={Settings} />
+          <div className="px-1">
+            <PreferencesMenu />
+          </div>
           <div className="space-y-0.5 px-3 pt-2 text-xs text-muted-foreground">
             <p className="flex items-center justify-between gap-2">
               <span>
@@ -105,20 +127,35 @@ export function AppShell() {
         </div>
       </aside>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="z-10 flex shrink-0 items-center gap-3 border-b bg-background/95 px-6 py-3 text-sm backdrop-blur">
-          <span className="min-w-0 flex-1 truncate text-muted-foreground">
+        <header className="z-10 flex shrink-0 items-center gap-2 border-b bg-background/95 px-6 py-3 backdrop-blur">
+          <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
             {game?.state === 'ready' ? (
               <>
                 <span className="font-medium text-foreground">{t('header.game')}</span> <span className="font-mono text-xs">{game.game_dir}</span>
-                {game.check?.state === 'patched' && <span className="ml-2 rounded bg-emerald-500/15 px-1.5 py-0.5 text-xs text-emerald-700 dark:text-emerald-300">{t('header.patchInstalled')}</span>}
+                {game.check?.state === 'patched' && (
+                  <span className="ml-2 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs text-emerald-700 dark:text-emerald-300">
+                    {t('header.patchInstalled')}
+                  </span>
+                )}
               </>
             ) : game?.state === 'building' ? (
-              t('game.preparing', { percent: Math.round(game.progress.done * 100) })
+              t('game.preparing', {
+                percent: Math.round(game.progress.done * 100),
+              })
             ) : (
               t('header.noGame')
             )}
           </span>
+          <PatchActions />
         </header>
+        {warning && (
+          <div className="space-y-1 border-b border-amber-500/40 bg-amber-500/10 px-6 py-2 text-sm text-amber-800 dark:text-amber-300">
+            <p className="flex items-center gap-2">
+              <AlertTriangle className="size-4 shrink-0" /> {warning}
+            </p>
+          </div>
+        )}
+        <JobWatcher />
         <main key={pathname.split('/')[1]} className="min-h-0 flex-1 overflow-auto p-6">
           <Outlet />
         </main>

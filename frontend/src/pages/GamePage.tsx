@@ -2,13 +2,13 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, CheckCircle2, FolderOpen, Loader2, RefreshCw, XCircle } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { api } from '@/api/client'
 import type { GameCheck } from '@/api/types'
 import { Section } from '@/components/common/detail'
 import { hasMessage, useI18n, type MessageKey } from '@/i18n'
+import { toast } from '@/lib/notify'
 import { useStatus } from '@/state/queries'
 
 /** The result of checking a folder: is it a FIFA 14 the app can patch, and what is wrong when it is not. */
@@ -23,7 +23,14 @@ function CheckResult({ check }: { check: GameCheck }) {
         {t(`check.state.${check.state}` as MessageKey)}
       </p>
       {check.game_dir && <p className="font-mono text-xs text-muted-foreground">{check.game_dir}</p>}
-      {check.installed && <p className="text-xs text-muted-foreground">{t('check.installedAt', { date: check.installed.installed_at, version: check.installed.version || '?' })}</p>}
+      {check.installed && (
+        <p className="text-xs text-muted-foreground">
+          {t('check.installedAt', {
+            date: check.installed.installed_at,
+            version: check.installed.version || '?',
+          })}
+        </p>
+      )}
       {check.issues.length > 0 && (
         <ul className="list-disc space-y-1 pl-5 text-xs">
           {check.issues.map((i, n) => {
@@ -83,7 +90,7 @@ export function GamePage() {
   }
   const usable = checked && (checked.state === 'clean' || checked.state === 'patched')
   return (
-    <div className="max-w-4xl space-y-6">
+    <div className="max-w-4xl space-y-4">
       <div>
         <h1 className="text-2xl font-semibold">{t('game.title')}</h1>
         <p className="text-sm text-muted-foreground">{t('game.subtitle')}</p>
@@ -100,7 +107,10 @@ export function GamePage() {
         >
           {game.state === 'building' && (
             <p className="mb-3 flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" /> {t('game.preparing', { percent: Math.round(game.progress.done * 100) })}
+              <Loader2 className="size-4 animate-spin" />{' '}
+              {t('game.preparing', {
+                percent: Math.round(game.progress.done * 100),
+              })}
             </p>
           )}
           {game.state === 'error' && <p className="mb-3 text-sm text-red-600">{game.error}</p>}

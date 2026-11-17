@@ -1,7 +1,9 @@
 import { useNavigate } from 'react-router-dom'
+import { useFrom } from '@/lib/back'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
-import { Badge, OverallBadge } from '@/components/common/detail'
+import { OriginalBadge, OverallBadge } from '@/components/common/detail'
+import { cn } from '@/lib/utils'
 import { ColorDot, Crest } from '@/components/common/pictures'
 import { useI18n } from '@/i18n'
 import { FilterBar, FilterSelect, LIST_PAGE, Pager, ScrollTable, SearchInput, SortHead, useListState } from '@/lib/list'
@@ -12,15 +14,24 @@ const FILTERS = ['q', 'league', 'edited'] as const
 export function TeamsPage() {
   const { t } = useI18n()
   const navigate = useNavigate()
+  const from = useFrom(t('nav.teams'))
   const list = useListState(FILTERS)
   const { data, isFetching } = useList('teams', list.request, api.teams)
   const options = useOptions().data
-  const sortState = { sort: list.sort, dir: list.dir, update: list.update, current: data?.sort ?? '', currentDir: data?.dir ?? '' }
+  const sortState = {
+    sort: list.sort,
+    dir: list.dir,
+    update: list.update,
+    current: data?.sort ?? '',
+    currentDir: data?.dir ?? '',
+  }
   return (
     <div className={LIST_PAGE}>
-      <div>
-        <h1 className="text-2xl font-semibold">{t('teams.title')}</h1>
-        <p className="text-sm text-muted-foreground">{t('teams.subtitle')}</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h1 className="text-2xl font-semibold">{t('teams.title')}</h1>
+          <p className="text-sm text-muted-foreground">{t('teams.subtitle')}</p>
+        </div>
       </div>
       <FilterBar active={list.active} onClear={list.clear}>
         <SearchInput value={list.values.q} onChange={(v) => list.update({ q: v })} placeholder={t('teams.search')} />
@@ -29,7 +40,10 @@ export function TeamsPage() {
           onChange={(v) => list.update({ league: v })}
           allLabel={t('filter.allLeagues')}
           className="w-56"
-          options={(options?.leagues ?? []).map((l) => ({ value: String(l.id), label: l.name }))}
+          options={(options?.leagues ?? []).map((l) => ({
+            value: String(l.id),
+            label: l.name,
+          }))}
         />
         <FilterSelect
           value={list.values.edited}
@@ -56,14 +70,15 @@ export function TeamsPage() {
         </TableHeader>
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
           {data?.items.map((tm) => (
-            <TableRow key={tm.id} className="cursor-pointer" onClick={() => navigate(`/teams/${tm.id}`)}>
+            <TableRow key={tm.id} className={cn('cursor-pointer', !tm.edited && 'text-muted-foreground')} onClick={() => navigate(`/teams/${tm.id}`, from)}>
               <TableCell>
                 <Crest id={tm.id} size={64} available={tm.has_crest} className="size-8" />
               </TableCell>
               <TableCell data-grow>
-                <div className="font-medium">
-                  {tm.name} {tm.abbr3 && <span className="ml-1 text-xs text-muted-foreground">{tm.abbr3}</span>}
-                  {tm.edited && <Badge tone="ok" className="ml-2">{t('common.edited')}</Badge>}
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-foreground">{tm.name}</span>
+                  {tm.abbr3 && <span className="text-xs text-muted-foreground">{tm.abbr3}</span>}
+                  <OriginalBadge edited={tm.edited} />
                 </div>
                 {tm.abbr15 && tm.abbr15 !== tm.name && <div className="text-xs text-muted-foreground">{tm.abbr15}</div>}
               </TableCell>
@@ -87,7 +102,15 @@ export function TeamsPage() {
           )}
         </TableBody>
       </ScrollTable>
-      {data && <Pager page={data.page} pages={data.pages} total={data.total} size={data.size} onPage={(page, size) => list.update({ page, ...(size ? { size } : {}) }, false)} />}
+      {data && (
+        <Pager
+          page={data.page}
+          pages={data.pages}
+          total={data.total}
+          size={data.size}
+          onPage={(page, size) => list.update({ page, ...(size ? { size } : {}) }, false)}
+        />
+      )}
     </div>
   )
 }

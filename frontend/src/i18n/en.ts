@@ -20,6 +20,14 @@ export const en: Record<MessageKey, string> = {
   'header.noGame': 'No game chosen',
   'header.patchInstalled': 'patch installed',
 
+  'prefs.language': 'Language',
+  'prefs.theme': 'Theme',
+  'common.original': 'original',
+  'common.updated': 'updated',
+  'common.updatedHint': 'Original game item with changes saved in the project',
+  'header.gameChanged': 'The chosen installation is no longer clean: see the Game screen.',
+  'header.patchChanged': 'Files of the installed patch were changed by something else: see the Game screen.',
+  'patch.more': 'More patch actions',
   'common.back': 'Back',
   'common.cancel': 'Cancel',
   'common.close': 'Close',
@@ -138,8 +146,8 @@ export const en: Record<MessageKey, string> = {
   'teamName.commentary': 'Commentary name',
   'teamName.commentary.hint': 'text tied to the commentary',
 
-  'edit.save': 'Save',
-  'edit.discard': 'Discard',
+  'common.save': 'Save',
+  'common.discard': 'Discard',
   'edit.saved': 'Saved.',
   'edit.restore': 'Back to the original',
   'edit.restored': 'The original was restored.',
@@ -239,7 +247,7 @@ export const en: Record<MessageKey, string> = {
   'settings.license': 'License',
   'settings.disclaimer': 'Independent fan-made tool. Not affiliated with, sponsored or endorsed by Electronic Arts or FIFA. The app contains no game files: it only reads and changes the installation you have.',
 
-  'theme.system': 'System',
-  'theme.light': 'Light',
-  'theme.dark': 'Dark',
+  'prefs.themeSystem': 'System',
+  'prefs.themeLight': 'Light',
+  'prefs.themeDark': 'Dark',
 }
