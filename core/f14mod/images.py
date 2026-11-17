@@ -99,3 +99,10 @@ def league_picture(size: tuple[int, int], dark: bool, text: str) -> bytes:
     buf = io.BytesIO()
     img.save(buf, 'DDS', pixel_format='DXT5')
     return buf.getvalue()
+
+
+def dds(img: Image.Image) -> bytes:
+    """A DDS texture (DXT5, no mipmaps) of the picture, the way the game's interface pictures are kept."""
+    buf = io.BytesIO()
+    img.convert('RGBA').save(buf, 'DDS', pixel_format='DXT5')
+    return buf.getvalue()

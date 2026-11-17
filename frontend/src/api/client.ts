@@ -13,6 +13,11 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
+  return (await send(method, url, body)).json() as Promise<T>
+}
+
+/** The response of a call, a failed one turned into an ApiError. */
+async function send(method: string, url: string, body?: unknown): Promise<Response> {
   let res: Response
   try {
     res = await fetch(url, {
@@ -35,7 +40,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
     const text = d.code && hasMessage(key) ? translate(key) : translate('apiError.status', { status: res.status })
     throw new ApiError(res.status, d.code, d.detail ? `${text} (${d.detail})` : text)
   }
-  return (await res.json()) as T
+  return res
 }
 
 const get = <T>(url: string) => request<T>('GET', url)
@@ -80,6 +85,10 @@ export const api = {
   country: (id: number) => get<CountryDetail>(`/api/countries/${id}`),
   createCountry: (names: NameTable, fields: Fields = {}) => post<CountryDetail>('/api/countries', { names, fields }),
   saveCountry: (id: number, names: NameTable, fields: Fields) => request<CountryDetail>('PUT', `/api/countries/${id}`, { names, fields }),
+  uploadCountryFlag: (id: number, data: string) => request<CountryDetail>('PUT', `/api/countries/${id}/flag`, { data }),
+  removeCountryFlag: (id: number) => request<CountryDetail>('DELETE', `/api/countries/${id}/flag`),
+  /** A chosen picture drawn as the flag, not saved yet. */
+  flagPreview: async (data: string, size: number) => (await send('POST', `/api/flag-preview?size=${size}`, { data })).blob(),
   resetCountry: (id: number) => request<CountryDetail>('DELETE', `/api/countries/${id}/edits`),
   deleteCountry: (id: number) => request<{ deleted: number }>('DELETE', `/api/countries/${id}`),
   limits: () => get<Limits>('/api/limits'),

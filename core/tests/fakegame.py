@@ -315,6 +315,14 @@ def build(root):
             f.write(blob)
     _dds(os.path.join(img, 'flags512x512', 'f_54.dds'), (16, 16), (0, 0, 255, 255))
     _dds(os.path.join(img, 'flags64x64', 'f_54.dds'), (8, 8), (0, 0, 255, 255))
+    # the small Apt screens of a flag (an archive with the screen data and one DXT5 texture, a band in the middle)
+    for folder, name in (('cardflags', '54.big'), ('countryflags', 'f_54.big'), ('miniflags', 'flag_54.big')):
+        flag = Image.new('RGBA', (16, 16), (0, 0, 0, 0))
+        flag.paste(Image.new('RGBA', (16, 8), (0, 0, 255, 255)), (0, 4))
+        buf = io.BytesIO()
+        flag.save(buf, 'DDS', pixel_format='DXT5')
+        write_big(os.path.join(data, 'ui', 'artassets', folder, name),
+                  {'0': b'Apt Data:fake screen', '3': b'texture description', '2': buf.getvalue(), '1': b'Apt constant'})
     return root
 
 

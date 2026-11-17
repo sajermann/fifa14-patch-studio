@@ -11,7 +11,8 @@ Schema 2 (adds league names and fields) opens schema 1 files as they are: the ne
 Schema 3 (17/11/2026) adds what the user creates (free countries and leagues; later teams and players) and the teams
 of a league: `created` lists the new entities (their names and fields live in the same tables as the edits), and
 `league_members` holds the whole team list of every league whose teams were changed (`league_members_set`), in order;
-a league without a row there keeps the game's teams. Older files open as they are (the new tables start empty).
+a league without a row there keeps the game's teams; `pictures` keeps the user's pictures (PNG) of an entity by
+slot (a country's 'flag'), so the project stays one file. Older files open as they are (the new tables start empty).
 """
 import json
 import sqlite3
@@ -37,6 +38,8 @@ CREATE TABLE IF NOT EXISTS created (kind TEXT, id INTEGER, created_at INTEGER, P
 CREATE TABLE IF NOT EXISTS league_members_set (league_id INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS league_members (league_id INTEGER, team_id INTEGER, ord INTEGER,
                                            PRIMARY KEY (league_id, team_id));
+CREATE TABLE IF NOT EXISTS pictures (kind TEXT, id INTEGER, slot TEXT, data BLOB, updated_at INTEGER,
+                                     PRIMARY KEY (kind, id, slot));
 """
 
 Names = dict[str, dict[str, str]]  # {name key: {language or '*': text}}
@@ -119,6 +122,52 @@ class Project:
 
     def reset(self, kind: str, oid: int) -> None:
         self.save(kind, oid)
+        con = self.connect()
+        try:
+            con.execute('DELETE FROM pictures WHERE kind = ? AND id = ?', (kind, oid))
+            con.commit()
+        finally:
+            con.close()
+
+    # ---- pictures -------------------------------------------------------------------------------------------
+
+    def set_picture(self, kind: str, oid: int, slot: str, data: bytes | None) -> None:
+        """Keeps (or, with None, removes) a picture of the entity; a picture marks the entity as edited."""
+        con = self.connect()
+        try:
+            if data is None:
+                con.execute('DELETE FROM pictures WHERE kind = ? AND id = ? AND slot = ?', (kind, oid, slot))
+            else:
+                con.execute('INSERT OR REPLACE INTO pictures VALUES (?, ?, ?, ?, ?)',
+                            (kind, oid, slot, data, int(time.time())))
+                con.execute('INSERT OR REPLACE INTO edited VALUES (?, ?, ?)', (kind, oid, int(time.time())))
+            if data is None and not con.execute(
+                    'SELECT 1 FROM fields WHERE kind = ? AND id = ? UNION SELECT 1 FROM pictures '
+                    'WHERE kind = ? AND id = ?', (kind, oid, kind, oid)).fetchone():
+                table = NAME_TABLES.get(kind)
+                if not table or not con.execute(f'SELECT 1 FROM {table[0]} WHERE {table[1]} = ?', (oid,)).fetchone():
+                    con.execute('DELETE FROM edited WHERE kind = ? AND id = ?', (kind, oid))
+            con.commit()
+        finally:
+            con.close()
+
+    def picture(self, kind: str, oid: int, slot: str) -> tuple[bytes, int] | None:
+        """(PNG bytes, saved at) or None."""
+        con = self.connect()
+        try:
+            r = con.execute('SELECT data, updated_at FROM pictures WHERE kind = ? AND id = ? AND slot = ?',
+                            (kind, oid, slot)).fetchone()
+            return (bytes(r[0]), r[1]) if r else None
+        finally:
+            con.close()
+
+    def with_picture(self, kind: str, slot: str) -> list[int]:
+        con = self.connect()
+        try:
+            return [r[0] for r in con.execute('SELECT id FROM pictures WHERE kind = ? AND slot = ? ORDER BY id',
+                                              (kind, slot))]
+        finally:
+            con.close()
 
     def all_names(self, kind: str) -> dict[int, Names]:
         table, column = NAME_TABLES[kind]
@@ -184,7 +233,7 @@ class Project:
 
     def delete(self, kind: str, oid: int) -> None:
         """Removes a created entity and everything saved for it."""
-        self.save(kind, oid)
+        self.reset(kind, oid)
         con = self.connect()
         try:
             con.execute('DELETE FROM created WHERE kind = ? AND id = ?', (kind, oid))

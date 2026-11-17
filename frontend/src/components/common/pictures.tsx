@@ -33,8 +33,19 @@ export function LeagueImage({ id, size, className, available }: { id: number; si
 }
 
 /** A country's flag (`id` = the country whose flag is shown: a created country shows the one it copies). */
-export function CountryFlag({ id, size = 64, className, available }: { id: number; size?: number; className?: string; available?: boolean }) {
-  return <GameImage url={`/api/image/flag/${id}?size=${size}`} alt="" className={className} available={available} fallback={<Flag className="size-1/2" />} />
+export function CountryFlag({ id, size = 64, className, available, version, gameOnly }: { id: number; size?: number; className?: string; available?: boolean; version?: number | null; gameOnly?: boolean }) {
+  const url = `/api/image/flag/${id}?size=${size}${version ? `&own=${version}` : ''}${gameOnly ? '&game_only=true' : ''}`
+  return <GameImage url={url} alt="" className={className} available={available} fallback={<Flag className="size-1/2" />} />
+}
+
+/** Reads a picture file the user chose as base64 (without the data: prefix). */
+export function readPicture(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result).split(',', 2)[1] ?? '')
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
 }
 
 export function ColorDot({ rgb, className }: { rgb: (number | null)[] | null | undefined; className?: string }) {

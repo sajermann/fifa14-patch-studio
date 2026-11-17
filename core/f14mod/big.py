@@ -69,6 +69,7 @@ def rebuild(path: str, replace: dict[str, bytes]) -> bytes:
     with open(path, 'rb') as f:
         raw = f.read()
     first = min((o for o, _ in big.entries.values()), default=len(raw))
+    end = max((o + s for o, s in big.entries.values()), default=first)
     out = bytearray(raw[:first])
     p = 16
     for key, name in zip(big.order, big.raw_names):
@@ -80,8 +81,9 @@ def rebuild(path: str, replace: dict[str, bytes]) -> bytes:
         struct.pack_into('>II', out, p, len(out), len(data))
         p += 8 + len(name.encode('latin1')) + 1
         out += data
-    out += b'\0' * (-len(out) % align)
-    struct.pack_into('<I', out, 4, len(out))
+    out += raw[end:]  # whatever the original has after its last entry (padding), as it is
+    # the size field keeps its meaning (the file size in some archives, the end of the data in others)
+    struct.pack_into('<I', out, 4, struct.unpack('<I', raw[4:8])[0] + len(out) - len(raw))
     return bytes(out)
 
 

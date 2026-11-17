@@ -83,6 +83,9 @@ export interface CountryRow {
   is_new: boolean
   has_flag: boolean
   flag_id: number
+  /** The flag shown when the country has no picture of its own. */
+  base_flag_id: number
+  own_flag: number | null
   league_count: number
   edited: boolean
 }

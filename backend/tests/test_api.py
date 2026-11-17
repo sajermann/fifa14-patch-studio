@@ -121,6 +121,10 @@ def test_free_country_and_league_crud(client):
     cid = country['id']
     assert country['is_new'] and country['name'] == 'Free Land' and country['saved']['flag_from'] == 54
     assert client.get('/api/countries', params={'q': 'free'}).json()['total'] == 1
+    # the user's created items come first, whatever the sort
+    for sort, direction in (('name', 'asc'), ('name', 'desc'), ('id', 'asc'), ('league_count', 'desc')):
+        first = client.get('/api/countries', params={'sort': sort, 'dir': direction}).json()['items'][0]
+        assert first['id'] == cid, (sort, direction)
     bad = client.post('/api/leagues', json={'names': {'full': {'*': 'No Country'}}})
     assert bad.status_code == 400 and bad.json()['detail']['code'] == 'field_out_of_range'
     league = client.post('/api/leagues', json={'names': {'full': {'*': 'Free League'}},
@@ -129,6 +133,7 @@ def test_free_country_and_league_crud(client):
     assert lid >= 400 and league['is_new'] and league['country_id'] == cid and league['team_ids'] == []
     assert [x['id'] for x in client.get(f'/api/countries/{cid}').json()['leagues']] == [lid]
     assert client.get('/api/leagues', params={'country': cid}).json()['total'] == 1
+    assert client.get('/api/leagues', params={'sort': 'id'}).json()['items'][0]['id'] == lid
 
     # a team in several leagues: the free league and its own
     r = client.put(f'/api/leagues/{lid}/teams', json={'team_ids': [fakegame.SMALL_TEAM, fakegame.TEAM]})
@@ -170,3 +175,28 @@ def test_original_country_names_and_flag(client):
     assert client.delete('/api/countries/54').json()['detail']['code'] == 'not_created'
     restored = client.delete('/api/countries/54/edits').json()
     assert not restored['edited'] and restored['flag_id'] == 54
+
+
+def test_country_flag_picture(client):
+    import base64
+    import io
+
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new('RGB', (30, 20), (10, 200, 30)).save(buf, 'PNG')
+    bad = client.put('/api/countries/54/flag', json={'data': base64.b64encode(b'nope').decode()})
+    assert bad.status_code == 400 and bad.json()['detail']['code'] == 'bad_picture'
+    # the preview draws the picture without saving it
+    preview = client.post('/api/flag-preview', params={'size': 64}, json={'data': base64.b64encode(buf.getvalue()).decode()})
+    assert preview.status_code == 200 and preview.headers['content-type'] == 'image/png'
+    assert client.post('/api/flag-preview', json={'data': 'bm9wZQ=='}).json()['detail']['code'] == 'bad_picture'
+    assert not client.get('/api/countries/54').json()['own_flag']
+    game_flag = client.get('/api/image/flag/54').content
+    r = client.put('/api/countries/54/flag', json={'data': base64.b64encode(buf.getvalue()).decode()})
+    assert r.status_code == 200 and r.json()['own_flag'] and r.json()['edited'] and r.json()['base_flag_id'] == 54
+    image = client.get('/api/image/flag/54')
+    assert image.status_code == 200 and image.headers['content-type'] == 'image/png'
+    assert image.content != game_flag
+    assert client.get('/api/image/flag/54', params={'game_only': True}).content == game_flag
+    assert not client.delete('/api/countries/54/flag').json()['own_flag']
+    assert client.get('/api/status').json()['project'] == {}

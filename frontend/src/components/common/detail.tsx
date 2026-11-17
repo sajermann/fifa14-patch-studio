@@ -1,10 +1,47 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Badge as UiBadge } from '@/components/ui/badge'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import type { Raw } from '@/api/types'
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
+
+/** Max height for a scroll box so that, with the page scrolled to the top, it ends at the bottom of the visible area
+ * (the scrolling <main>): the box scrolls instead of the page. Follows window resizes and the content above it. */
+export function useFillHeight<E extends HTMLElement>(min = 120) {
+  const ref = useRef<E>(null)
+  const [height, setHeight] = useState<number>()
+  useLayoutEffect(() => {
+    const el = ref.current
+    const scroller = el?.closest('main')
+    if (!el || !scroller) return
+    const card = el.closest('[data-slot=card]') ?? el
+    const measure = () => {
+      const box = el.getBoundingClientRect()
+      const top = box.top - scroller.getBoundingClientRect().top + scroller.scrollTop
+      const below = card.getBoundingClientRect().bottom - box.bottom // the card's padding under the box
+      const padding = parseFloat(getComputedStyle(scroller).paddingBottom) || 0
+      setHeight(Math.max(min, Math.floor(scroller.clientHeight - top - below - padding)))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(scroller)
+    if (scroller.firstElementChild) observer.observe(scroller.firstElementChild)
+    return () => observer.disconnect()
+  }, [min])
+  return { ref, style: height ? { maxHeight: height } : undefined }
+}
+
+/** A box that scrolls on its own and is as tall as what is left of the screen, so the page itself does not scroll.
+ * A table inside keeps its header sticky (the table's own container stops being a scroll box). */
+export function FillScroll({ children, className }: { children: ReactNode; className?: string }) {
+  const fill = useFillHeight<HTMLDivElement>()
+  return (
+    <div ref={fill.ref} style={fill.style} className={cn('overflow-auto [&>[data-slot=table-container]]:overflow-visible', className)}>
+      {children}
+    </div>
+  )
+}
 
 /** A card: title, optional description and action (top right), then the content. */
 export function Section({ title, description, children, action, className }: { title: ReactNode; description?: ReactNode; children: ReactNode; action?: ReactNode; className?: string }) {

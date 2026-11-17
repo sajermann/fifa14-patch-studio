@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from . import settings  # noqa: I001 - first: it puts the core folder on the path
 
-from f14mod import builder, fields, fifa14, images, install_check, installer  # noqa: E402
+from f14mod import builder, fields, fifa14, flags, images, install_check, installer  # noqa: E402
 
 from . import dialogs, queries  # noqa: E402
 from .state import GameState, Jobs, project  # noqa: E402
@@ -491,9 +491,67 @@ def photo_image(pid: int, size: Optional[int] = None):
 
 
 @app.get('/api/image/flag/{cid}')
-def flag_image(cid: int, size: Optional[int] = None):
-    """The flag of a country of the game (a created country shows the flag it copies: see the list's flag_id)."""
+def flag_image(cid: int, size: Optional[int] = None, game_only: bool = False):
+    """The flag of a country: its own picture drawn as the game will show it, else the game's file (a created country
+    without a picture shows the flag it copies: see the list's flag_id). `game_only` skips the own picture."""
+    own = None if game_only else project().picture('country', cid, 'flag')
+    if own:
+        if game.state != 'ready':
+            raise ApiError(409, 'game_not_ready')
+        try:
+            img = flags.preview(game.files(), own[0])
+        except flags.FlagError as e:
+            raise ApiError(422, 'unreadable_file', str(e))
+        if size:
+            img = images.thumbnail(img, min(max(size, 16), 512))
+        return Response(images.png(img), media_type='image/png', headers={'Cache-Control': 'no-cache'})
     return _picture('flag', cid, fifa14.FLAG_PICTURE.format(cid), size)
+
+
+class PictureBody(BaseModel):
+    data: str  # the picture's file, base64
+
+
+@app.post('/api/flag-preview')
+def flag_preview(body: PictureBody, size: Optional[int] = None):
+    """A chosen picture drawn as the game will show the flag, without saving it (the page saves it with Save)."""
+    import base64
+    import binascii
+    if game.state != 'ready':
+        raise ApiError(409, 'game_not_ready')
+    try:
+        img = flags.preview(game.files(), flags.normalize_picture(base64.b64decode(body.data, validate=True)))
+    except (flags.FlagError, binascii.Error) as e:
+        raise ApiError(400, 'bad_picture', str(e))
+    if size:
+        img = images.thumbnail(img, min(max(size, 16), 512))
+    return Response(images.png(img), media_type='image/png', headers={'Cache-Control': 'no-store'})
+
+
+@app.put('/api/countries/{cid}/flag')
+def upload_flag(cid: int, body: PictureBody):
+    import base64
+    import binascii
+    with db() as con:
+        if queries.country(con, lang(), cid) is None:
+            raise ApiError(404, 'not_found')
+    try:
+        png = flags.normalize_picture(base64.b64decode(body.data, validate=True))
+    except (flags.FlagError, binascii.Error) as e:
+        raise ApiError(400, 'bad_picture', str(e))
+    project().set_picture('country', cid, 'flag', png)
+    with db() as con:
+        return queries.country(con, lang(), cid)
+
+
+@app.delete('/api/countries/{cid}/flag')
+def remove_flag(cid: int):
+    project().set_picture('country', cid, 'flag', None)
+    with db() as con:
+        out = queries.country(con, lang(), cid)
+    if out is None:
+        raise ApiError(404, 'not_found')
+    return out
 
 
 @app.get('/api/image/league/{lid}')

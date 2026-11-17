@@ -5,7 +5,7 @@ import zlib
 import fakegame
 import pytest
 
-from f14mod import builder, catalog, dbedit, fifa14, t3db
+from f14mod import builder, catalog, dbedit, fifa14, flags, images, t3db
 from f14mod.big import BigArchive
 from f14mod.project import Project
 
@@ -87,7 +87,7 @@ def test_build_writes_country_league_links_strings_and_pictures(installed, tmp_p
     assert summary['missing_strings'] == []
     for pattern in fifa14.LEAGUE_PICTURES:
         assert pattern.format(400) in summary['loose']
-    assert summary['pictures'] == len(fifa14.LEAGUE_PICTURES) + 1  # the fake game has one flag file of country 54
+    assert summary['pictures'] == len(fifa14.LEAGUE_PICTURES) + 4  # the four flag files of country 54 copied
     assert fifa14.FLAG_PICTURE.format(1) in summary['loose']
 
 
@@ -106,3 +106,45 @@ def test_too_many_league_links_stop_the_build(installed, tmp_path, monkeypatch):
     with pytest.raises(builder.BuildError) as e:
         builder.build(catalog.open_game(installed), project, str(tmp_path / 'patch'))
     assert e.value.code == 'too_many_league_links'
+
+
+def _picture_png(color=(10, 200, 30)):
+    from PIL import Image
+    img = Image.new('RGBA', (30, 20), color + (255,))
+    return flags.normalize_picture(images.png(img))
+
+
+def test_flag_drawn_from_a_picture_keeps_the_model_files(installed):
+    files = catalog.open_game(installed)
+    with pytest.raises(flags.FlagError):
+        flags.normalize_picture(b'not a picture')
+    out = flags.flag_files(files, _picture_png())
+    assert set(out) == set(fifa14.FLAG_FILES)
+    import tempfile
+    from f14mod.big import BigArchive
+    for pattern in fifa14.FLAG_FILES[:3]:
+        model = files.read(pattern.format(54))
+        assert len(out[pattern]) == len(model)  # same texture size and format: only the pixels change
+        path = os.path.join(tempfile.mkdtemp(), 'f.big')
+        with open(path, 'wb') as f:
+            f.write(out[pattern])
+        archive = BigArchive(path)
+        assert archive.read('0') == b'Apt Data:fake screen' and archive.read('1') == b'Apt constant'
+        texture = images.decode_dds(archive.read('2'))
+        assert texture.getpixel((8, 8))[:3] != (0, 0, 255) and texture.getpixel((8, 8))[3] == 255
+        assert texture.getpixel((8, 1))[3] == 0  # the model's alpha: outside the flag stays clear
+    assert flags.preview(files, _picture_png()).size == (16, 16)
+
+
+def test_build_draws_the_flag_of_a_country_with_a_picture(installed, tmp_path):
+    project = Project(str(tmp_path / 'p.sqlite'))
+    project.create('country', 1, {'full': {'*': 'Picture Land'}})
+    project.set_picture('country', 1, 'flag', _picture_png())
+    project.set_picture('country', 54, 'flag', _picture_png((200, 0, 0)))  # a country of the game too
+    assert project.counts() == {'country': 1, 'new_country': 1}
+    summary = builder.build(catalog.open_game(installed), project, str(tmp_path / 'patch'))
+    for nid in (1, 54):
+        for pattern in fifa14.FLAG_FILES:
+            assert pattern.format(nid) in summary['loose']
+    project.set_picture('country', 54, 'flag', None)
+    assert project.counts() == {'new_country': 1}

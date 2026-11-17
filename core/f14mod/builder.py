@@ -9,7 +9,7 @@ The patch never holds the big archives themselves.
 import os
 import shutil
 
-from . import bh, fields, fifa14, images, t3db
+from . import bh, fields, fifa14, flags, images, t3db
 from .big import BigArchive, normalize, rebuild
 from .dbedit import Database, LanguageStrings, Table
 from .gamefs import DATABASE, GameFiles
@@ -302,9 +302,14 @@ def created_pictures(files: GameFiles, project: Project, builder: 'PatchBuilder'
         for pattern, (size, dark) in fifa14.LEAGUE_PICTURES.items():
             builder.put(pattern.format(lid), images.league_picture(size, dark, text))
             count += 1
+    drawn = project.with_picture('country', 'flag')
+    for nid in drawn:  # the user's picture: the four flag files drawn from it
+        for pattern, data in flags.flag_files(files, project.picture('country', nid, 'flag')[0]).items():
+            builder.put(pattern.format(nid), data)
+            count += 1
     countries = set(project.created('country')) | {nid for nid, f in project.all_fields('country').items()
                                                        if f.get('flag_from')}
-    for nid in sorted(countries):
+    for nid in sorted(countries - set(drawn)):
         source = project.fields('country', nid).get('flag_from') or fifa14.TEMPLATE_NATION
         if source == nid:
             continue

@@ -17,11 +17,11 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { EditForm, FieldSpec, FieldValue, NameTable, Ref, RosterRow } from '@/api/types'
-import { Section } from '@/components/common/detail'
+import { FillScroll, Section } from '@/components/common/detail'
 import { hasMessage, useI18n, type MessageKey } from '@/i18n'
 import { toast } from '@/lib/notify'
 import { cn } from '@/lib/utils'
-import { useOptions } from '@/state/queries'
+import { useOptions, useStatus } from '@/state/queries'
 
 export const ALL = '*'
 export type Fields = Record<string, FieldValue>
@@ -73,12 +73,20 @@ export function useEntityForm<T extends EditForm & { saved_names?: NameTable }>(
   invalidate,
   save,
   reset,
+  extraDirty = false,
+  onDiscard,
+  invalid,
 }: {
   data: T | undefined
   queryKey: QueryKey
   invalidate: string[]
   save: (form: FormState) => Promise<T>
   reset: () => Promise<T>
+  /** A change the page keeps outside the form (a picture chosen but not saved yet): Save and Discard count it. */
+  extraDirty?: boolean
+  onDiscard?: () => void
+  /** Whether the form has something to fix before saving (a required name): Save stays off. */
+  invalid?: (form: FormState) => boolean
 }) {
   const { t } = useI18n()
   const qc = useQueryClient()
@@ -88,7 +96,7 @@ export function useEntityForm<T extends EditForm & { saved_names?: NameTable }>(
     if (data) setForm(savedForm)
   }, [data, savedForm])
   const cleaned = useMemo(() => ({ names: cleanNames(form.names), fields: cleanFields(form.fields, data?.values ?? {}) }), [form, data])
-  const dirty = !!data && !sameForm(cleaned, savedForm)
+  const dirty = !!data && (extraDirty || !sameForm(cleaned, savedForm))
   const after = (saved: T) => {
     qc.setQueryData(queryKey, saved)
     for (const k of [...invalidate, 'status']) void qc.invalidateQueries({ queryKey: [k] })
@@ -112,9 +120,13 @@ export function useEntityForm<T extends EditForm & { saved_names?: NameTable }>(
   return {
     form,
     dirty,
+    invalid: !!data && !!invalid?.(form),
     setNames: (names: NameTable) => setForm((f) => ({ ...f, names })),
     setField: (name: string, value: FieldValue) => setForm((f) => ({ ...f, fields: { ...f.fields, [name]: value } })),
-    discard: () => setForm(savedForm),
+    discard: () => {
+      setForm(savedForm)
+      onDiscard?.()
+    },
     saving,
     resetting,
   }
@@ -130,7 +142,7 @@ export function EditActions({ edited, entity }: { edited: boolean; entity: Retur
       <Button variant="ghost" size="sm" disabled={!entity.dirty} onClick={entity.discard}>
         <Undo2 /> {t('common.discard')}
       </Button>
-      <Button size="sm" disabled={!entity.dirty || entity.saving.isPending} onClick={() => entity.saving.mutate()}>
+      <Button size="sm" disabled={!entity.dirty || entity.invalid || entity.saving.isPending} onClick={() => entity.saving.mutate()}>
         {entity.saving.isPending ? <Loader2 className="animate-spin" /> : <Save />} {t('common.save')}
       </Button>
       {edited && (
@@ -186,7 +198,8 @@ export function UnsavedGuard({ dirty }: { dirty: boolean }) {
 
 // ---- names by language (teams and leagues) ----------------------------------------------------------------------
 
-/** Each name: one value for every language, and a value of its own for the languages that need one. */
+/** Each name, in one table: the select picks "every language" (the value for all of them) or one language (a value
+ * of its own, that wins over the one of every language). */
 export function NamesEditor({
   kind,
   nameKeys,
@@ -203,7 +216,9 @@ export function NamesEditor({
   setNames: (n: NameTable) => void
 }) {
   const { t } = useI18n()
-  const [lang, setLang] = useState(languages.includes('por_br') ? 'por_br' : (languages[0] ?? 'eng_us'))
+  const uiLang = useStatus().data?.names_language ?? 'eng_us'
+  const [lang, setLang] = useState(ALL)
+  const every = lang === ALL
   const limits = NAME_LIMITS[kind]
   const label = (key: string) => {
     const k = `${kind}Name.${key}`
@@ -214,69 +229,149 @@ export function NamesEditor({
     return [limits[key] ? t('team.limit', { count: limits[key] }) : '', hasMessage(k) ? t(k as MessageKey) : ''].filter(Boolean).join(' · ')
   }
   const set = (key: string, code: string, text: string) => setNames({ ...names, [key]: { ...names[key], [code]: text } })
-  const shown = (key: string, code: string) => original[key]?.[code] ?? original[key]?.eng_us ?? ''
+  const inGame = (key: string, code: string) => original[key]?.[code] ?? original[key]?.eng_us ?? ''
   return (
-    <div className="space-y-4">
-      <Section title={t('team.namesAll')} description={t(`${kind}.namesAllHint`)}>
-        <div className="grid gap-4">
+    <Section
+      title={t('team.tab.names')}
+      description={t(every ? `${kind}.namesAllHint` : `${kind}.namesLanguageHint`)}
+      action={
+        <Select value={lang} onValueChange={setLang}>
+          <SelectTrigger className="w-44">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>{t('team.allLanguages')}</SelectItem>
+            {languages.map((code) => (
+              <SelectItem key={code} value={code}>
+                {code}
+                {nameKeys.some((k) => names[k]?.[code]?.trim()) ? ' •' : ''}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      }
+    >
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-48">{t('team.nameKey')}</TableHead>
+            <TableHead>{t('team.inGame')}</TableHead>
+            <TableHead className="w-[45%]">{every ? t('team.allLanguages') : t('team.ownValue')}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {nameKeys.map((key) => {
             const own = languages.filter((code) => names[key]?.[code]?.trim())
             return (
-              <div key={key} className="grid items-center gap-2 sm:grid-cols-[14rem_1fr]">
-                <div>
-                  <p className="text-sm font-medium">{label(key)}</p>
-                  <p className="text-xs text-muted-foreground">{hint(key)}</p>
-                </div>
-                <div className="space-y-1">
-                  <Input value={names[key]?.[ALL] ?? ''} maxLength={limits[key]} placeholder={shown(key, lang)} onChange={(e) => set(key, ALL, e.target.value)} />
-                  {own.length > 0 && <p className="text-xs text-muted-foreground">{t('team.ownValues', { langs: own.join(', ') })}</p>}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </Section>
-      <Section
-        title={t('team.namesLanguage')}
-        description={t(`${kind}.namesLanguageHint`)}
-        action={
-          <Select value={lang} onValueChange={setLang}>
-            <SelectTrigger className="w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {languages.map((code) => (
-                <SelectItem key={code} value={code}>
-                  {code}
-                  {nameKeys.some((k) => names[k]?.[code]?.trim()) ? ' •' : ''}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        }
-      >
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-48">{t('team.nameKey')}</TableHead>
-              <TableHead>{t('team.inGame')}</TableHead>
-              <TableHead className="w-[45%]">{t('team.ownValue')}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {nameKeys.map((key) => (
               <TableRow key={key}>
-                <TableCell className="font-medium">{label(key)}</TableCell>
-                <TableCell className="text-muted-foreground">{original[key]?.[lang] ?? '—'}</TableCell>
-                <TableCell>
-                  <Input value={names[key]?.[lang] ?? ''} maxLength={limits[key]} placeholder={names[key]?.[ALL] || shown(key, lang)} onChange={(e) => set(key, lang, e.target.value)} />
+                <TableCell className="align-top whitespace-normal">
+                  <p className="font-medium">{label(key)}</p>
+                  {hint(key) && <p className="text-xs text-muted-foreground">{hint(key)}</p>}
+                </TableCell>
+                <TableCell className="align-top whitespace-normal text-muted-foreground">{(every ? inGame(key, uiLang) : original[key]?.[lang]) || '—'}</TableCell>
+                <TableCell className="align-top whitespace-normal">
+                  {every ? (
+                    <div className="space-y-1">
+                      <Input value={names[key]?.[ALL] ?? ''} maxLength={limits[key]} placeholder={inGame(key, uiLang)} onChange={(e) => set(key, ALL, e.target.value)} />
+                      {own.length > 0 && <p className="text-xs text-muted-foreground">{t('team.ownValues', { langs: own.join(', ') })}</p>}
+                    </div>
+                  ) : (
+                    <Input value={names[key]?.[lang] ?? ''} maxLength={limits[key]} placeholder={names[key]?.[ALL] || inGame(key, lang)} onChange={(e) => set(key, lang, e.target.value)} />
+                  )}
                 </TableCell>
               </TableRow>
+            )
+          })}
+        </TableBody>
+      </Table>
+    </Section>
+  )
+}
+
+/** The names as a grid: one row per language (the first, "All", is the value of every language) and one column per
+ * name. An empty language cell shows, as its placeholder, what it will get: the "All" value as it is being typed,
+ * else the game's name in that language. `required` names must have an "All" value. */
+export function NamesGrid({
+  kind,
+  columns,
+  languages,
+  original,
+  names,
+  setNames,
+  required = [],
+}: {
+  kind: 'team' | 'league' | 'country'
+  columns: string[]
+  languages: string[]
+  original: NameTable
+  names: NameTable
+  setNames: (n: NameTable) => void
+  required?: string[]
+}) {
+  const { t } = useI18n()
+  const uiLang = useStatus().data?.names_language ?? 'eng_us'
+  const limits = NAME_LIMITS[kind]
+  const label = (key: string) => {
+    const k = `${kind}Name.${key}`
+    return hasMessage(k) ? t(k as MessageKey) : key
+  }
+  const set = (key: string, code: string, text: string) => setNames({ ...names, [key]: { ...names[key], [code]: text } })
+  const inGame = (key: string, code: string) => original[key]?.[code] ?? original[key]?.eng_us ?? ''
+  const missing = (key: string) => required.includes(key) && !names[key]?.[ALL]?.trim()
+  return (
+    <Section title={t('team.tab.names')} description={t('names.gridHint')}>
+      {/* the grid scrolls on its own, with the header always on top */}
+      <FillScroll>
+        <table className="w-full text-sm">
+          <colgroup>
+            <col className="w-24" />
+            {columns.map((key) => (
+              // a short name (a 3-letter abbreviation) gets a narrow column, the others share the rest
+              <col key={key} className={(limits[key] ?? 99) <= 3 ? 'w-44' : undefined} />
             ))}
-          </TableBody>
-        </Table>
-      </Section>
-    </div>
+          </colgroup>
+          <thead className="sticky top-0 z-10 shadow-[0_1px_0_var(--border)] [&_th]:bg-card">
+            <tr className="border-b text-left text-muted-foreground">
+              <th className="px-2 py-2 font-medium">{t('names.language')}</th>
+              {columns.map((key) => (
+                <th key={key} className="px-2 py-2 font-medium">
+                  {label(key)}
+                  {limits[key] && <span className="ml-1 text-xs font-normal">({t('names.max', { count: limits[key] })})</span>}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-b bg-muted/40">
+              <td className="px-2 py-1.5 align-top leading-8 font-semibold">{t('names.all')}</td>
+              {columns.map((key) => (
+                <td key={key} className="px-2 py-1.5 align-top">
+                  <Input
+                    value={names[key]?.[ALL] ?? ''}
+                    maxLength={limits[key]}
+                    placeholder={inGame(key, uiLang)}
+                    aria-invalid={missing(key) || undefined}
+                    className={cn('h-8', missing(key) && 'border-destructive')}
+                    onChange={(e) => set(key, ALL, e.target.value)}
+                  />
+                  {missing(key) && <p className="mt-1 text-xs text-destructive">{t('names.required')}</p>}
+                </td>
+              ))}
+            </tr>
+            {languages.map((code) => (
+              <tr key={code} className="border-b last:border-0">
+                <td className="px-2 py-1.5 font-mono text-xs text-muted-foreground">{code}</td>
+                {columns.map((key) => (
+                  <td key={key} className="px-2 py-1.5">
+                    <Input className="h-8" value={names[key]?.[code] ?? ''} maxLength={limits[key]} placeholder={names[key]?.[ALL]?.trim() || inGame(key, code)} onChange={(e) => set(key, code, e.target.value)} />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </FillScroll>
+    </Section>
   )
 }
 

@@ -108,7 +108,9 @@ def _search(column: str, q: str, params: dict) -> str:
 
 
 def _page(con, select: str, where: list[str], params: dict, sorts: dict[str, str], sort: str | None,
-          direction: str | None, default: tuple[str, str], page_no: int, size: int) -> dict:
+          direction: str | None, default: tuple[str, str], page_no: int, size: int, new_first: bool = False) -> dict:
+    """One page of `select`. With `new_first` (the select has an `is_new` column) the user's created items come
+    before the game's, whatever the sort."""
     key, default_dir = default
     if sort in sorts:
         key = sort
@@ -120,8 +122,9 @@ def _page(con, select: str, where: list[str], params: dict, sorts: dict[str, str
     pages = max(1, math.ceil(total / size))
     page_no = min(max(1, page_no), pages)
     order = sorts[key]
+    first = 'is_new DESC, ' if new_first else ''
     rows = con.execute(
-        f'SELECT * FROM ({select} {clause}) ORDER BY ({order}) IS NULL, {order} {"DESC" if desc else "ASC"}, id '
+        f'SELECT * FROM ({select} {clause}) ORDER BY {first}({order}) IS NULL, {order} {"DESC" if desc else "ASC"}, id '
         f'LIMIT :limit OFFSET :offset', {**params, 'limit': size, 'offset': (page_no - 1) * size}).fetchall()
     return {'items': [dict(r) for r in rows], 'total': total, 'page': page_no, 'size': size, 'pages': pages,
             'sort': key, 'dir': 'desc' if desc else 'asc'}
@@ -145,7 +148,7 @@ def leagues(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAUL
         where.append(_search('fold(name) || \' \' || search', q, params))
     sorts = {'name': 'fold(name)', 'id': 'id', 'level': 'level', 'country': 'fold(country)',
              'team_count': 'team_count'}
-    out = _page(con, select, where, params, sorts, sort, direction, ('name', 'asc'), page, size)
+    out = _page(con, select, where, params, sorts, sort, direction, ('name', 'asc'), page, size, new_first=True)
     for r in out['items']:
         r.pop('search', None)
         r['edited'] = bool(r['edited'])
@@ -339,6 +342,8 @@ def countries(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFA
     params: dict = {'lang': lang}
     select = f"""SELECT n.id, {_country_name()} AS name, n.is_new, n.has_flag,
                  COALESCE({_saved('country', 'n', 'flag_from')}, n.id) AS flag_id,
+                 (SELECT updated_at FROM p.pictures WHERE kind = 'country' AND id = n.id AND slot = 'flag')
+                     AS own_flag,
                  (SELECT COUNT(*) FROM v_leagues WHERE country_id = n.id) AS league_count,
                  {_edited('country', 'n')} AS edited, n.search AS search
                  FROM v_nations n"""
@@ -349,12 +354,18 @@ def countries(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFA
     if q.strip():
         where.append(_search("fold(name) || ' ' || id || ' ' || search", q, params))
     sorts = {'name': 'fold(name)', 'id': 'id', 'league_count': 'league_count'}
-    out = _page(con, select, where, params, sorts, sort, direction, ('name', 'asc'), page, size)
+    out = _page(con, select, where, params, sorts, sort, direction, ('name', 'asc'), page, size, new_first=True)
     for r in out['items']:
         r.pop('search', None)
         r['is_new'] = bool(r['is_new'])
         r['edited'] = bool(r['edited'])
-        if r['is_new'] and r['flag_id'] == r['id']:
+        base = r['flag_id']
+        if r['is_new'] and base == r['id']:
+            base = fifa14.TEMPLATE_NATION
+        r['base_flag_id'] = base  # the flag shown when the country has no picture of its own
+        if r['own_flag']:
+            r['flag_id'] = r['id']  # its own picture: /api/image/flag/<id> draws it
+        elif r['is_new'] and r['flag_id'] == r['id']:
             r['flag_id'] = fifa14.TEMPLATE_NATION  # a created country without a choice: Rest of World's flag
         r['has_flag'] = bool(r['has_flag'])
     return out
