@@ -129,16 +129,30 @@ def _yes_no(value: Optional[str]):
 
 @app.get('/api/leagues')
 def list_leagues(q: str = '', country: Optional[int] = None, sort: Optional[str] = None, dir: Optional[str] = None,
-                 page: int = 1, size: int = queries.DEFAULT_PAGE_SIZE):
+                 page: int = 1, size: int = queries.DEFAULT_PAGE_SIZE, ids: Optional[str] = None):
+    """`ids` (comma separated) = only these leagues (the list a page is editing)."""
     with db() as con:
-        return queries.leagues(con, lang(), q, sort, dir, page, size, country=country)
+        return queries.leagues(con, lang(), q, sort, dir, page, size, country=country, ids=_id_list(ids))
+
+
+def _id_list(ids: Optional[str]) -> Optional[list[int]]:
+    try:
+        return [int(x) for x in ids.split(',') if x.strip()] if ids is not None else None
+    except ValueError:
+        raise ApiError(400, 'bad_request', 'ids')
 
 
 @app.get('/api/teams')
 def list_teams(q: str = '', league: Optional[int] = None, edited: Optional[str] = None, sort: Optional[str] = None,
-               dir: Optional[str] = None, page: int = 1, size: int = queries.DEFAULT_PAGE_SIZE):
+               dir: Optional[str] = None, page: int = 1, size: int = queries.DEFAULT_PAGE_SIZE,
+               ids: Optional[str] = None):
+    """`ids` (comma separated) = only these teams (the list a page is editing)."""
+    try:
+        only_ids = [int(x) for x in ids.split(',') if x.strip()] if ids is not None else None
+    except ValueError:
+        raise ApiError(400, 'bad_request', 'ids')
     with db() as con:
-        return queries.teams(con, lang(), q, league, _yes_no(edited), sort, dir, page, size)
+        return queries.teams(con, lang(), q, league, _yes_no(edited), sort, dir, page, size, ids=only_ids)
 
 
 @app.get('/api/players')
@@ -227,6 +241,9 @@ def _clean_fields(con, kind: str, oid: int, body: dict, detail: dict) -> dict:
         raise ApiError(400, f'field_{e.code}', e.field)
     for name, value in kept.items():
         spec = fields.BY_NAME[kind][name]
+        if spec.kind == 'nations' and any(
+                not con.execute('SELECT 1 FROM v_nations WHERE id = ?', (v,)).fetchone() for v in value):
+            raise ApiError(400, 'field_out_of_range', name)
         if spec.kind == 'nation' and not (spec.optional and value == 0) and                 not con.execute('SELECT 1 FROM v_nations WHERE id = ?', (value,)).fetchone():
             raise ApiError(400, 'field_out_of_range', name)
         if spec.kind == 'team' and not con.execute('SELECT 1 FROM teams WHERE id = ?', (value,)).fetchone():
@@ -357,6 +374,44 @@ def save_country(cid: int, body: EntityBody):
     return _save('country', cid, body)
 
 
+class LeaguesBody(BaseModel):
+    league_ids: list[int]
+
+
+@app.put('/api/countries/{cid}/leagues')
+def save_country_leagues(cid: int, body: LeaguesBody):
+    """The whole list of leagues shown in a country. A league added gets the country as its own (when it has none)
+    or as one more country; a league removed loses it (its next country becomes its own, or it is left without)."""
+    wanted = list(dict.fromkeys(body.league_ids))
+    with db() as con:
+        if queries.country(con, lang(), cid) is None:
+            raise ApiError(404, 'not_found')
+        now = {r[0] for r in con.execute(
+            f"SELECT l.id FROM v_leagues l WHERE {queries._in_country('l', '?')}", (cid, cid))}  # noqa: SLF001
+        changes: dict[int, dict] = {}
+        for lid in set(wanted) ^ now:
+            detail = queries.league(con, lang(), lid)
+            if detail is None:
+                raise ApiError(400, 'unknown_league', str(lid))
+            values = {**detail['values'], **detail['saved']}
+            own, extra = values.get('countryid') or 0, list(values.get('extra_countries') or [])
+            if lid in now:  # removed
+                if own == cid:
+                    own, extra = (extra[0], extra[1:]) if extra else (0, extra)
+                else:
+                    extra = [c for c in extra if c != cid]
+            elif not own:
+                own = cid
+            else:
+                extra.append(cid)
+            form = {**detail['saved'], 'countryid': own, 'extra_countries': extra}
+            changes[lid] = _clean_fields(con, 'league', lid, form, detail)
+    for lid, kept in changes.items():
+        project().save('league', lid, project().names('league', lid), kept)
+    with db() as con:
+        return queries.country(con, lang(), cid)
+
+
 @app.delete('/api/countries/{cid}/edits')
 def reset_country(cid: int):
     if project().is_created('country', cid):
@@ -369,7 +424,8 @@ def delete_country(cid: int):
     if not project().is_created('country', cid):
         raise ApiError(400, 'not_created')
     with db() as con:
-        if con.execute('SELECT 1 FROM v_leagues WHERE country_id = ?', (cid,)).fetchone():
+        if con.execute(f"SELECT 1 FROM v_leagues l WHERE {queries._in_country('l', '?')}",  # noqa: SLF001
+                       (cid, cid)).fetchone():
             raise ApiError(409, 'country_has_leagues')
     project().delete('country', cid)
     return {'deleted': cid}
@@ -385,8 +441,7 @@ def create_league(body: CreateBody):
         names = _clean_names('league', body.names, {}, set(queries.languages(con)))
         values = {'leaguename': None, 'level': None, 'countryid': None}
         kept = _clean_fields(con, 'league', lid, body.fields, {'values': values})
-        if not kept.get('countryid'):
-            raise ApiError(400, 'field_out_of_range', 'countryid')
+        kept.setdefault('countryid', 0)  # no country yet: added to one in the country's page (hidden until then)
         kept.setdefault('level', 1)
         kept.setdefault('leaguename', _first_text(names.get('full', {}))[:60])
     project().create('league', lid, names, kept)
@@ -528,6 +583,21 @@ def flag_preview(body: PictureBody, size: Optional[int] = None):
     return Response(images.png(img), media_type='image/png', headers={'Cache-Control': 'no-store'})
 
 
+@app.post('/api/league-logo-preview')
+def league_logo_preview(body: PictureBody, size: Optional[int] = None):
+    """A chosen picture fitted as the league's logo, without saving it (the page saves it with Save)."""
+    import base64
+    import binascii
+    try:
+        png = images.normalize_picture(base64.b64decode(body.data, validate=True))
+    except (images.PictureError, binascii.Error) as e:
+        raise ApiError(400, 'bad_picture', str(e))
+    img = images.fit(images.decode_png(png), (256, 256))
+    if size:
+        img = images.thumbnail(img, min(max(size, 16), 512))
+    return Response(images.png(img), media_type='image/png', headers={'Cache-Control': 'no-store'})
+
+
 @app.put('/api/countries/{cid}/flag')
 def upload_flag(cid: int, body: PictureBody):
     import base64
@@ -555,8 +625,77 @@ def remove_flag(cid: int):
 
 
 @app.get('/api/image/league/{lid}')
-def league_image(lid: int, size: Optional[int] = None):
+def league_image(lid: int, size: Optional[int] = None, game_only: bool = False):
+    """The league's logo: the user's picture (as it goes to the game, fitted in the square), else the game's file.
+    `game_only` skips the user's picture."""
+    own = None if game_only else project().picture('league', lid, 'logo')
+    if own:
+        img = images.fit(images.decode_png(own[0]), (256, 256))
+        if size:
+            img = images.thumbnail(img, min(max(size, 16), 512))
+        return Response(images.png(img), media_type='image/png', headers={'Cache-Control': 'no-cache'})
     return _picture('league', lid, fifa14.LEAGUE_IMAGES['logo'].format(lid), size)
+
+
+@app.put('/api/leagues/{lid}/logo')
+def upload_league_logo(lid: int, body: PictureBody):
+    """The league's own picture: the patch draws the eight league pictures from it."""
+    import base64
+    import binascii
+    with db() as con:
+        if queries.league(con, lang(), lid) is None:
+            raise ApiError(404, 'not_found')
+    try:
+        png = images.normalize_picture(base64.b64decode(body.data, validate=True))
+    except (images.PictureError, binascii.Error) as e:
+        raise ApiError(400, 'bad_picture', str(e))
+    project().set_picture('league', lid, 'logo', png)
+    with db() as con:
+        return queries.league(con, lang(), lid)
+
+
+@app.delete('/api/leagues/{lid}/logo')
+def remove_league_logo(lid: int):
+    project().set_picture('league', lid, 'logo', None)
+    with db() as con:
+        out = queries.league(con, lang(), lid)
+    if out is None:
+        raise ApiError(404, 'not_found')
+    return out
+
+
+class HiddenBody(BaseModel):
+    # the Hide button (same rule as the Street Studio): a created entity hidden is out of the patch, an original one
+    # is hidden in the game by the project
+    hidden: bool
+
+
+def _set_hidden(kind: str, oid: int, body: HiddenBody):
+    with db() as con:
+        if DETAILS[kind](con, lang(), oid) is None:
+            raise ApiError(404, 'not_found')
+    project().set_hidden(kind, oid, body.hidden)
+    with db() as con:
+        return DETAILS[kind](con, lang(), oid)
+
+
+@app.put('/api/leagues/{lid}/hidden')
+def set_league_hidden(lid: int, body: HiddenBody):
+    """Hide: a created league is left out of the patch; a league of the game is hidden in it (country 0)."""
+    return _set_hidden('league', lid, body)
+
+
+@app.put('/api/countries/{cid}/hidden')
+def set_country_hidden(cid: int, body: HiddenBody):
+    """Hide: a created country is left out of the patch; a country of the game is hidden in it (its leagues leave
+    it; a league with no other country is hidden)."""
+    return _set_hidden('country', cid, body)
+
+
+@app.put('/api/teams/{tid}/hidden')
+def set_team_hidden(tid: int, body: HiddenBody):
+    """Hide: a team of the game is hidden in it (linked only to a hidden league)."""
+    return _set_hidden('team', tid, body)
 
 
 # ---- patch: build, install, uninstall -------------------------------------------------------------------------------

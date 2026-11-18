@@ -15,7 +15,7 @@ from PIL import Image
 from . import big, fifa14, images
 
 MODEL_NATIONS = (54, fifa14.TEMPLATE_NATION)  # the first one with all four files is the model
-MAX_PICTURE = 1024
+MAX_PICTURE = images.MAX_PICTURE
 
 
 class FlagError(ValueError):
@@ -25,14 +25,9 @@ class FlagError(ValueError):
 def normalize_picture(data: bytes) -> bytes:
     """The uploaded picture as a PNG (RGBA, at most MAX_PICTURE pixels a side); raises FlagError."""
     try:
-        with Image.open(io.BytesIO(data)) as img:
-            img = img.convert('RGBA')
-    except images.UNREADABLE as e:
-        raise FlagError(f'not a picture: {e}') from e
-    if min(img.size) < 8:
-        raise FlagError('picture too small')
-    img.thumbnail((MAX_PICTURE, MAX_PICTURE))
-    return images.png(img)
+        return images.normalize_picture(data)
+    except images.PictureError as e:
+        raise FlagError(str(e)) from e
 
 
 def draw(model: Image.Image, picture: Image.Image) -> Image.Image:

@@ -85,6 +85,18 @@ def _edited(kind: str, alias: str) -> str:
     return f"EXISTS (SELECT 1 FROM p.edited WHERE kind = '{kind}' AND id = {alias}.id)"
 
 
+def _flag(table: str, kind: str, alias: str) -> str:
+    """1 when the entity is hidden by the project (`hidden`: a created one is out of the patch, an original one is
+    hidden in the game)."""
+    return f"EXISTS (SELECT 1 FROM p.{table} WHERE kind = '{kind}' AND id = {alias}.id)"
+
+
+def _in_country(alias: str, country: str) -> str:
+    """The league `alias` shows in `country`: its own country or one of the extra countries saved for it."""
+    return (f"({alias}.country_id = {country} OR EXISTS (SELECT 1 FROM p.fields f, json_each(f.value) j "
+            f"WHERE f.kind = 'league' AND f.id = {alias}.id AND f.field = 'extra_countries' AND j.value = {country}))")
+
+
 def _player_name(alias: str = 'pl') -> str:
     """The shown name: the common name (saved, then the game's), else first + last (saved or the game's)."""
     first, last = _saved('player', alias, 'name.first'), _saved('player', alias, 'name.last')
@@ -133,17 +145,25 @@ def _page(con, select: str, where: list[str], params: dict, sorts: dict[str, str
 # ---- lists ----------------------------------------------------------------------------------------------------------
 
 def leagues(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAULT_PAGE_SIZE,
-            country: int | None = None) -> dict:
+            country: int | None = None, ids: list[int] | None = None) -> dict:
     params: dict = {'lang': lang}
     select = f"""SELECT l.id, {_league_name()} AS name, l.db_name, l.level, l.country_id,
                  (SELECT name FROM v_nations WHERE id = l.country_id) AS country, l.has_logo, l.is_new,
                  (SELECT COUNT(*) FROM v_league_teams WHERE league_id = l.id) AS team_count,
-                 {_edited('league', 'l')} AS edited, l.search AS search
+                 {_edited('league', 'l')} AS edited, l.search AS search,
+                 {_flag('hidden', 'league', 'l')} AS hidden,
+                 COALESCE((SELECT g.country_id FROM leagues g WHERE g.id = l.id) IN (0, {', '.join(map(str, fifa14.UNLISTED_NATIONS))}), 0) AS game_hidden,
+                 (SELECT value FROM p.fields WHERE kind = 'league' AND id = l.id AND field = 'extra_countries')
+                     AS extra_countries,
+                 (SELECT updated_at FROM p.pictures WHERE kind = 'league' AND id = l.id AND slot = 'logo') AS own_logo
                  FROM v_leagues l"""
     where = []
     if country is not None:
         params['country'] = country
-        where.append('country_id = :country')
+        where.append(_in_country('l', ':country'))
+    if ids is not None:  # these leagues only (a list the page is editing)
+        listed = ','.join(str(int(i)) for i in ids) or 'NULL'
+        where.append(f'l.id IN ({listed})')
     if q.strip():
         where.append(_search('fold(name) || \' \' || search', q, params))
     sorts = {'name': 'fold(name)', 'id': 'id', 'level': 'level', 'country': 'fold(country)',
@@ -153,12 +173,15 @@ def leagues(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAUL
         r.pop('search', None)
         r['edited'] = bool(r['edited'])
         r['is_new'] = bool(r['is_new'])
-        r['has_logo'] = bool(r['has_logo'])
+        r['hidden'] = bool(r['hidden'])
+        r['game_hidden'] = bool(r['game_hidden'])  # the game itself never lists it
+        r['extra_countries'] = json.loads(r['extra_countries']) if r['extra_countries'] else []
+        r['has_logo'] = bool(r['has_logo'] or r['own_logo'])
     return out
 
 
 def teams(con, lang: str, q='', league: int | None = None, edited: bool | None = None, sort=None, direction=None,
-          page=1, size=DEFAULT_PAGE_SIZE, only: int | None = None) -> dict:
+          page=1, size=DEFAULT_PAGE_SIZE, only: int | None = None, ids: list[int] | None = None) -> dict:
     params: dict = {'lang': lang}
     select = f"""SELECT t.id, {_team_name('full')} AS name, {_team_name('abbr15')} AS abbr15,
                  {_team_name('abbr3')} AS abbr3, t.overall, t.attack, t.midfield, t.defense, t.color, t.has_crest,
@@ -166,12 +189,16 @@ def teams(con, lang: str, q='', league: int | None = None, edited: bool | None =
                  (SELECT {_league_name('l')} FROM v_leagues l WHERE l.id = {_first_league()}) AS league,
                  (SELECT COUNT(*) FROM team_players WHERE team_id = t.id) AS player_count,
                  {_edited('team', 't')} AS edited,
+                 {_flag('hidden', 'team', 't')} AS hidden,
                  t.search AS search
                  FROM teams t"""
     where = []
     if only is not None:
         params['only'] = only
         where.append('id = :only')
+    if ids is not None:  # these teams only (a list the page is editing)
+        listed = ','.join(str(int(i)) for i in ids) or 'NULL'
+        where.append(f'id IN ({listed})')
     if league is not None:
         params['league'] = league
         where.append('id IN (SELECT team_id FROM v_league_teams WHERE league_id = :league)')
@@ -187,6 +214,7 @@ def teams(con, lang: str, q='', league: int | None = None, edited: bool | None =
         r['color'] = json.loads(r['color']) if r['color'] else None
         r['has_crest'] = bool(r['has_crest'])
         r['edited'] = bool(r['edited'])
+        r['hidden'] = bool(r['hidden'])
     return out
 
 
@@ -291,7 +319,22 @@ def league(con, lang: str, lid: int) -> dict | None:
     team_ids = [r[0] for r in con.execute(
         'SELECT team_id FROM v_league_teams WHERE league_id = ? ORDER BY ord, team_id', (lid,))]
     custom = con.execute('SELECT 1 FROM p.league_members_set WHERE league_id = ?', (lid,)).fetchone() is not None
-    return {**dict(head), 'db_name': row['db_name'], 'has_logo': bool(row['has_logo']), 'is_new': bool(head['is_new']),
+    game_team_ids = [] if head['is_new'] else [r[0] for r in con.execute(
+        'SELECT team_id FROM league_teams WHERE league_id = ? ORDER BY team_id', (lid,))]
+    own_logo = con.execute("SELECT updated_at FROM p.pictures WHERE kind = 'league' AND id = ? AND slot = 'logo'",
+                           (lid,)).fetchone()
+    hidden = con.execute("SELECT 1 FROM p.hidden WHERE kind = 'league' AND id = ?", (lid,)).fetchone() is not None
+    extra = con.execute("SELECT value FROM p.fields WHERE kind = 'league' AND id = ? AND field = 'extra_countries'",
+                        (lid,)).fetchone()
+    shown_in = [c for c in dict.fromkeys([head['country_id'], *(json.loads(extra[0]) if extra else [])]) if c]
+    countries_hidden = {r[0] for r in con.execute("SELECT id FROM p.hidden WHERE kind = 'country'")}
+    game_country = con.execute('SELECT country_id FROM leagues WHERE id = ?', (lid,)).fetchone()
+    return {**dict(head), 'db_name': row['db_name'], 'is_new': bool(head['is_new']),
+            'has_logo': bool(row['has_logo']) or own_logo is not None, 'game_has_logo': bool(row['has_logo']),
+            'own_logo': own_logo[0] if own_logo else None, 'hidden': hidden, 'game_team_ids': game_team_ids,
+            'game_hidden': game_country is not None and game_country[0] in (0, *fifa14.UNLISTED_NATIONS),
+            # every country the league shows in is hidden in the game: the league is hidden too
+            'hidden_by_countries': bool(shown_in) and all(c in countries_hidden for c in shown_in),
             'names': original, 'original_names': original, 'saved_names': _project_names(con, 'league', lid),
             'name_keys': LEAGUE_NAME_KEYS, 'languages': languages(con), 'team_ids': team_ids,
             'teams_changed': custom, 'teams': teams(con, lang, league=lid, size=100)['items'],
@@ -344,7 +387,9 @@ def countries(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFA
                  COALESCE({_saved('country', 'n', 'flag_from')}, n.id) AS flag_id,
                  (SELECT updated_at FROM p.pictures WHERE kind = 'country' AND id = n.id AND slot = 'flag')
                      AS own_flag,
-                 (SELECT COUNT(*) FROM v_leagues WHERE country_id = n.id) AS league_count,
+                 (SELECT COUNT(*) FROM v_leagues l WHERE {_in_country('l', 'n.id')}) AS league_count,
+                 {_flag('hidden', 'country', 'n')} AS hidden,
+                 n.id IN ({', '.join(map(str, fifa14.UNLISTED_NATIONS))}) AS game_hidden,
                  {_edited('country', 'n')} AS edited, n.search AS search
                  FROM v_nations n"""
     where = []
@@ -359,6 +404,8 @@ def countries(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFA
         r.pop('search', None)
         r['is_new'] = bool(r['is_new'])
         r['edited'] = bool(r['edited'])
+        r['hidden'] = bool(r['hidden'])
+        r['game_hidden'] = bool(r['game_hidden'])
         base = r['flag_id']
         if r['is_new'] and base == r['id']:
             base = fifa14.TEMPLATE_NATION

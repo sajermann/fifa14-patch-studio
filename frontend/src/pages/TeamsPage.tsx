@@ -3,6 +3,7 @@ import { useFrom } from '@/lib/back'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
 import { OriginalBadge, OverallBadge } from '@/components/common/detail'
+import { HiddenByProjectBadge } from '@/components/common/HideButton'
 import { cn } from '@/lib/utils'
 import { ColorDot, Crest } from '@/components/common/pictures'
 import { useI18n } from '@/i18n'
@@ -79,6 +80,7 @@ export function TeamsPage() {
                   <span className="font-medium text-foreground">{tm.name}</span>
                   {tm.abbr3 && <span className="text-xs text-muted-foreground">{tm.abbr3}</span>}
                   <OriginalBadge edited={tm.edited} />
+                  {tm.hidden && <HiddenByProjectBadge label={t('teams.hiddenByProject')} />}
                 </div>
                 {tm.abbr15 && tm.abbr15 !== tm.name && <div className="text-xs text-muted-foreground">{tm.abbr15}</div>}
               </TableCell>

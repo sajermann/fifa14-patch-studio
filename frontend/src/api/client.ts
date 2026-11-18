@@ -81,6 +81,16 @@ export const api = {
   deleteLeague: (id: number) => request<{ deleted: number }>('DELETE', `/api/leagues/${id}`),
   saveLeagueTeams: (id: number, teamIds: number[]) => request<LeagueDetail>('PUT', `/api/leagues/${id}/teams`, { team_ids: teamIds }),
   resetLeagueTeams: (id: number) => request<LeagueDetail>('DELETE', `/api/leagues/${id}/teams`),
+  uploadLeagueLogo: (id: number, data: string) => request<LeagueDetail>('PUT', `/api/leagues/${id}/logo`, { data }),
+  removeLeagueLogo: (id: number) => request<LeagueDetail>('DELETE', `/api/leagues/${id}/logo`),
+  /** A chosen picture fitted as the league's logo, not saved yet. */
+  leagueLogoPreview: async (data: string, size: number) => (await send('POST', `/api/league-logo-preview?size=${size}`, { data })).blob(),
+  /** The Hide button: a created item hidden is out of the patch, an original one is hidden in the game. */
+  setLeagueHidden: (id: number, hidden: boolean) => request<LeagueDetail>('PUT', `/api/leagues/${id}/hidden`, { hidden }),
+  setCountryHidden: (id: number, hidden: boolean) => request<CountryDetail>('PUT', `/api/countries/${id}/hidden`, { hidden }),
+  /** The whole list of leagues shown in a country. */
+  saveCountryLeagues: (id: number, leagueIds: number[]) => request<CountryDetail>('PUT', `/api/countries/${id}/leagues`, { league_ids: leagueIds }),
+  setTeamHidden: (id: number, hidden: boolean) => request<TeamDetail>('PUT', `/api/teams/${id}/hidden`, { hidden }),
   countries: (p: ListParams) => get<Page<CountryRow>>(`/api/countries${query(p)}`),
   country: (id: number) => get<CountryDetail>(`/api/countries/${id}`),
   createCountry: (names: NameTable, fields: Fields = {}) => post<CountryDetail>('/api/countries', { names, fields }),

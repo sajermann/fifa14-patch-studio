@@ -125,8 +125,10 @@ def test_free_country_and_league_crud(client):
     for sort, direction in (('name', 'asc'), ('name', 'desc'), ('id', 'asc'), ('league_count', 'desc')):
         first = client.get('/api/countries', params={'sort': sort, 'dir': direction}).json()['items'][0]
         assert first['id'] == cid, (sort, direction)
-    bad = client.post('/api/leagues', json={'names': {'full': {'*': 'No Country'}}})
-    assert bad.status_code == 400 and bad.json()['detail']['code'] == 'field_out_of_range'
+    # a league can start without a country (it is added to one in the country's page)
+    loose = client.post('/api/leagues', json={'names': {'full': {'*': 'No Country'}}}).json()
+    assert loose['country_id'] == 0 and loose['is_new']
+    client.delete(f"/api/leagues/{loose['id']}")
     league = client.post('/api/leagues', json={'names': {'full': {'*': 'Free League'}},
                                                'fields': {'countryid': cid}}).json()
     lid = league['id']
@@ -200,3 +202,90 @@ def test_country_flag_picture(client):
     assert client.get('/api/image/flag/54', params={'game_only': True}).content == game_flag
     assert not client.delete('/api/countries/54/flag').json()['own_flag']
     assert client.get('/api/status').json()['project'] == {}
+
+
+def test_league_logo_hidden_and_team_list(client):
+    import base64
+    import io
+
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new('RGB', (40, 20), (200, 30, 30)).save(buf, 'PNG')
+    data = base64.b64encode(buf.getvalue()).decode()
+    lid = fakegame.LEAGUE
+    league = client.get(f'/api/leagues/{lid}').json()
+    assert not league['hidden'] and league['own_logo'] is None and league['game_team_ids'] == [fakegame.TEAM]
+    # the preview draws the picture without saving it
+    preview = client.post('/api/league-logo-preview', params={'size': 64}, json={'data': data})
+    assert preview.status_code == 200 and preview.headers['content-type'] == 'image/png'
+    assert client.get(f'/api/leagues/{lid}').json()['own_logo'] is None
+    bad = client.put(f'/api/leagues/{lid}/logo', json={'data': 'bm9wZQ=='})
+    assert bad.status_code == 400 and bad.json()['detail']['code'] == 'bad_picture'
+    saved = client.put(f'/api/leagues/{lid}/logo', json={'data': data}).json()
+    assert saved['own_logo'] and saved['has_logo'] and saved['edited']
+    own = client.get(f'/api/image/league/{lid}', params={'size': 64})
+    assert own.status_code == 200 and own.headers['content-type'] == 'image/png'
+    row = next(x for x in client.get('/api/leagues').json()['items'] if x['id'] == lid)
+    assert row['has_logo'] and not row['hidden']
+    assert client.delete(f'/api/leagues/{lid}/logo').json()['own_logo'] is None
+
+    hidden = client.put(f'/api/leagues/{lid}/hidden', json={'hidden': True}).json()
+    assert hidden['hidden']
+    assert next(x for x in client.get('/api/leagues').json()['items'] if x['id'] == lid)['hidden']
+    assert not client.put(f'/api/leagues/{lid}/hidden', json={'hidden': False}).json()['hidden']
+    assert client.put('/api/leagues/999/hidden', json={'hidden': True}).status_code == 404
+
+    # the teams a page is editing, by id
+    teams = client.get('/api/teams', params={'ids': f'{fakegame.TEAM},{fakegame.SMALL_TEAM}'}).json()
+    assert {t['id'] for t in teams['items']} == {fakegame.TEAM, fakegame.SMALL_TEAM}
+    assert client.get('/api/teams', params={'ids': ''}).json()['total'] == 0
+    assert client.get('/api/teams', params={'ids': 'x'}).status_code == 400
+
+
+def test_hide_and_league_in_several_countries(client):
+    lid = fakegame.LEAGUE
+    # a league in another country too: the country lists it and counts it
+    r = client.put(f'/api/leagues/{lid}', json={'names': {}, 'fields': {'extra_countries': [52, 52]}})
+    assert r.status_code == 200 and r.json()['saved']['extra_countries'] == [52]
+    assert client.put(f'/api/leagues/{lid}', json={'names': {}, 'fields': {'extra_countries': [77]}}).json()[
+        'detail']['code'] == 'field_out_of_range'  # a country that does not exist
+    country = client.get('/api/countries/52').json()
+    assert {x['id'] for x in country['leagues']} == {fakegame.PLAIN_LEAGUE, lid}
+    row = next(x for x in client.get('/api/leagues').json()['items'] if x['id'] == lid)
+    assert row['extra_countries'] == [52]
+
+    # one Hide (as in the Street Studio): an original hidden = hidden in the game by the project
+    league = client.put(f'/api/leagues/{lid}/hidden', json={'hidden': True}).json()
+    assert league['hidden'] and not league['game_hidden']
+    assert client.put(f'/api/leagues/{lid}/hidden', json={'hidden': False}).json()['hidden'] is False
+    for cid in (54, 52):
+        assert client.put(f'/api/countries/{cid}/hidden', json={'hidden': True}).json()['hidden']
+    assert client.get(f'/api/leagues/{lid}').json()['hidden_by_countries']  # every country of it hidden
+    assert not client.put('/api/countries/52/hidden', json={'hidden': False}).json()['hidden']
+    assert not client.get(f'/api/leagues/{lid}').json()['hidden_by_countries']
+    assert client.put(f'/api/teams/{fakegame.TEAM}/hidden', json={'hidden': True}).json()['hidden']
+    assert next(x for x in client.get('/api/teams').json()['items'] if x['id'] == fakegame.TEAM)['hidden']
+    assert client.put('/api/teams/1/hidden', json={'hidden': True}).status_code == 404
+
+
+def test_country_leagues_list(client):
+    """Add league / remove in the country's page: the league's own country or one more country."""
+    lid = fakegame.LEAGUE  # country 54
+    r = client.put('/api/countries/52/leagues', json={'league_ids': [fakegame.PLAIN_LEAGUE, lid]})
+    assert r.status_code == 200 and {x['id'] for x in r.json()['leagues']} == {fakegame.PLAIN_LEAGUE, lid}
+    league = client.get(f'/api/leagues/{lid}').json()
+    assert league['country_id'] == 54 and league['saved']['extra_countries'] == [52]
+    # removed from its own country: the next one becomes its own
+    client.put('/api/countries/54/leagues', json={'league_ids': []})
+    league = client.get(f'/api/leagues/{lid}').json()
+    assert league['country_id'] == 52 and 'extra_countries' not in league['saved']
+    assert client.get('/api/countries/54').json()['leagues'] == []
+    # removed from its last country: no country (hidden in the game)
+    client.put('/api/countries/52/leagues', json={'league_ids': [fakegame.PLAIN_LEAGUE]})
+    assert client.get(f'/api/leagues/{lid}').json()['country_id'] == 0
+    # and back to a country with none: it becomes its own
+    client.put('/api/countries/54/leagues', json={'league_ids': [lid]})
+    assert client.get(f'/api/leagues/{lid}').json()['saved'].get('countryid') is None  # the game's again
+    assert client.put('/api/countries/54/leagues', json={'league_ids': [999]}).json()['detail']['code'] ==         'unknown_league'
+    rows = client.get('/api/leagues', params={'ids': f'{lid}'}).json()['items']
+    assert [x['id'] for x in rows] == [lid]

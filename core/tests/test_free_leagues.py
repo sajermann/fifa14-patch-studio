@@ -148,3 +148,111 @@ def test_build_draws_the_flag_of_a_country_with_a_picture(installed, tmp_path):
             assert pattern.format(nid) in summary['loose']
     project.set_picture('country', 54, 'flag', None)
     assert project.counts() == {'new_country': 1}
+
+
+def test_league_picture_fills_the_eight_league_files(installed, tmp_path):
+    project = Project(str(tmp_path / 'p.sqlite'))
+    project.create('league', 400, {'full': {'*': 'Picture League'}}, {'countryid': 54})
+    project.set_picture('league', 400, 'logo', _picture_png())
+    project.set_picture('league', fakegame.LEAGUE, 'logo', _picture_png((200, 0, 0)))  # a league of the game too
+    patch_dir = str(tmp_path / 'patch')
+    summary = builder.build(catalog.open_game(installed), project, patch_dir)
+    for lid in (400, fakegame.LEAGUE):
+        for pattern, (size, _dark) in fifa14.LEAGUE_PICTURES.items():
+            assert pattern.format(lid) in summary['loose']
+    banner = next(p for p, (size, _d) in fifa14.LEAGUE_PICTURES.items() if size == (512, 128))
+    with open(os.path.join(patch_dir, *banner.format(400).split('/')), 'rb') as f:
+        img = images.decode_dds(f.read())
+    assert img.size == (512, 128)
+    assert img.getpixel((256, 64))[3] == 255 and img.getpixel((2, 64))[3] == 0  # fitted in the middle, clear sides
+    assert img.getpixel((256, 64))[1] > 150  # the user's green
+
+
+def test_hide_a_created_league_leaves_it_out_and_an_original_one_hides_it_in_the_game(installed, tmp_path):
+    """One Hide button, as in the Street Studio: created = out of the patch; original = hidden in the game."""
+    project = Project(str(tmp_path / 'p.sqlite'))
+    project.create('league', 400, {'full': {'*': 'Hidden League'}}, {'countryid': 54})
+    project.set_members(400, [fakegame.TEAM])
+    project.set_picture('league', 400, 'logo', _picture_png())
+    project.save('league', fakegame.LEAGUE, {'full': {'*': 'Renamed'}}, {'level': 3})
+    for lid in (400, fakegame.LEAGUE):
+        project.set_hidden('league', lid, True)
+    assert project.hidden('league') == {400, fakegame.LEAGUE}
+    assert project.hidden_in_game('league') == {fakegame.LEAGUE}
+    view = project.visible()
+    assert view.created('league') == [] and view.all_members() == {} and view.with_picture('league', 'logo') == []
+    assert view.fields('league', fakegame.LEAGUE) == {'level': 3}  # the original keeps its edits
+    assert project.created('league') == [400]  # still in the project
+    summary, leagues, links = _built_tables(installed, tmp_path, project)
+    assert 400 not in {lid for lid, _c in leagues}  # not created
+    assert (fakegame.LEAGUE, fifa14.HIDDEN_COUNTRY) in leagues  # hidden in the game
+    assert not any('l400.dds' in p for p in summary['loose']) and summary['pictures'] == 0
+    project.delete('league', 400)
+    assert project.hidden('league') == {fakegame.LEAGUE}
+
+
+def _built_tables(installed, tmp_path, project):
+    patch_dir = str(tmp_path / 'patch')
+    summary = builder.build(catalog.open_game(installed), project, patch_dir)
+    with open(os.path.join(patch_dir, 'data', 'db', 'fifa_ng_db-meta.xml'), 'rb') as f:
+        meta = t3db.load_meta(f.read())
+    with open(os.path.join(patch_dir, 'data', 'db', 'fifa_ng_db.db'), 'rb') as f:
+        tables = t3db.read_tables(f.read(), meta)
+    leagues = sorted((r['leagueid'], r['countryid']) for r in tables['leagues']['rows'])
+    links = sorted((r['leagueid'], r['teamid']) for r in tables['leagueteamlinks']['rows'])
+    keys = [r['artificialkey'] for r in tables['leagueteamlinks']['rows'] if 'artificialkey' in r]
+    assert len(keys) == len(set(keys))  # (the fake game has no key column)
+    return summary, leagues, links
+
+
+def test_league_in_several_countries_is_one_row_per_country(installed, tmp_path):
+    from f14mod import fields
+    assert fields.clean('league', {'extra_countries': [52, 52, 60]}, {'extra_countries': []}) == \
+        {'extra_countries': [52, 60]}
+    assert fields.clean('league', {'extra_countries': []}, {'extra_countries': []}) == {}
+    with pytest.raises(fields.FieldError):
+        fields.clean('league', {'extra_countries': [0]}, {'extra_countries': []})
+    project = Project(str(tmp_path / 'p.sqlite'))
+    project.save('league', fakegame.LEAGUE, None, {'extra_countries': [52, 54, 60]})  # 54 is its own country
+    summary, leagues, links = _built_tables(installed, tmp_path, project)
+    assert leagues == sorted([(fakegame.LEAGUE, 54), (fakegame.LEAGUE, 52), (fakegame.LEAGUE, 60),
+                              (fakegame.PLAIN_LEAGUE, 52)])
+    assert links == sorted([(fakegame.LEAGUE, fakegame.TEAM), (fakegame.PLAIN_LEAGUE, fakegame.SMALL_TEAM)])
+    assert summary['database']['visibility']['extra_country_rows'] == 2
+
+
+def test_hidden_original_country_league_and_team(installed, tmp_path):
+    project = Project(str(tmp_path / 'p.sqlite'))
+    project.save('league', fakegame.LEAGUE, None, {'extra_countries': [60]})
+    project.set_hidden('country', 54, True)  # the league stays only in its other country
+    project.set_hidden('league', fakegame.PLAIN_LEAGUE, True)
+    summary, leagues, links = _built_tables(installed, tmp_path, project)
+    assert leagues == sorted([(fakegame.LEAGUE, 60), (fakegame.PLAIN_LEAGUE, fifa14.HIDDEN_COUNTRY)])
+    project.set_hidden('country', 60, True)  # every country of the league hidden: country 0
+    _summary, leagues, _links = _built_tables(installed, tmp_path, project)
+    assert leagues == sorted([(fakegame.LEAGUE, 0), (fakegame.PLAIN_LEAGUE, 0)])
+
+    # a team hidden in the game: its links to visible leagues go; without a hidden league to keep it, it has none
+    project = Project(str(tmp_path / 'q.sqlite'))
+    project.set_members(fakegame.LEAGUE, [fakegame.TEAM, fakegame.SMALL_TEAM])
+    project.set_hidden('team', fakegame.SMALL_TEAM, True)
+    summary, leagues, links = _built_tables(installed, tmp_path, project)
+    assert links == [(fakegame.LEAGUE, fakegame.TEAM)]
+    # the plain league lost its only team, but the user did not change its list: it is left as it is
+    assert leagues == sorted([(fakegame.LEAGUE, 54), (fakegame.PLAIN_LEAGUE, 52)])
+
+
+def test_hidden_team_goes_to_the_hidden_league_and_empty_leagues_hide(installed, tmp_path, monkeypatch):
+    monkeypatch.setattr(fifa14, 'HIDDEN_LEAGUE', fakegame.PLAIN_LEAGUE)  # the fake game has no league 111
+    project = Project(str(tmp_path / 'p.sqlite'))
+    project.set_hidden('league', fakegame.PLAIN_LEAGUE, True)
+    project.set_hidden('team', fakegame.TEAM, True)
+    project.create('league', 400, {'full': {'*': 'Only Hidden Teams'}}, {'countryid': 54})
+    project.set_members(400, [fakegame.TEAM])  # its only team is hidden: the league would show an empty list
+    summary, leagues, links = _built_tables(installed, tmp_path, project)
+    assert links == sorted([(fakegame.PLAIN_LEAGUE, fakegame.SMALL_TEAM), (fakegame.PLAIN_LEAGUE, fakegame.TEAM)])
+    assert (400, 0) in leagues and (fakegame.PLAIN_LEAGUE, 0) in leagues
+    assert summary['database']['visibility']['hidden_leagues'] == [400, fakegame.PLAIN_LEAGUE]
+    # the created league hidden: out of the patch (not hidden in the game: it does not exist there)
+    project.set_hidden('league', 400, True)
+    assert 400 not in project.visible().hidden_in_game('league') and 400 not in project.visible().created('league')

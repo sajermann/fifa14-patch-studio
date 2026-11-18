@@ -7,6 +7,7 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/compon
 import { api } from '@/api/client'
 import { CreateDialog } from '@/components/common/create'
 import { OriginalBadge } from '@/components/common/detail'
+import { GameHiddenBadge, HiddenByProjectBadge, OutOfPatchBadge } from '@/components/common/HideButton'
 import { CountryFlag } from '@/components/common/pictures'
 import { useI18n } from '@/i18n'
 import { useFrom } from '@/lib/back'
@@ -67,6 +68,8 @@ export function CountriesPage() {
               </TableCell>
               <TableCell data-grow>
                 <span className="font-medium text-foreground">{c.name}</span> <OriginalBadge edited={c.edited} isNew={c.is_new} />
+                {c.game_hidden && <GameHiddenBadge country />}
+                {c.hidden && (c.is_new ? <OutOfPatchBadge /> : <HiddenByProjectBadge label={t('countries.hiddenByProject')} />)}
               </TableCell>
               <TableCell className="tabular-nums">{c.league_count}</TableCell>
               <TableCell className="text-muted-foreground tabular-nums">{c.id}</TableCell>

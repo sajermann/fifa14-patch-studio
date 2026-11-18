@@ -13,9 +13,43 @@ from . import chunk, rx3
 UNREADABLE = (OSError, ValueError, KeyError, IndexError, struct.error, zlib.error, chunk.ChunkError,
               Image.DecompressionBombError)
 KIT_TEXTURES = {'jersey': 'jersey_cm', 'shorts': 'shorts_cm'}
+MAX_PICTURE = 1024  # the user's pictures are kept at most this size a side
+
+
+class PictureError(ValueError):
+    pass
+
+
+def normalize_picture(data: bytes) -> bytes:
+    """A picture the user sent as a PNG (RGBA, at most MAX_PICTURE pixels a side); raises PictureError."""
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            img = img.convert('RGBA')
+    except UNREADABLE as e:
+        raise PictureError(f'not a picture: {e}') from e
+    if min(img.size) < 8:
+        raise PictureError('picture too small')
+    img.thumbnail((MAX_PICTURE, MAX_PICTURE))
+    return png(img)
+
+
+def fit(picture: Image.Image, size: tuple[int, int]) -> Image.Image:
+    """The picture as large as it fits in `size`, centred on a transparent canvas."""
+    pic = picture.convert('RGBA')
+    pic = pic.crop(pic.getbbox() or (0, 0, *pic.size))  # the empty border is dropped first
+    scale = min(size[0] / pic.width, size[1] / pic.height)
+    pic = pic.resize((max(1, round(pic.width * scale)), max(1, round(pic.height * scale))), Image.LANCZOS)
+    canvas = Image.new('RGBA', size, (0, 0, 0, 0))
+    canvas.paste(pic, ((size[0] - pic.width) // 2, (size[1] - pic.height) // 2), pic)
+    return canvas
 
 
 def decode_dds(data: bytes) -> Image.Image:
+    with Image.open(io.BytesIO(data)) as img:
+        return img.convert('RGBA')
+
+
+def decode_png(data: bytes) -> Image.Image:
     with Image.open(io.BytesIO(data)) as img:
         return img.convert('RGBA')
 
@@ -99,6 +133,12 @@ def league_picture(size: tuple[int, int], dark: bool, text: str) -> bytes:
     buf = io.BytesIO()
     img.save(buf, 'DDS', pixel_format='DXT5')
     return buf.getvalue()
+
+
+def league_from_picture(png_data: bytes, size: tuple[int, int]) -> bytes:
+    """One of the league's pictures (DDS) from the user's picture, fitted in the size the game reads."""
+    with Image.open(io.BytesIO(png_data)) as img:
+        return dds(fit(img, size))
 
 
 def dds(img: Image.Image) -> bytes:

@@ -153,8 +153,11 @@ def test_database_fields_names_and_league_strings(installed, tmp_path):
     project.save('player', fakegame.STAR, fields={
         'name.common': 'Brand New', 'name.first': 'Player0', 'height': 190, 'birthdate': '1990-05-04'})
     project.save('team', fakegame.TEAM, fields={'teamcolor1': [201, 11, 21]})
-    project.save('league', fakegame.LEAGUE, names={'abbr15': {'*': 'New League'}}, fields={'leaguename': 'DB League'})
-    assert project.counts() == {'player': 1, 'team': 1, 'league': 1}
+    # an original league: a language's value wins; "All" only fills the texts the game lacks (its own are values)
+    project.save('league', fakegame.LEAGUE, names={'abbr15': {'eng_us': 'New League'}, 'full': {'*': 'Not Used'}},
+                 fields={'leaguename': 'DB League'})
+    project.save('league', fakegame.PLAIN_LEAGUE, names={'full': {'*': 'Plain Filled'}})  # no text in the game
+    assert project.counts() == {'player': 1, 'team': 1, 'league': 2}
 
     patch_dir = str(tmp_path / 'patch')
     summary = builder.build(catalog.open_game(installed), project, patch_dir)
@@ -179,6 +182,8 @@ def test_database_fields_names_and_league_strings(installed, tmp_path):
     loc = BigArchive(os.path.join(patch_dir, 'data', 'loc', 'locale.big'))
     en = t3db.read_strings(loc.read('data/loc/eng_us.db'), lambda s: True)
     assert en[f'LeagueName_Abbr15_{fakegame.LEAGUE}'] == 'New League'
+    assert en[f'LeagueName_{fakegame.LEAGUE}'] == 'Test Premier Division of Nowhere'
+    assert en[f'LeagueName_{fakegame.PLAIN_LEAGUE}'] == 'Plain Filled'
 
 
 def test_fields_clean_and_columns():

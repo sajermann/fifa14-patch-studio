@@ -109,19 +109,27 @@ def with_derived_names(kind: str, names: dict) -> dict:
     return out
 
 
+FILL_ONLY = '*fill'  # key of language_edits: "every language" values that only fill the texts the game lacks
+# names edited in a grid where the game's text of each language is a value of its own (the "All" row of an original
+# country or league only fills the languages without a text; a created one has none, so it goes everywhere)
+FILL_ONLY_KINDS = ('country', 'league')
+
+
 def language_edits(project: Project) -> dict[str, dict[str, str]]:
-    """{language or '*': {stringid: text}} of every team and league name saved in the project."""
+    """{language, '*' or FILL_ONLY: {stringid: text}} of every team, league and country name saved in the project."""
     out: dict[str, dict[str, str]] = {}
     for kind, prefixes in NAME_STRINGS.items():
-        created = set(project.created(kind)) if kind in DERIVED_NAMES else set()
+        created = set(project.created(kind)) if kind in DERIVED_NAMES or kind in FILL_ONLY_KINDS else set()
         for oid, names in project.all_names(kind).items():
-            if oid in created:
+            if oid in created and kind in DERIVED_NAMES:
                 names = with_derived_names(kind, names)
             for key, by_lang in names.items():
                 prefix = prefixes.get(key)
                 if not prefix:
                     continue
                 for lang, text in by_lang.items():
+                    if lang == DEFAULT_LANG and kind in FILL_ONLY_KINDS and oid not in created:
+                        lang = FILL_ONLY
                     out.setdefault(lang, {})[f'{prefix}{oid}'] = text
     return out
 
@@ -291,12 +299,106 @@ def write_members(db: Database, project: Project) -> int:
     return sum(len(v) for v in members.values())
 
 
+def _renumber_links(links) -> None:
+    if _has(links, 'artificialkey'):
+        for i, row in enumerate(links.records):  # the key stays unique: every link numbered again
+            links.set(row, 'artificialkey', i)
+
+
+def write_visibility(db: Database, project: Project) -> dict:
+    """Countries, leagues and teams hidden in the game, and leagues shown in several countries (tests OC1/OC2/LC1):
+    - a league is listed under its country: one `leagues` row per country, all with the league's id (the team links
+      stay once); a league hidden in the game, or whose countries are all hidden, gets one row with country 0;
+    - a team hidden in the game keeps only its links to hidden leagues (or gets one to HIDDEN_LEAGUE);
+    - a league the user changed or created that is left without any team is hidden too (the game would fill an empty
+      list with a random team)."""
+    hidden_countries = project.hidden_in_game('country')
+    hidden_leagues = project.hidden_in_game('league')
+    hidden_teams = project.hidden_in_game('team')
+    league_fields = project.all_fields('league')
+    if not (hidden_countries or hidden_leagues or hidden_teams
+            or any(f.get('extra_countries') for f in league_fields.values())) and not project.all_members():
+        return {}
+    leagues = db.table('leagues')
+    rows: dict[int, list] = {}
+    for r in leagues.records:
+        rows.setdefault(leagues.get(r, 'leagueid'), []).append(r)
+    countries = {lid: list(dict.fromkeys(
+        [leagues.get(rs[0], 'countryid'), *league_fields.get(lid, {}).get('extra_countries', [])]))
+        for lid, rs in rows.items()}
+    shown = {lid: [c for c in cs if c != fifa14.HIDDEN_COUNTRY and c not in hidden_countries]
+             for lid, cs in countries.items()}
+    out_leagues = {lid for lid, cs in shown.items() if lid in hidden_leagues or not cs}
+    # teams hidden in the game: only their links to hidden leagues stay
+    links = db.table('leagueteamlinks')
+    moved = 0
+    if hidden_teams:
+        kept, raws = [], links.raw_records + [bytes(links.rec_size)] * (len(links.records) - len(links.raw_records))
+        kept_raw, linked = [], set()
+        for row, raw in zip(links.records, raws):
+            tid, lid = links.get(row, 'teamid'), links.get(row, 'leagueid')
+            if tid in hidden_teams and lid not in out_leagues:
+                moved += 1
+                continue
+            kept.append(row)
+            kept_raw.append(raw)
+            linked.add(tid)
+        template = next((r for r in links.records if links.get(r, 'leagueid') == fifa14.HIDDEN_LEAGUE), None)
+        if fifa14.HIDDEN_LEAGUE in rows:  # without that league the team stays with no league (also hidden: OC2)
+            for tid in sorted(hidden_teams - linked):
+                row = list(template or links.records[0])
+                for column, value in (('teamid', tid), ('leagueid', fifa14.HIDDEN_LEAGUE),
+                                      ('prevleagueid', fifa14.HIDDEN_LEAGUE)):
+                    if _has(links, column):
+                        links.set(row, column, value)
+                kept.append(row)
+                kept_raw.append(bytes(links.rec_size))
+        links.records, links.raw_records = kept, kept_raw
+        _renumber_links(links)
+    # a changed or created league left without a visible team is hidden too
+    teams_in = {}
+    for r in links.records:
+        teams_in.setdefault(links.get(r, 'leagueid'), set()).add(links.get(r, 'teamid'))
+    empty = {lid for lid in project.all_members() if lid in rows and not (teams_in.get(lid, set()) - hidden_teams)}
+    out_leagues |= empty
+    records, raw_records = [], []
+    raws = leagues.raw_records + [bytes(leagues.rec_size)] * (len(leagues.records) - len(leagues.raw_records))
+    extra_rows = 0
+    for r, raw in zip(leagues.records, raws):
+        lid = leagues.get(r, 'leagueid')
+        if r is not rows[lid][0]:
+            continue  # a league with more rows already: written again below from its first row
+        if lid in out_leagues:
+            leagues.set(r, 'countryid', fifa14.HIDDEN_COUNTRY)
+            records.append(r)
+            raw_records.append(raw)
+            continue
+        for i, country in enumerate(shown[lid]):
+            row = r if i == 0 else list(r)
+            leagues.set(row, 'countryid', country)
+            records.append(row)
+            raw_records.append(raw)  # the same bits outside the fields as the league's row
+            extra_rows += i > 0
+    leagues.records, leagues.raw_records = records, raw_records
+    already = {lid for lid, cs in countries.items() if cs[0] == fifa14.HIDDEN_COUNTRY}  # the game hides them itself
+    return {'hidden_leagues': sorted((out_leagues & set(rows)) - already), 'extra_country_rows': extra_rows,
+            'team_links_removed': moved}
+
+
 def created_pictures(files: GameFiles, project: Project, builder: 'PatchBuilder') -> int:
-    """Pictures of created leagues (a plain tile with the short name) and the flags the user chose: a created
-    country copies the flag of the country chosen (Rest of World by default), a country of the game can take another
-    one's flag too."""
+    """Pictures of leagues (from the user's picture, else, for a created league, a plain tile with the short name)
+    and the flags the user chose: a created country copies the flag of the country chosen (Rest of World by default),
+    a country of the game can take another one's flag too."""
     count = 0
+    logos = project.with_picture('league', 'logo')
+    for lid in logos:  # the user's picture: the eight league pictures drawn from it
+        png_data = project.picture('league', lid, 'logo')[0]
+        for pattern, (size, _dark) in fifa14.LEAGUE_PICTURES.items():
+            builder.put(pattern.format(lid), images.league_from_picture(png_data, size))
+            count += 1
     for lid in project.created('league'):
+        if lid in logos:
+            continue
         names = project.names('league', lid)
         text = _shown_name(names, 'abbr') or _shown_name(names, 'abbr15') or _shown_name(names) or str(lid)
         for pattern, (size, dark) in fifa14.LEAGUE_PICTURES.items():
@@ -324,7 +426,9 @@ def created_pictures(files: GameFiles, project: Project, builder: 'PatchBuilder'
 def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') -> dict | None:
     """The database with the project's fields, created entities and league teams, loose (with its meta file)."""
     has_created = bool(project.created('country') or project.created('league'))
-    if not any(project.all_fields(kind) for kind in ID_COLUMNS) and not has_created and not project.all_members():
+    hiding = any(project.hidden_in_game(kind) for kind in ('country', 'league', 'team'))
+    if not any(project.all_fields(kind) for kind in ID_COLUMNS) and not has_created and not project.all_members() \
+            and not hiding:
         return None
     meta_raw, raw = files.read(fifa14.META), files.read(DATABASE)
     if meta_raw is None or raw is None:
@@ -334,6 +438,9 @@ def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') 
     result = apply_database(db, project)
     result['created'] = created
     result['league_links'] = write_members(db, project)
+    visibility = write_visibility(db, project)
+    if visibility:
+        result['visibility'] = visibility
     builder.put(DATABASE, db.build())
     builder.put(fifa14.META, meta_raw)
     return result
@@ -342,6 +449,7 @@ def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') 
 def build(files: GameFiles, project: Project, out_dir: str, progress=None) -> dict:
     """The patch of the project over the clean game."""
     builder = PatchBuilder(files)
+    project = project.visible()  # what is left out of the patch is not built
     if progress:
         progress('database', 0.0)
     database = write_database(files, project, builder)
@@ -352,9 +460,10 @@ def build(files: GameFiles, project: Project, out_dir: str, progress=None) -> di
     base_languages = [n for n in languages if not n.endswith('_upd')]
     for i, lang in enumerate(base_languages):
         wanted = {**edits.get(DEFAULT_LANG, {}), **edits.get(lang, {})}
+        fill = {k: v for k, v in edits.get(FILL_ONLY, {}).items() if k not in wanted}
         if progress:
             progress(f'language {lang}', i / max(1, len(base_languages)))
-        if not wanted:
+        if not wanted and not fill:
             continue
         for name in (lang, f'{lang}_upd'):
             path = f'data/loc/{name}.db'
@@ -364,6 +473,8 @@ def build(files: GameFiles, project: Project, out_dir: str, progress=None) -> di
             strings = LanguageStrings(raw)
             # the base database gets every string (a new one with its hashid); the _upd one only overrides its own
             todo = wanted if name == lang else {k: v for k, v in wanted.items() if strings.get(k) is not None}
+            if name == lang:  # texts the game lacks in this language get the "All" value of an original
+                todo = {**{k: v for k, v in fill.items() if strings.get(k) is None}, **todo}
             changed = False
             for sid, text in todo.items():
                 if strings.get(sid) != text:

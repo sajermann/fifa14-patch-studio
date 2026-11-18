@@ -28,8 +28,11 @@ export function Photo({ id, size = 64, className, available }: { id: number; siz
   return <GameImage url={`/api/image/photo/${id}?size=${size}`} alt="" className={className} available={available} fallback={<User className="size-1/2" />} />
 }
 
-export function LeagueImage({ id, size, className, available }: { id: number; size?: number; className?: string; available?: boolean }) {
-  return <GameImage url={`/api/image/league/${id}${size ? `?size=${size}` : ''}`} alt="" className={className} available={available} fallback={<ImageOff className="size-1/2" />} />
+/** A league's logo (`version` = when the user's picture was saved, so a new one is fetched; `gameOnly` = the game's
+ * logo even when the user has a picture). */
+export function LeagueImage({ id, size, className, available, version, gameOnly }: { id: number; size?: number; className?: string; available?: boolean; version?: number | null; gameOnly?: boolean }) {
+  const params = [size ? `size=${size}` : '', version ? `own=${version}` : '', gameOnly ? 'game_only=true' : ''].filter(Boolean).join('&')
+  return <GameImage url={`/api/image/league/${id}${params ? `?${params}` : ''}`} alt="" className={className} available={available} fallback={<ImageOff className="size-1/2" />} />
 }
 
 /** A country's flag (`id` = the country whose flag is shown: a created country shows the one it copies). */

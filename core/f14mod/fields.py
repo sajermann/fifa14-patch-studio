@@ -1,9 +1,11 @@
 """What the editor can change in each database row (player, team, league) and the limits the game accepts.
 
-A field is a database column of the entity's row, with three exceptions:
+A field is a database column of the entity's row, with these exceptions:
   - `name.first`, `name.last`, `name.common`, `name.jersey`: the player's names (texts of the name table);
   - `teamcolorN`: the three columns teamcolorNr/g/b as one [r, g, b] value;
-  - `birthdate`: an ISO date (the database keeps days since 1582-10-14).
+  - `birthdate`: an ISO date (the database keeps days since 1582-10-14);
+  - the league's `extra_countries` (list of nation ids) and the country's `flag_from`: no column, the builder uses
+    them (one more `leagues` row per extra country; the flag files copied).
 Values are kept as the screen shows them; `to_columns` turns them into database values.
 The overall ratings are not here: the game computes them from the attributes (player) and the players (team).
 """
@@ -21,7 +23,7 @@ NAME_KEYS = {'name.first': 'first', 'name.last': 'last', 'name.common': 'common'
 class FieldSpec:
     name: str
     group: str
-    kind: str  # int | select | text | date | color | nation | team | roster | position
+    kind: str  # int | select | text | date | color | nation | nations | team | roster | position
     min: int | None = None
     max: int | None = None
     options: tuple = ()
@@ -88,7 +90,9 @@ LEAGUE = [
     FieldSpec('leaguename', 'info', 'text', max_length=60),
     FieldSpec('level', 'info', 'int', 1, 8),
     FieldSpec('countryid', 'info', 'nation', 0, 255, optional=True),
+    FieldSpec('extra_countries', 'info', 'nations', 1, 255),  # the league shows in these countries too
 ]
+NO_COLUMN = {'extra_countries', 'flag_from'}  # fields the builder uses itself (not written as columns)
 
 COUNTRY = [
     FieldSpec('flag_from', 'info', 'nation', 1, fifa14.MAX_NATION_ID, optional=True),  # whose flag is copied
@@ -122,6 +126,8 @@ def original_values(kind: str, raw: dict, names: dict | None = None) -> dict:
             out[spec.name] = [raw.get(f'{spec.name}{c}') for c in 'rgb']
         elif spec.kind == 'date':
             out[spec.name] = _to_iso(raw.get(spec.name))
+        elif spec.kind == 'nations':
+            out[spec.name] = []  # the game's leagues are in one country
         else:
             out[spec.name] = raw.get(spec.name)
     return out
@@ -163,6 +169,13 @@ def _check(spec: FieldSpec, value):
         if not 1900 <= day.year <= 2100:
             raise FieldError('out_of_range', spec.name)
         return day.isoformat()
+    if spec.kind == 'nations':
+        if not isinstance(value, (list, tuple)):
+            raise FieldError('bad_value', spec.name)
+        ids = list(dict.fromkeys(_int(spec, v) for v in value))
+        if any(not spec.min <= v <= spec.max for v in ids):
+            raise FieldError('out_of_range', spec.name)
+        return ids or None
     if spec.kind == 'color':
         if not isinstance(value, (list, tuple)) or len(value) != 3:
             raise FieldError('bad_value', spec.name)
@@ -185,7 +198,7 @@ def to_columns(kind: str, values: dict) -> dict:
     out = {}
     for name, value in values.items():
         spec = BY_NAME[kind].get(name)
-        if spec is None or name in NAME_FIELDS:
+        if spec is None or name in NAME_FIELDS or name in NO_COLUMN:
             continue
         if spec.kind == 'color':
             out.update({f'{name}{c}': v for c, v in zip('rgb', value)})

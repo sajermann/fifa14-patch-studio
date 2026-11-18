@@ -5,6 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api } from '@/api/client'
 import { Facts, OriginalBadge, OverallBadge, RawTable, Section } from '@/components/common/detail'
 import { EditActions, FieldsEditor, NamesEditor, useEntityForm } from '@/components/common/edit'
+import { HideButton, OutOfPatchBadge, usePendingHide } from '@/components/common/HideButton'
 import { ColorDot, Crest, Photo } from '@/components/common/pictures'
 import { LoadingBlock } from '@/components/layout/LoadingBlock'
 import { useI18n } from '@/i18n'
@@ -22,12 +23,23 @@ export function TeamPage() {
   const tabs = useTabParam(TABS[0])
   const from = useFrom(team?.name ?? t('nav.teams'))
   const back = useBack({ to: '/teams', label: t('nav.teams') })
+  const hide = usePendingHide(team?.hidden)
   const entity = useEntityForm({
     data: team,
     queryKey,
     invalidate: ['teams', 'league', 'leagues'],
-    save: (f) => api.saveTeam(id, f.names, f.fields),
-    reset: () => api.resetTeam(id),
+    save: async (f) => {
+      let saved = await api.saveTeam(id, f.names, f.fields)
+      if (hide.pending !== null) saved = await api.setTeamHidden(id, hide.pending)
+      hide.clear()
+      return saved
+    },
+    reset: () => {
+      hide.clear()
+      return api.resetTeam(id)
+    },
+    extraDirty: hide.pending !== null,
+    onDiscard: hide.clear,
   })
   if (isLoading || !team) return <LoadingBlock />
   return (
@@ -51,8 +63,18 @@ export function TeamPage() {
             </p>
           </div>
           <OriginalBadge edited={team.edited} />
+          {hide.hidden && <OutOfPatchBadge alert label={t('teams.hiddenByProject')} />}
         </div>
-        <EditActions edited={team.edited} entity={entity} />
+        <div className="flex flex-wrap items-start gap-2">
+          <EditActions edited={team.edited} entity={entity} />
+          <HideButton
+            variant="outline"
+            hidden={hide.hidden}
+            onToggle={hide.toggle}
+            hideHint={t('teams.originalHideHint')}
+            showHint={t('teams.originalShowHint')}
+          />
+        </div>
       </div>
 
       <Tabs {...tabs}>

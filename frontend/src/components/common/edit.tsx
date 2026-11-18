@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query'
-import { Loader2, RotateCcw, Save, Undo2 } from 'lucide-react'
+import { Loader2, RotateCcw, Save, Undo2, X } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useBlocker } from 'react-router-dom'
 import {
@@ -92,9 +92,11 @@ export function useEntityForm<T extends EditForm & { saved_names?: NameTable }>(
   const qc = useQueryClient()
   const [form, setForm] = useState<FormState>({ names: {}, fields: {} })
   const savedForm = useMemo<FormState>(() => ({ names: data?.saved_names ?? {}, fields: data?.saved ?? {} }), [data])
+  // the form starts again only when what is saved changes (a flag of the page, like Hide, keeps the edits)
+  const savedKey = data ? JSON.stringify([(data as { id?: number }).id, canonical(savedForm)]) : null
   useEffect(() => {
-    if (data) setForm(savedForm)
-  }, [data, savedForm])
+    if (savedKey !== null) setForm(savedForm)
+  }, [savedKey]) // eslint-disable-line react-hooks/exhaustive-deps
   const cleaned = useMemo(() => ({ names: cleanNames(form.names), fields: cleanFields(form.fields, data?.values ?? {}) }), [form, data])
   const dirty = !!data && (extraDirty || !sameForm(cleaned, savedForm))
   const after = (saved: T) => {
@@ -316,6 +318,13 @@ export function NamesGrid({
     return hasMessage(k) ? t(k as MessageKey) : key
   }
   const set = (key: string, code: string, text: string) => setNames({ ...names, [key]: { ...names[key], [code]: text } })
+  // a language cell: the value saved, else the game's text (a value, not a hint); the same text as the game is not a
+  // change (it is dropped from the form)
+  const setLang = (key: string, code: string, text: string) => {
+    const { [code]: _old, ...rest } = names[key] ?? {}
+    setNames({ ...names, [key]: text === (original[key]?.[code] ?? '') ? rest : { ...rest, [code]: text } })
+  }
+  const shown = (key: string, code: string) => names[key]?.[code] ?? original[key]?.[code] ?? ''
   const inGame = (key: string, code: string) => original[key]?.[code] ?? original[key]?.eng_us ?? ''
   const missing = (key: string) => required.includes(key) && !names[key]?.[ALL]?.trim()
   return (
@@ -363,7 +372,7 @@ export function NamesGrid({
                 <td className="px-2 py-1.5 font-mono text-xs text-muted-foreground">{code}</td>
                 {columns.map((key) => (
                   <td key={key} className="px-2 py-1.5">
-                    <Input className="h-8" value={names[key]?.[code] ?? ''} maxLength={limits[key]} placeholder={names[key]?.[ALL]?.trim() || inGame(key, code)} onChange={(e) => set(key, code, e.target.value)} />
+                    <Input className="h-8" value={shown(key, code)} maxLength={limits[key]} placeholder={names[key]?.[ALL]?.trim() || inGame(key, code)} onChange={(e) => setLang(key, code, e.target.value)} />
                   </td>
                 ))}
               </tr>
@@ -398,6 +407,39 @@ export function useFieldLabel() {
       return String(value)
     },
   }
+}
+
+/** A list of countries: chips with a remove button and a select that adds one more. */
+function NationsInput({ value, onChange, className }: { value: number[]; onChange: (v: FieldValue) => void; className?: string }) {
+  const { t } = useI18n()
+  const nations = useOptions().data?.nations ?? []
+  const name = (id: number) => nations.find((n) => n.id === id)?.name ?? `#${id}`
+  return (
+    <div className={cn('flex flex-wrap items-center gap-1.5 rounded-md border p-1.5', className)}>
+      {value.map((id) => (
+        <span key={id} className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-sm">
+          {name(id)}
+          <button type="button" className="text-muted-foreground hover:text-foreground" aria-label={t('field.nationsRemove')} title={t('field.nationsRemove')} onClick={() => onChange(value.filter((x) => x !== id))}>
+            <X className="size-3.5" />
+          </button>
+        </span>
+      ))}
+      <Select value="" onValueChange={(v) => onChange([...value, Number(v)])}>
+        <SelectTrigger size="sm" className="h-7 w-auto min-w-40 border-dashed">
+          <SelectValue placeholder={t('field.nationsAdd')} />
+        </SelectTrigger>
+        <SelectContent>
+          {nations
+            .filter((n) => !value.includes(n.id))
+            .map((n) => (
+              <SelectItem key={n.id} value={String(n.id)}>
+                {n.name}
+              </SelectItem>
+            ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
 }
 
 /** One input for one field; the shown value is the edited one, else the game's. */
@@ -445,6 +487,8 @@ function FieldInput({ spec, value, original, onChange, roster }: { spec: FieldSp
       return select(options?.positions ?? [])
     case 'nation':
       return select(options?.nations ?? [])
+    case 'nations':
+      return <NationsInput value={Array.isArray(current) ? current : []} onChange={onChange} className={ring} />
     case 'team':
       return select(options?.teams ?? [])
     case 'roster':

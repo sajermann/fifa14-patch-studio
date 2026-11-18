@@ -75,6 +75,13 @@ export interface LeagueRow {
   is_new: boolean
   team_count: number
   edited: boolean
+  /** Left out of the patch (kept in the project). */
+  hidden: boolean
+  /** The game itself never lists it (no button to show it). */
+  game_hidden: boolean
+  /** Other countries the league shows in. */
+  extra_countries: number[]
+  own_logo: number | null
 }
 
 export interface CountryRow {
@@ -88,6 +95,10 @@ export interface CountryRow {
   own_flag: number | null
   league_count: number
   edited: boolean
+  /** Hidden by the project (Hide button). */
+  hidden: boolean
+  /** The game itself never lists it (no button to show it). */
+  game_hidden: boolean
 }
 
 export interface CountryDetail extends CountryRow, EditForm {
@@ -121,6 +132,8 @@ export interface TeamRow {
   league: string | null
   player_count: number
   edited: boolean
+  /** Hidden by the project (Hide button). */
+  hidden: boolean
 }
 
 export interface PlayerRow {
@@ -143,7 +156,7 @@ export interface PlayerRow {
 /** {name key: {language code or '*': text}} */
 export type NameTable = Record<string, Record<string, string>>
 
-export type FieldKind = 'int' | 'select' | 'text' | 'date' | 'color' | 'nation' | 'team' | 'roster' | 'position'
+export type FieldKind = 'int' | 'select' | 'text' | 'date' | 'color' | 'nation' | 'nations' | 'team' | 'roster' | 'position'
 export type FieldValue = string | number | number[] | null
 
 /** One editable value of a database row (backend f14mod.fields). */
@@ -197,6 +210,14 @@ export interface LeagueDetail extends EditForm {
   country_id: number | null
   country: string | null
   has_logo: boolean
+  /** The game has a logo of its own for this league. */
+  game_has_logo: boolean
+  /** The user's picture (saved at), null = none. */
+  own_logo: number | null
+  hidden: boolean
+  game_hidden: boolean
+  /** Every country the league shows in is hidden: the league is hidden too. */
+  hidden_by_countries: boolean
   is_new: boolean
   names: NameTable
   original_names: NameTable
@@ -204,6 +225,8 @@ export interface LeagueDetail extends EditForm {
   languages: string[]
   name_keys: string[]
   team_ids: number[]
+  /** The league's teams in the game (a created league: none). */
+  game_team_ids: number[]
   teams_changed: boolean
   teams: TeamRow[]
   raw: Raw

@@ -12,13 +12,18 @@ Schema 3 (17/11/2026) adds what the user creates (free countries and leagues; la
 of a league: `created` lists the new entities (their names and fields live in the same tables as the edits), and
 `league_members` holds the whole team list of every league whose teams were changed (`league_members_set`), in order;
 a league without a row there keeps the game's teams; `pictures` keeps the user's pictures (PNG) of an entity by
-slot (a country's 'flag'), so the project stays one file. Older files open as they are (the new tables start empty).
+slot (a country's 'flag', a league's 'logo'), so the project stays one file. Older files open as they are (the new
+tables start empty).
+Schema 4 (17/11/2026) adds `hidden` (the Hide button, same rule as the Street Studio): a created entity that is
+hidden is left out of the patch (kept in the project, nothing of it is built); an original one is hidden in the game by
+the project (Kick-off and tournament lists; see builder.write_visibility). `visible()` is the project the builder
+sees: without the hidden created entities, and with `hidden_in_game` = the hidden originals.
 """
 import json
 import sqlite3
 import time
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DEFAULT_LANG = '*'
 KINDS = ('team', 'league', 'player', 'country')
 NAME_TABLES = {'team': ('team_names', 'team_id'), 'league': ('league_names', 'league_id'),
@@ -40,6 +45,7 @@ CREATE TABLE IF NOT EXISTS league_members (league_id INTEGER, team_id INTEGER, o
                                            PRIMARY KEY (league_id, team_id));
 CREATE TABLE IF NOT EXISTS pictures (kind TEXT, id INTEGER, slot TEXT, data BLOB, updated_at INTEGER,
                                      PRIMARY KEY (kind, id, slot));
+CREATE TABLE IF NOT EXISTS hidden (kind TEXT, id INTEGER, PRIMARY KEY (kind, id));
 """
 
 Names = dict[str, dict[str, str]]  # {name key: {language or '*': text}}
@@ -237,6 +243,7 @@ class Project:
         con = self.connect()
         try:
             con.execute('DELETE FROM created WHERE kind = ? AND id = ?', (kind, oid))
+            con.execute('DELETE FROM hidden WHERE kind = ? AND id = ?', (kind, oid))
             if kind == 'league':
                 con.execute('DELETE FROM league_members WHERE league_id = ?', (oid,))
                 con.execute('DELETE FROM league_members_set WHERE league_id = ?', (oid,))
@@ -245,6 +252,35 @@ class Project:
             con.commit()
         finally:
             con.close()
+
+    # ---- left out of the patch ---------------------------------------------------------------------------------
+
+    def set_hidden(self, kind: str, oid: int, hidden: bool) -> None:
+        con = self.connect()
+        try:
+            if hidden:
+                con.execute('INSERT OR IGNORE INTO hidden VALUES (?, ?)', (kind, oid))
+            else:
+                con.execute('DELETE FROM hidden WHERE kind = ? AND id = ?', (kind, oid))
+            con.commit()
+        finally:
+            con.close()
+
+    def hidden(self, kind: str) -> set[int]:
+        con = self.connect()
+        try:
+            return {r[0] for r in con.execute('SELECT id FROM hidden WHERE kind = ?', (kind,))}
+        finally:
+            con.close()
+
+    def hidden_in_game(self, kind: str) -> set[int]:
+        """The hidden originals: the patch hides them in the game."""
+        return self.hidden(kind) - set(self.created(kind))
+
+    def visible(self) -> 'Project':
+        """The project without the hidden created entities (what the builder reads)."""
+        out = {kind: self.hidden(kind) & set(self.created(kind)) for kind in KINDS}
+        return VisibleProject(self, out) if any(self.hidden(kind) for kind in KINDS) else self
 
     # ---- teams of a league ------------------------------------------------------------------------------------
 
@@ -295,3 +331,60 @@ class Project:
 
     def all_team_names(self) -> dict[int, Names]:
         return self.all_names('team')
+
+
+class VisibleProject:
+    """A read view of a project without the entities left out of the patch (`hidden`: {kind: ids of hidden created
+    entities})."""
+
+    def __init__(self, project: Project, hidden: dict[str, set[int]]):
+        self._project = project
+        self._hidden = hidden
+
+    def __getattr__(self, name):
+        return getattr(self._project, name)
+
+    def _out(self, kind: str, oid: int) -> bool:
+        return oid in self._hidden.get(kind, ())
+
+    def names(self, kind: str, oid: int) -> Names:
+        return {} if self._out(kind, oid) else self._project.names(kind, oid)
+
+    def fields(self, kind: str, oid: int) -> dict:
+        return {} if self._out(kind, oid) else self._project.fields(kind, oid)
+
+    def picture(self, kind: str, oid: int, slot: str):
+        return None if self._out(kind, oid) else self._project.picture(kind, oid, slot)
+
+    def with_picture(self, kind: str, slot: str) -> list[int]:
+        return [i for i in self._project.with_picture(kind, slot) if not self._out(kind, i)]
+
+    def all_names(self, kind: str) -> dict[int, Names]:
+        return {i: v for i, v in self._project.all_names(kind).items() if not self._out(kind, i)}
+
+    def all_fields(self, kind: str) -> dict[int, dict]:
+        return {i: v for i, v in self._project.all_fields(kind).items() if not self._out(kind, i)}
+
+    def created(self, kind: str) -> list[int]:
+        return [i for i in self._project.created(kind) if not self._out(kind, i)]
+
+    def is_created(self, kind: str, oid: int) -> bool:
+        return not self._out(kind, oid) and self._project.is_created(kind, oid)
+
+    def members(self, league_id: int) -> list[int] | None:
+        return None if self._out('league', league_id) else self._project.members(league_id)
+
+    def hidden_in_game(self, kind: str) -> set[int]:
+        return self._project.hidden_in_game(kind)
+
+    def all_members(self) -> dict[int, list[int]]:
+        return {i: v for i, v in self._project.all_members().items() if not self._out('league', i)}
+
+    def all_team_names(self) -> dict[int, Names]:
+        return self.all_names('team')
+
+    def team_names(self, team_id: int) -> Names:
+        return self.names('team', team_id)
+
+    def visible(self) -> 'VisibleProject':
+        return self

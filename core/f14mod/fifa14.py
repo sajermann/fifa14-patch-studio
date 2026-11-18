@@ -51,6 +51,9 @@ TABLE_POSITIONS = 64       # leagueteamlinks.currenttableposition has 6 bits (1-
 # pictures (game paths; {} = the id)
 CREST = 'data/ui/imgassets/crest/l{}.dds'
 PHOTO = 'data/ui/imgassets/heads/p{}.dds'
+HIDDEN_COUNTRY = 0  # a league with country 0 is not listed by the game (Kick-off, tournaments; tests OC1/LC1)
+HIDDEN_LEAGUE = 111  # league the game never lists (country 0): a team hidden in the game is linked only to it
+UNLISTED_NATIONS = (209, 210, 216)  # countries the game never lists (Create Player, Free Agents, Creation Zone)
 LEAGUE_IMAGES = {'logo': 'data/ui/imgassets/league/l{}.dds', 'banner': 'data/ui/imgassets/league512x128/l{}.dds'}
 LEAGUE_PICTURES = {  # every picture of a league the game reads: game path -> (size, dark background)
     'data/ui/imgassets/league/l{}.dds': ((256, 256), False),
