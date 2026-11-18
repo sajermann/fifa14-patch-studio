@@ -190,6 +190,13 @@ export const en: Record<MessageKey, string> = {
   'list.previousPage': 'Previous page',
   'list.nextPage': 'Next page',
 
+  'list.originAll': 'Project and originals',
+  'list.originProject': 'From the project',
+  'list.originOriginal': 'Originals',
+  'list.statusAll': 'Any status',
+  'list.statusInGame': 'In game',
+  'list.statusHidden': 'Hidden',
+
   'filter.allLeagues': 'All leagues',
   'filter.allPositions': 'All positions',
   'filter.editedAny': 'Edited or not',

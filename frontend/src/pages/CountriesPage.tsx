@@ -11,12 +11,12 @@ import { GameHiddenBadge, HiddenByProjectBadge, OutOfPatchBadge } from '@/compon
 import { CountryFlag } from '@/components/common/pictures'
 import { useI18n } from '@/i18n'
 import { useFrom } from '@/lib/back'
-import { FilterBar, LIST_PAGE, Pager, ScrollTable, SearchInput, SortHead, useListState } from '@/lib/list'
+import { FilterBar, FilterSelect, LIST_PAGE, Pager, ScrollTable, SearchInput, SortHead, useListState } from '@/lib/list'
 import { toast } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 import { useList } from '@/state/queries'
 
-const FILTERS = ['q'] as const
+const FILTERS = ['q', 'origin', 'status'] as const
 
 export function CountriesPage() {
   const { t } = useI18n()
@@ -50,6 +50,26 @@ export function CountriesPage() {
       </div>
       <FilterBar active={list.active} onClear={list.clear}>
         <SearchInput value={list.values.q} onChange={(v) => list.update({ q: v })} placeholder={t('countries.search')} />
+        <FilterSelect
+          value={list.values.origin}
+          onChange={(v) => list.update({ origin: v })}
+          allLabel={t('list.originAll')}
+          className="w-48"
+          options={[
+            { value: 'project', label: t('list.originProject') },
+            { value: 'original', label: t('list.originOriginal') },
+          ]}
+        />
+        <FilterSelect
+          value={list.values.status}
+          onChange={(v) => list.update({ status: v })}
+          allLabel={t('list.statusAll')}
+          className="w-44"
+          options={[
+            { value: 'visible', label: t('list.statusInGame') },
+            { value: 'hidden', label: t('list.statusHidden') },
+          ]}
+        />
       </FilterBar>
       <ScrollTable>
         <TableHeader>

@@ -327,10 +327,11 @@ def player_detail(pid: int):
 # ---- free countries and leagues (created by the user) --------------------------------------------------------------
 
 @app.get('/api/countries')
-def list_countries(q: str = '', sort: Optional[str] = None, dir: Optional[str] = None, page: int = 1,
+def list_countries(q: str = '', origin: Optional[str] = None, status: Optional[str] = None,
+                   sort: Optional[str] = None, dir: Optional[str] = None, page: int = 1,
                    size: int = queries.DEFAULT_PAGE_SIZE):
     with db() as con:
-        return queries.countries(con, lang(), q, sort, dir, page, size)
+        return queries.countries(con, lang(), q, sort, dir, page, size, origin=origin, status=status)
 
 
 @app.get('/api/countries/{cid}')

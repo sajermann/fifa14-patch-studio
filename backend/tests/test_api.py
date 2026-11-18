@@ -121,6 +121,12 @@ def test_free_country_and_league_crud(client):
     cid = country['id']
     assert country['is_new'] and country['name'] == 'Free Land' and country['saved']['flag_from'] == 54
     assert client.get('/api/countries', params={'q': 'free'}).json()['total'] == 1
+    # origin filters: 'project' (created + edited) and 'original'
+    assert [x['id'] for x in client.get('/api/countries', params={'origin': 'project'}).json()['items']] == [cid]
+    assert cid not in [x['id'] for x in client.get('/api/countries', params={'origin': 'original'}).json()['items']]
+    # status filters: 'visible' and 'hidden'
+    assert cid in [x['id'] for x in client.get('/api/countries', params={'status': 'visible'}).json()['items']]
+    assert cid not in [x['id'] for x in client.get('/api/countries', params={'status': 'hidden'}).json()['items']]
     # the user's created items come first, whatever the sort
     for sort, direction in (('name', 'asc'), ('name', 'desc'), ('id', 'asc'), ('league_count', 'desc')):
         first = client.get('/api/countries', params={'sort': sort, 'dir': direction}).json()['items'][0]
@@ -260,6 +266,8 @@ def test_hide_and_league_in_several_countries(client):
     assert client.put(f'/api/leagues/{lid}/hidden', json={'hidden': False}).json()['hidden'] is False
     for cid in (54, 52):
         assert client.put(f'/api/countries/{cid}/hidden', json={'hidden': True}).json()['hidden']
+    assert 54 in [x['id'] for x in client.get('/api/countries', params={'status': 'hidden'}).json()['items']]
+    assert 54 not in [x['id'] for x in client.get('/api/countries', params={'status': 'visible'}).json()['items']]
     assert client.get(f'/api/leagues/{lid}').json()['hidden_by_countries']  # every country of it hidden
     assert not client.put('/api/countries/52/hidden', json={'hidden': False}).json()['hidden']
     assert not client.get(f'/api/leagues/{lid}').json()['hidden_by_countries']

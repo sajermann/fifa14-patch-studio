@@ -188,6 +188,13 @@ export const ptBR = {
   'list.previousPage': 'Página anterior',
   'list.nextPage': 'Próxima página',
 
+  'list.originAll': 'Projeto e originais',
+  'list.originProject': 'Do projeto',
+  'list.originOriginal': 'Originais',
+  'list.statusAll': 'Qualquer situação',
+  'list.statusInGame': 'No jogo',
+  'list.statusHidden': 'Ocultos',
+
   'filter.allLeagues': 'Todas as ligas',
   'filter.allPositions': 'Todas as posições',
   'filter.editedAny': 'Editados ou não',

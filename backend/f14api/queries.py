@@ -381,7 +381,7 @@ def _country_name(alias: str = 'n') -> str:
 
 
 def countries(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAULT_PAGE_SIZE,
-              only: int | None = None) -> dict:
+              only: int | None = None, origin: str | None = None, status: str | None = None) -> dict:
     params: dict = {'lang': lang}
     select = f"""SELECT n.id, {_country_name()} AS name, n.is_new, n.has_flag,
                  COALESCE({_saved('country', 'n', 'flag_from')}, n.id) AS flag_id,
@@ -398,6 +398,15 @@ def countries(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFA
         where.append('id = :only')
     if q.strip():
         where.append(_search("fold(name) || ' ' || id || ' ' || search", q, params))
+    if origin == 'project':
+        where.append(f'(n.is_new = 1 OR {_edited("country", "n")})')
+    elif origin == 'original':
+        where.append('n.is_new = 0')
+    hidden_sql = f'({_flag("hidden", "country", "n")} OR n.id IN ({", ".join(map(str, fifa14.UNLISTED_NATIONS))}))'
+    if status == 'visible':
+        where.append(f'NOT {hidden_sql}')
+    elif status == 'hidden':
+        where.append(hidden_sql)
     sorts = {'name': 'fold(name)', 'id': 'id', 'league_count': 'league_count'}
     out = _page(con, select, where, params, sorts, sort, direction, ('name', 'asc'), page, size, new_first=True)
     for r in out['items']:
