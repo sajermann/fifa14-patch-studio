@@ -44,20 +44,21 @@ export function HideButton({
   )
 }
 
-/** "Not in the patch" badge for hidden created items; alert: the red one of the edit pages. */
+/** "Not in the patch" badge (always red, like the one in the title of the edit pages). `alert`: in a title, where the
+ * gap comes from the row; without it (in a table cell) it keeps a margin from the name. */
 export function OutOfPatchBadge({ label, alert = false }: { label?: string; alert?: boolean }) {
   const { t } = useI18n()
   return (
-    <Badge variant={alert ? 'destructive' : 'outline'} className={alert ? 'font-normal' : 'ml-2 font-normal'}>
+    <Badge variant="destructive" className={alert ? 'font-normal' : 'ml-2 font-normal'}>
       {label ?? t('list.outOfPatch')}
     </Badge>
   )
 }
 
-/** "Hidden by the project" badge of a hidden original item (in lists). */
+/** "Hidden by the project" badge of a hidden original item (in lists): out of the patch, so red too. */
 export function HiddenByProjectBadge({ label }: { label: string }) {
   return (
-    <Badge variant="outline" className="ml-1 font-normal">
+    <Badge variant="destructive" className="ml-2 font-normal">
       {label}
     </Badge>
   )

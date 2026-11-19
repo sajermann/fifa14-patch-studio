@@ -76,7 +76,7 @@ export function LeaguesPage() {
                 <LeagueImage id={l.id} size={64} available={!!l.has_logo} className="size-8" />
               </TableCell>
               <TableCell data-grow>
-                <span className={l.hidden ? 'font-medium text-muted-foreground' : 'font-medium text-foreground'}>{l.name}</span> <OriginalBadge edited={l.edited} isNew={l.is_new} />
+                <span className={l.hidden ? 'font-medium text-muted-foreground' : 'font-medium text-foreground'}>{l.name}</span> {!l.is_new && <OriginalBadge edited={l.edited} />}
                 {l.game_hidden && <GameHiddenBadge />}
                 {l.hidden && (l.is_new ? <OutOfPatchBadge /> : <HiddenByProjectBadge label={t('leagues.hiddenByProject')} />)}
               </TableCell>

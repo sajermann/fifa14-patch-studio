@@ -641,7 +641,7 @@ function FieldInput({ spec, value, original, onChange, roster, bar }: { spec: Fi
     case 'roster':
       return select((roster ?? []).map((p) => ({ id: p.id, name: p.jersey !== null ? `${p.jersey} · ${p.name}` : p.name })))
     default:
-      if (bar && spec.min !== null && spec.max !== null) {
+      if (bar && spec.min !== null && spec.max !== null && spec.max - spec.min <= 100) {
         // a bar like the FS4 skills tab: the slider and its value
         const shown = typeof current === 'number' ? current : Math.round((spec.min + spec.max) / 2)
         return (

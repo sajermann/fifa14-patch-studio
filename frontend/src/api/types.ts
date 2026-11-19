@@ -301,7 +301,8 @@ export interface TeamDetail extends TeamRow, EditForm {
   saved_names: NameTable
   roster: RosterRow[]
   roster_changed: boolean
-  leagues: Ref[]
+  /** the leagues the team is in; hidden: out of the patch in that league only */
+  leagues: (Ref & { hidden: boolean })[]
   /** A created team: the game team it starts from. */
   template: number | null
   /** The crest and kits come from the game (the team's own, or the team a created one copies). */
@@ -335,6 +336,8 @@ export interface LeagueDetail extends EditForm {
   languages: string[]
   name_keys: string[]
   team_ids: number[]
+  /** teams left out of the patch in this league only (kept in its list on the screen) */
+  hidden_team_ids: number[]
   /** The league's teams in the game (a created league: none). */
   game_team_ids: number[]
   teams_changed: boolean
@@ -354,6 +357,8 @@ export interface PlayerTeam {
   is_new: boolean
   /** players of the team in the patch (hidden ones not counted) */
   squad_size: number
+  /** the 11 lineup positions of the team's formation */
+  slots: number[]
 }
 
 export interface PlayerDetail extends EditForm {

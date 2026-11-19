@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ImageOff, Loader2, Plus, Trash2, Upload, X } from 'lucide-react'
+import { ImageOff, Loader2, Plus, Trash2, Upload, UserMinus } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -12,7 +12,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -185,7 +184,7 @@ export function CountryPage() {
           {flag(128, 'h-8 w-12 shrink-0')}
           <h1 className="min-w-0 text-2xl font-semibold break-words">{data.name}</h1>
           <span className="shrink-0 text-sm text-muted-foreground tabular-nums">ID {data.id}</span>
-          <OriginalBadge edited={data.edited} isNew={data.is_new} />
+          {!data.is_new && <OriginalBadge edited={data.edited} />}
           {data.game_hidden && <GameHiddenBadge country />}
           {hide.hidden && <OutOfPatchBadge alert label={data.is_new ? undefined : t('countries.hiddenByProject')} />}
         </div>
@@ -214,7 +213,7 @@ export function CountryPage() {
             {t('col.leagues')} ({leagueIds.length})
           </TabsTrigger>
         </TabsList>
-        <TabsContent value="data" className="mt-4 space-y-4">
+        <TabsContent value="data" className="space-y-4">
           <FieldsEditor
             form={data}
             groups={['info']}
@@ -265,7 +264,7 @@ export function CountryPage() {
             required={data.is_new ? ['full'] : []}
           />
         </TabsContent>
-        <TabsContent value="leagues" className="mt-4">
+        <TabsContent value="leagues">
           <Section
             title={t('col.leagues')}
             description={t('country.leaguesHint')}
@@ -275,18 +274,17 @@ export function CountryPage() {
               </Button>
             }
           >
-            {(pendingLeagues || pendingHidden) && <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">{t('country.leaguesPending')}</p>}
             <FillScroll>
               <Table>
                 <TableHeader className="sticky top-0 z-10 shadow-[0_1px_0_var(--border)] [&_th]:bg-card">
                   <TableRow>
                     <TableHead className="w-12" />
                     <TableHead>{t('col.name')}</TableHead>
-                    <TableHead>{t('col.level')}</TableHead>
-                    <TableHead>{t('col.teams')}</TableHead>
-                    <TableHead>{t('col.id')}</TableHead>
-                    <TableHead className="w-14" />
-                    <TableHead className="w-12" />
+                    <TableHead className="w-28">{t('col.level')}</TableHead>
+                    <TableHead className="w-28">{t('col.teams')}</TableHead>
+                    <TableHead className="w-28">{t('col.id')}</TableHead>
+                    <TableHead className="w-28 text-center">{t('roster.inPatch')}</TableHead>
+                    <TableHead className="w-32" />
                   </TableRow>
                 </TableHeader>
                 <TableBody className={leagueRows.isFetching ? 'opacity-70' : undefined}>
@@ -295,24 +293,23 @@ export function CountryPage() {
                     const leagueOut = !!l?.hidden || !!l?.game_hidden // out of the patch (or the game) everywhere
                     const hiddenHere = hiddenIds.includes(lid)
                     return (
-                      <TableRow key={lid} className={cn('cursor-pointer', !l?.is_new && 'text-muted-foreground')} onClick={() => navigate(`/leagues/${lid}`, from)}>
+                      <TableRow key={lid}>
                         <TableCell>
                           <LeagueImage id={lid} size={64} version={l?.own_logo} available={!!l?.has_logo} className="size-8" />
                         </TableCell>
                         <TableCell>
-                          <span className={cn('font-medium', leagueOut || hiddenHere ? 'text-muted-foreground' : 'text-foreground')}>{l?.name ?? `#${lid}`}</span> {l && <OriginalBadge edited={l.edited} isNew={l.is_new} />}
+                          <Link to={`/leagues/${lid}`} state={from.state} className={cn('font-medium underline-offset-4 hover:underline', leagueOut || hiddenHere ? 'text-muted-foreground' : 'text-foreground')}>
+                            {l?.name ?? `#${lid}`}
+                          </Link>{' '}
+                          {l && !l.is_new && <OriginalBadge edited={l.edited} />}
                           {l?.game_hidden && <GameHiddenBadge />}
                           {l?.hidden && (l.is_new ? <OutOfPatchBadge /> : <HiddenByProjectBadge label={t('leagues.hiddenByProject')} />)}
-                          {!leagueOut && hiddenHere && (
-                            <Badge variant="outline" className="font-normal">
-                              {t('country.outOfPatchHere')}
-                            </Badge>
-                          )}
+                          {!leagueOut && hiddenHere && <OutOfPatchBadge label={t('country.outOfPatchHere')} />}
                         </TableCell>
                         <TableCell className="tabular-nums">{l?.level ?? '—'}</TableCell>
                         <TableCell className="tabular-nums">{l?.team_count ?? '—'}</TableCell>
                         <TableCell className="tabular-nums">{lid}</TableCell>
-                        <TableCell onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="text-center">
                           <Switch
                             checked={!leagueOut && !hiddenHere}
                             disabled={leagueOut}
@@ -322,17 +319,8 @@ export function CountryPage() {
                           />
                         </TableCell>
                         <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            title={t('country.removeLeague')}
-                            aria-label={t('country.removeLeague')}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setLeagues(leagueIds.filter((x) => x !== lid))
-                            }}
-                          >
-                            <X />
+                          <Button variant="ghost" size="sm" title={t('country.removeLeague')} onClick={() => setLeagues(leagueIds.filter((x) => x !== lid))}>
+                            <UserMinus /> {t('common.remove')}
                           </Button>
                         </TableCell>
                       </TableRow>

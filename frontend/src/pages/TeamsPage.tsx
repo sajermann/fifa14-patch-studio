@@ -108,7 +108,7 @@ export function TeamsPage() {
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-foreground">{tm.name}</span>
                   {tm.abbr3 && <span className="text-xs text-muted-foreground">{tm.abbr3}</span>}
-                  <OriginalBadge edited={tm.edited} isNew={tm.is_new} />
+                  {!tm.is_new && <OriginalBadge edited={tm.edited} />}
                   {tm.hidden && (tm.is_new ? <OutOfPatchBadge /> : <HiddenByProjectBadge label={t('teams.hiddenByProject')} />)}
                 </div>
                 {tm.abbr15 && tm.abbr15 !== tm.name && <div className="text-xs text-muted-foreground">{tm.abbr15}</div>}

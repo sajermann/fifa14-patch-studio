@@ -99,7 +99,7 @@ export function PlayersPage() {
                 <Photo id={p.id} size={64} available={p.has_photo} className="size-8" />
               </TableCell>
               <TableCell data-grow>
-                <span className="font-medium text-foreground">{p.name}</span> <OriginalBadge edited={p.edited} isNew={p.is_new} />
+                <span className="font-medium text-foreground">{p.name}</span> {!p.is_new && <OriginalBadge edited={p.edited} />}
                 {p.hidden && <OutOfPatchBadge />}
               </TableCell>
               <TableCell>{p.position_name ?? '—'}</TableCell>

@@ -222,6 +222,7 @@ class PlayerTeamRow(BaseModel):
     team: int
     jersey: Optional[int] = None
     hidden: bool = False  # out of the patch in this team only
+    slot: Optional[int] = None  # lineup position (0-27), bench (28) or out of the squad (29); None = as it is
 
 
 def _save_teams(con, pid: int, wanted: list[PlayerTeamRow]) -> None:
@@ -234,6 +235,8 @@ def _save_teams(con, pid: int, wanted: list[PlayerTeamRow]) -> None:
             raise ApiError(400, 'duplicate_team', str(w.team))
         if w.jersey is not None and not 1 <= w.jersey <= 99:
             raise ApiError(400, 'field_out_of_range', 'jersey')
+        if w.slot is not None and not 0 <= w.slot <= RESERVE:
+            raise ApiError(400, 'field_out_of_range', 'slot')
         if queries.team(con, lang(), w.team) is None:
             raise ApiError(400, 'unknown_team', str(w.team))
         by_team[w.team] = w
@@ -249,6 +252,18 @@ def _save_teams(con, pid: int, wanted: list[PlayerTeamRow]) -> None:
         if mine['jersey'] != jersey or mine['hidden'] != w.hidden:
             mine.update(jersey=jersey, hidden=w.hidden)
             project().set_roster(tid, rows)
+    for tid, w in by_team.items():  # his position in each team (a starter taking a place sends its holder to the bench)
+        if w.slot is None:
+            continue
+        rows = _roster_rows(con, tid)
+        mine = next(r for r in rows if r['player'] == pid)
+        if mine['slot'] == w.slot:
+            continue
+        for r in rows:
+            if w.slot < BENCH and r['slot'] == w.slot and r['player'] != pid:
+                r['slot'] = BENCH
+        mine['slot'] = w.slot
+        project().set_roster(tid, rows)
 
 
 # ---- save -------------------------------------------------------------------------------------------------------------

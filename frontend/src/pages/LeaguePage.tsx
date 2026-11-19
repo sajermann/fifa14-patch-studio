@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ImageOff, Loader2, Plus, RotateCcw, Trash2, Upload, X } from 'lucide-react'
+import { ImageOff, Loader2, Plus, RotateCcw, Trash2, Upload, UserMinus } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,6 +15,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { toast } from '@/lib/notify'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api } from '@/api/client'
 import { FillScroll, OriginalBadge, OverallBadge, RawTable, Section } from '@/components/common/detail'
@@ -85,7 +86,7 @@ export function LeaguePage() {
   const [deleting, setDeleting] = useState(false)
   const [pendingLogo, setPendingLogo] = useState<PendingLogo>(null)
   // the team list being edited (null = the saved one); Save sends it with the rest of the form
-  const [pendingTeams, setPendingTeams] = useState<number[] | null>(null)
+  const [pendingTeams, setPendingTeams] = useState<{ ids: number[]; hidden: number[] } | null>(null)
   const pendingUrl = pendingLogo && pendingLogo !== 'remove' ? pendingLogo.url : null
   useEffect(() => () => void (pendingUrl && URL.revokeObjectURL(pendingUrl)), [pendingUrl])
   const hide = usePendingHide(data?.hidden)
@@ -104,7 +105,10 @@ export function LeaguePage() {
       else if (pendingLogo) saved = await api.uploadLeagueLogo(id, pendingLogo.data)
       if (pendingTeams) {
         // the game's teams again: the league goes back to following the game
-        saved = !saved.is_new && sameSet(pendingTeams, saved.game_team_ids) ? await api.resetLeagueTeams(id) : await api.saveLeagueTeams(id, pendingTeams)
+        saved =
+          !saved.is_new && pendingTeams.hidden.length === 0 && sameSet(pendingTeams.ids, saved.game_team_ids)
+            ? await api.resetLeagueTeams(id)
+            : await api.saveLeagueTeams(id, pendingTeams.ids, pendingTeams.hidden)
       }
       if (hide.pending !== null) saved = await api.setLeagueHidden(id, hide.pending)
       clearPending()
@@ -119,7 +123,8 @@ export function LeaguePage() {
     // a created league has no name of the game: its "All" name is required (an original one keeps the game's)
     invalid: (f) => !!data?.is_new && !f.names.full?.[ALL]?.trim(),
   })
-  const teamIds = pendingTeams ?? data?.team_ids ?? []
+  const teamIds = pendingTeams?.ids ?? data?.team_ids ?? []
+  const hiddenTeamIds = pendingTeams?.hidden ?? data?.hidden_team_ids ?? []
   const shownIds = teamIds.slice(0, SHOWN_TEAMS)
   const teamRows = useQuery({
     queryKey: ['teams', token, lang, 'ids', shownIds.join(',')],
@@ -128,7 +133,10 @@ export function LeaguePage() {
     placeholderData: (previous) => previous,
   })
   const rowsById = new Map((teamRows.data?.items ?? []).map((r) => [r.id, r]))
-  const setTeams = (ids: number[]) => setPendingTeams(data && sameList(ids, data.team_ids) ? null : ids)
+  const setTeams = (ids: number[], hidden: number[] = hiddenTeamIds) => {
+    const kept = hidden.filter((x) => ids.includes(x))
+    setPendingTeams(data && sameList(ids, data.team_ids) && sameSet(kept, data.hidden_team_ids) ? null : { ids, hidden: kept })
+  }
   const fileInput = useRef<HTMLInputElement>(null)
   const chooseLogo = useMutation({
     mutationFn: async (file: File) => {
@@ -171,7 +179,7 @@ export function LeaguePage() {
           <span className="shrink-0 text-sm text-muted-foreground tabular-nums">
             {[data.country, data.level !== null ? t('leagues.level', { level: data.level }) : null, `ID ${data.id}`].filter(Boolean).join(' · ')}
           </span>
-          <OriginalBadge edited={data.edited} isNew={data.is_new} />
+          {!data.is_new && <OriginalBadge edited={data.edited} />}
           {data.game_hidden && <GameHiddenBadge />}
           {hide.hidden && <OutOfPatchBadge alert label={data.is_new ? undefined : t('leagues.hiddenByProject')} />}
           {!hide.hidden && data.hidden_by_countries && <HiddenByProjectBadge label={t('leagues.countryHidden')} />}
@@ -203,7 +211,7 @@ export function LeaguePage() {
           </TabsTrigger>
           <TabsTrigger value="raw">{t('tab.raw')}</TabsTrigger>
         </TabsList>
-        <TabsContent value="data" className="mt-4 space-y-4">
+        <TabsContent value="data" className="space-y-4">
           <FieldsEditor
             form={data}
             groups={['info']}
@@ -254,14 +262,14 @@ export function LeaguePage() {
             required={data.is_new ? ['full'] : []}
           />
         </TabsContent>
-        <TabsContent value="teams" className="mt-4">
+        <TabsContent value="teams">
           <Section
             title={t('col.teams')}
             description={t('league.teamsHint')}
             action={
               <div className="flex flex-wrap gap-2">
                 {gameTeams && (
-                  <Button variant="outline" size="sm" onClick={() => setTeams([...data.game_team_ids])}>
+                  <Button variant="outline" size="sm" onClick={() => setTeams([...data.game_team_ids], [])}>
                     <RotateCcw /> {t('league.teamsRestore')}
                   </Button>
                 )}
@@ -271,7 +279,6 @@ export function LeaguePage() {
               </div>
             }
           >
-            {pendingTeams && <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">{t('league.teamsPending')}</p>}
             {teamIds.length > shownIds.length && <p className="mb-2 text-xs text-muted-foreground">{t('league.teamsShown', { shown: shownIds.length, total: teamIds.length })}</p>}
             <FillScroll>
               <Table>
@@ -279,15 +286,16 @@ export function LeaguePage() {
                   <TableRow>
                     <TableHead className="w-12" />
                     <TableHead>{t('col.name')}</TableHead>
-                    <TableHead>{t('col.overall')}</TableHead>
-                    <TableHead>{t('col.players')}</TableHead>
-                    <TableHead className="w-12" />
+                    <TableHead className="w-28">{t('col.overall')}</TableHead>
+                    <TableHead className="w-28">{t('col.players')}</TableHead>
+                    <TableHead className="w-28 text-center">{t('roster.inPatch')}</TableHead>
+                    <TableHead className="w-32" />
                   </TableRow>
                 </TableHeader>
                 <TableBody className={teamRows.isFetching ? 'opacity-70' : undefined}>
                   {teamIds.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                      <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                         {t('league.noTeams')}
                       </TableCell>
                     </TableRow>
@@ -295,30 +303,32 @@ export function LeaguePage() {
                   {shownIds.map((tid) => {
                     const tm = rowsById.get(tid)
                     return (
-                      <TableRow key={tid} className={cn('cursor-pointer', !tm?.edited && 'text-muted-foreground')} onClick={() => navigate(`/teams/${tid}`, from)}>
+                      <TableRow key={tid}>
                         <TableCell>
                           <Crest id={tid} size={64} available={tm?.has_crest} className="size-8" />
                         </TableCell>
                         <TableCell>
-                          <span className="font-medium text-foreground">{tm?.name ?? `#${tid}`}</span> {tm && <OriginalBadge edited={tm.edited} />}
+                          <Link to={`/teams/${tid}`} state={from.state} className="font-medium underline-offset-4 hover:underline">
+                            {tm?.name ?? `#${tid}`}
+                          </Link>{' '}
+                          {tm && !tm.is_new && <OriginalBadge edited={tm.edited} />}
+                          {hiddenTeamIds.includes(tid) && <OutOfPatchBadge label={t('league.outOfPatchHere')} />}
                           {tm?.hidden && <HiddenByProjectBadge label={t('teams.hiddenByProject')} />}
                         </TableCell>
                         <TableCell>
                           <OverallBadge value={tm?.overall ?? null} />
                         </TableCell>
                         <TableCell className="tabular-nums">{tm?.player_count ?? '—'}</TableCell>
+                        <TableCell className="text-center">
+                          <Switch
+                            checked={!hiddenTeamIds.includes(tid)}
+                            title={hiddenTeamIds.includes(tid) ? t('league.showTeamHere') : t('league.hideTeamHere')}
+                            onCheckedChange={(on) => setTeams(teamIds, on ? hiddenTeamIds.filter((x) => x !== tid) : [...hiddenTeamIds, tid])}
+                          />
+                        </TableCell>
                         <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            title={t('league.removeTeam')}
-                            aria-label={t('league.removeTeam')}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setTeams(teamIds.filter((x) => x !== tid))
-                            }}
-                          >
-                            <X />
+                          <Button variant="ghost" size="sm" title={t('league.removeTeam')} onClick={() => setTeams(teamIds.filter((x) => x !== tid))}>
+                            <UserMinus /> {t('common.remove')}
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -329,7 +339,7 @@ export function LeaguePage() {
             </FillScroll>
           </Section>
         </TabsContent>
-        <TabsContent value="raw" className="mt-4">
+        <TabsContent value="raw">
           <Section title={t('tab.raw')}>
             <RawTable raw={data.raw} />
           </Section>

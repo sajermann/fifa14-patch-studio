@@ -85,10 +85,10 @@ VIEWS = [
         FROM p.created c LEFT JOIN p.player_sources s ON s.player_id = c.id LEFT JOIN players t ON t.id = s.template
         WHERE c.kind = 'player'""",
     """CREATE TEMP VIEW v_league_teams AS
-        SELECT league_id, team_id, 0 AS ord FROM league_teams
+        SELECT league_id, team_id, 0 AS ord, 0 AS hidden FROM league_teams
         WHERE league_id NOT IN (SELECT league_id FROM p.league_members_set)
         UNION ALL
-        SELECT league_id, team_id, ord FROM p.league_members""",
+        SELECT league_id, team_id, ord, COALESCE(hidden, 0) FROM p.league_members""",
 ]
 
 TEAM_NAME_KEYS = list(fifa14.TEAM_NAME_STRINGS)
@@ -383,8 +383,11 @@ def team(con, lang: str, tid: int) -> dict | None:
         r['edited'] = bool(r['edited'])
         r['hidden'] = bool(r['hidden'])
     leagues_of = [dict(r) for r in con.execute(
-        f'SELECT l.id, {_league_name()} AS name, l.is_new FROM v_leagues l WHERE l.id IN '
+        f'SELECT l.id, {_league_name()} AS name, l.is_new, (SELECT x.hidden FROM v_league_teams x '
+        'WHERE x.league_id = l.id AND x.team_id = :tid) AS hidden FROM v_leagues l WHERE l.id IN '
         '(SELECT league_id FROM v_league_teams WHERE team_id = :tid)', {'lang': lang, 'tid': tid})]
+    for r in leagues_of:
+        r['hidden'] = bool(r['hidden'])
     source = con.execute('SELECT template, copy FROM p.team_sources WHERE team_id = ?', (tid,)).fetchone()
     template = source['template'] if source else (MODEL_TEAM if head['is_new'] else tid)
     copied = bool(source['copy']) if source else not head['is_new']
@@ -399,6 +402,22 @@ def team(con, lang: str, tid: int) -> dict | None:
             'leagues': leagues_of, 'template': template if head['is_new'] else None, 'copied': copied,
             'formations': formations(con), 'kits': team_kits(con, tid, look_from, bool(head['is_new'])),
             'max_squad': fifa14.MAX_SQUAD, **form, 'raw': raw}
+
+
+def team_slots(con, tid: int, is_new: bool) -> list[int]:
+    """The 11 lineup positions of a team's formation (the one saved for it, else its own)."""
+    saved = con.execute("SELECT json_extract(value, '$') FROM p.fields WHERE kind = 'team' AND id = ? "
+                        "AND field = 'formation'", (tid,)).fetchone()
+    formation = saved[0] if saved and saved[0] is not None else None
+    if formation is None:
+        source = con.execute('SELECT template FROM p.team_sources WHERE team_id = ?', (tid,)).fetchone()
+        template = source['template'] if source else (MODEL_TEAM if is_new else tid)
+        own = con.execute('SELECT base FROM formations WHERE team_id = ? AND generic = 0', (template,)).fetchone()
+        formation = own['base'] if own else None
+    if formation is None:
+        return []
+    row = con.execute('SELECT positions FROM formations WHERE generic = 1 AND formation_id = ?', (formation,)).fetchone()
+    return json.loads(row['positions']) if row else []
 
 
 def formations(con) -> list[dict]:
@@ -478,6 +497,8 @@ def league(con, lang: str, lid: int) -> dict | None:
     original = _names(con, 'league', lid)
     team_ids = [r[0] for r in con.execute(
         'SELECT team_id FROM v_league_teams WHERE league_id = ? ORDER BY ord, team_id', (lid,))]
+    hidden_team_ids = [r[0] for r in con.execute(
+        'SELECT team_id FROM v_league_teams WHERE league_id = ? AND hidden = 1 ORDER BY ord, team_id', (lid,))]
     custom = con.execute('SELECT 1 FROM p.league_members_set WHERE league_id = ?', (lid,)).fetchone() is not None
     game_team_ids = [] if head['is_new'] else [r[0] for r in con.execute(
         'SELECT team_id FROM league_teams WHERE league_id = ? ORDER BY team_id', (lid,))]
@@ -501,6 +522,7 @@ def league(con, lang: str, lid: int) -> dict | None:
             'hidden_by_countries': bool(shown_in) and all(c in countries_hidden for c in shown_in),
             'names': original, 'original_names': original, 'saved_names': _project_names(con, 'league', lid),
             'name_keys': LEAGUE_NAME_KEYS, 'languages': languages(con), 'team_ids': team_ids,
+            'hidden_team_ids': hidden_team_ids,
             'teams_changed': custom, 'teams': teams(con, lang, league=lid, size=100)['items'],
             **_form(con, 'league', lid, raw), 'raw': raw}
 
@@ -522,6 +544,7 @@ def player(con, lang: str, pid: int) -> dict | None:
         r['position_name'] = fifa14.position_name(r['position'])
         r['hidden'] = bool(r['hidden'])
         r['is_new'] = bool(r['is_new'])
+        r['slots'] = team_slots(con, r['id'], r['is_new'])
     source = con.execute('SELECT template FROM p.player_sources WHERE player_id = ?', (pid,)).fetchone()
     form = _form(con, 'player', pid, raw, names)
     is_new = bool(row['is_new'])

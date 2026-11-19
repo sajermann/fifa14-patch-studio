@@ -1,17 +1,36 @@
 import { useMutation } from '@tanstack/react-query'
-import { ImageOff, Loader2, Upload } from 'lucide-react'
+import { Loader2, Trash2, Upload } from 'lucide-react'
 import { useRef } from 'react'
-import type { TeamDetail } from '@/api/types'
+import type { FieldValue, TeamDetail } from '@/api/types'
 import { Section } from '@/components/common/detail'
+import { ColorInput } from '@/components/common/form'
 import { Crest, readPicture } from '@/components/common/pictures'
 import { Button } from '@/components/ui/button'
-import { useI18n } from '@/i18n'
+import { Label } from '@/components/ui/label'
+import { useI18n, type MessageKey } from '@/i18n'
 import { toast } from '@/lib/notify'
 import type { PendingPicture } from './pending'
 
-/** The team's crest: the user's picture (the patch draws every crest size from it, and puts it on generic kits) or
- * the game's (a team made from scratch without one gets a plain shield with its short name). */
-export function TeamCrest({ team, pending, setPending }: { team: TeamDetail; pending: PendingPicture; setPending: (p: PendingPicture) => void }) {
+const COLORS = ['teamcolor1', 'teamcolor2', 'teamcolor3'] as const
+const FALLBACK = [0, 0, 0]
+
+/** The team's crest and colors, laid out like the Street Studio's tab: the crest (the user's picture, which the patch
+ * draws every size from and puts on generic kits, or the game's; a team made from scratch without one gets a plain
+ * shield with its short name) and the three team colors. */
+export function TeamCrest({
+  team,
+  pending,
+  setPending,
+  fields,
+  setField,
+}: {
+  team: TeamDetail
+  pending: PendingPicture
+  setPending: (p: PendingPicture) => void
+  /** the edited fields (database column -> value) */
+  fields: Record<string, FieldValue>
+  setField: (name: string, value: FieldValue) => void
+}) {
   const { t } = useI18n()
   const input = useRef<HTMLInputElement>(null)
   const choose = useMutation({
@@ -23,42 +42,72 @@ export function TeamCrest({ team, pending, setPending }: { team: TeamDetail; pen
     onError: (e: Error) => toast.error(e.message),
   })
   const hasOwn = pending === 'remove' ? false : !!pending || !!team.own_crest
+  const color = (column: string): number[] => {
+    const edited = fields[column]
+    const value = Array.isArray(edited) ? edited : team.values[column]
+    return Array.isArray(value) && value.every((c) => typeof c === 'number') ? (value as number[]) : FALLBACK
+  }
   return (
-    <Section title={t('team.crest')} description={t('team.crestHint')}>
-      <div className="flex flex-wrap items-center gap-4">
-        <div className="flex size-36 shrink-0 items-center justify-center rounded-md bg-muted/40 p-3">
-          {pending && pending !== 'remove' ? (
-            <img src={pending.url} alt="" className="size-28 object-contain" />
-          ) : (
-            <Crest id={team.id} size={256} available={team.has_crest || team.is_new || hasOwn} version={pending === 'remove' ? null : team.own_crest} className="size-28" />
-          )}
-        </div>
-        <div className="min-w-0 flex-1 basis-64 space-y-2">
-          <p className="text-xs text-muted-foreground">{hasOwn ? t('team.crestOwn') : t(team.is_new && !team.copied ? 'team.crestPlain' : 'team.crestGame')}</p>
-          {pending && <p className="text-xs text-amber-600 dark:text-amber-400">{t(pending === 'remove' ? 'team.crestRemovePending' : 'team.crestPending')}</p>}
-          <div className="flex flex-wrap gap-2">
-            <input
-              ref={input}
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/bmp,image/gif"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) choose.mutate(file)
-                e.target.value = ''
-              }}
-            />
-            <Button variant="outline" size="sm" disabled={choose.isPending} onClick={() => input.current?.click()}>
-              {choose.isPending ? <Loader2 className="animate-spin" /> : <Upload />} {t('team.crestUpload')}
-            </Button>
-            {hasOwn && (
-              <Button variant="ghost" size="sm" onClick={() => setPending(team.own_crest ? 'remove' : null)}>
-                <ImageOff /> {t('team.crestRemove')}
-              </Button>
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Section title={t('team.crest')} description={t('team.crestHint')}>
+        <div className="space-y-3">
+          <div
+            className="flex h-48 cursor-pointer items-center justify-center rounded-lg border border-dashed bg-[repeating-conic-gradient(var(--muted)_0_25%,transparent_0_50%)] bg-[length:16px_16px]"
+            onClick={() => input.current?.click()}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault()
+              const f = e.dataTransfer.files[0]
+              if (f) choose.mutate(f)
+            }}
+          >
+            {choose.isPending ? (
+              <Loader2 className="animate-spin" />
+            ) : pending && pending !== 'remove' ? (
+              <img src={pending.url} alt="" className="max-h-40 max-w-full object-contain" />
+            ) : team.has_crest || team.is_new || hasOwn ? (
+              <Crest id={team.id} size={256} available version={pending === 'remove' ? null : team.own_crest} className="max-h-40 max-w-full" />
+            ) : (
+              <span className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
+                <Upload /> {t('image.clickOrDrop')}
+              </span>
             )}
           </div>
+          <input
+            ref={input}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/bmp,image/gif"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) choose.mutate(file)
+              e.target.value = ''
+            }}
+          />
+          <p className="text-xs text-muted-foreground">{hasOwn ? t('team.crestOwn') : t(team.is_new && !team.copied ? 'team.crestPlain' : 'team.crestGame')}</p>
+          {pending && <p className="text-xs text-amber-600 dark:text-amber-400">{t(pending === 'remove' ? 'team.crestRemovePending' : 'team.crestPending')}</p>}
+          {hasOwn && (
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" disabled={choose.isPending} onClick={() => input.current?.click()}>
+                <Upload /> {t('common.replace')}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setPending(team.own_crest ? 'remove' : null)}>
+                <Trash2 /> {t('common.remove')}
+              </Button>
+            </div>
+          )}
         </div>
-      </div>
-    </Section>
+      </Section>
+      <Section title={t('team.colors')}>
+        <div className="space-y-4">
+          {COLORS.map((column) => (
+            <div key={column} className="space-y-1.5">
+              <Label>{t(`field.${column}` as MessageKey)}</Label>
+              <ColorInput value={color(column)} onChange={(v) => setField(column, v)} />
+            </div>
+          ))}
+        </div>
+      </Section>
+    </div>
   )
 }

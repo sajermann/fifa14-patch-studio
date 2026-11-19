@@ -29,12 +29,14 @@ starts from), `player_files` (the files of the face picked from a pack, kept in 
 name = the kind of fifa14.PLAYER_FACE_FILES) and `team_rosters.hidden` (a player left out of the patch in that team
 only, kept in its squad on the screen: same rule as the Street Studio). A player's photo is picture slot `photo`.
 Older files open as they are (the new column is added).
+Schema 7 (19/11/2026) adds `league_members.hidden` (a team left out of the patch in that league only, kept in its list
+on the screen). Older files open as they are (the new column is added).
 """
 import json
 import sqlite3
 import time
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 DEFAULT_LANG = '*'
 KINDS = ('team', 'league', 'player', 'country')
 NAME_TABLES = {'team': ('team_names', 'team_id'), 'league': ('league_names', 'league_id'),
@@ -52,7 +54,7 @@ CREATE TABLE IF NOT EXISTS country_names (country_id INTEGER, key TEXT, lang TEX
                                           PRIMARY KEY (country_id, key, lang));
 CREATE TABLE IF NOT EXISTS created (kind TEXT, id INTEGER, created_at INTEGER, PRIMARY KEY (kind, id));
 CREATE TABLE IF NOT EXISTS league_members_set (league_id INTEGER PRIMARY KEY);
-CREATE TABLE IF NOT EXISTS league_members (league_id INTEGER, team_id INTEGER, ord INTEGER,
+CREATE TABLE IF NOT EXISTS league_members (league_id INTEGER, team_id INTEGER, ord INTEGER, hidden INTEGER DEFAULT 0,
                                            PRIMARY KEY (league_id, team_id));
 CREATE TABLE IF NOT EXISTS pictures (kind TEXT, id INTEGER, slot TEXT, data BLOB, updated_at INTEGER,
                                      PRIMARY KEY (kind, id, slot));
@@ -88,6 +90,8 @@ class Project:
             con.executescript(SCHEMA)
             if 'hidden' not in {r[1] for r in con.execute('PRAGMA table_info(team_rosters)')}:  # schema 5 and older
                 con.execute('ALTER TABLE team_rosters ADD COLUMN hidden INTEGER DEFAULT 0')
+            if 'hidden' not in {r[1] for r in con.execute('PRAGMA table_info(league_members)')}:  # schema 6 and older
+                con.execute('ALTER TABLE league_members ADD COLUMN hidden INTEGER DEFAULT 0')
             con.execute("INSERT OR REPLACE INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
             con.commit()
         finally:
@@ -321,16 +325,20 @@ class Project:
 
     # ---- teams of a league ------------------------------------------------------------------------------------
 
-    def set_members(self, league_id: int, team_ids: list[int] | None) -> None:
-        """The whole team list of a league, in order; None = the game's teams again."""
+    def set_members(self, league_id: int, team_ids: list[int] | None, hidden=None) -> None:
+        """The whole team list of a league, in order; None = the game's teams again. `hidden`: the teams left out of
+        the patch in this league only (None = the ones that were hidden stay hidden)."""
         con = self.connect()
         try:
+            if hidden is None:
+                hidden = {r[0] for r in con.execute(
+                    'SELECT team_id FROM league_members WHERE league_id = ? AND hidden = 1', (league_id,))}
             con.execute('DELETE FROM league_members WHERE league_id = ?', (league_id,))
             con.execute('DELETE FROM league_members_set WHERE league_id = ?', (league_id,))
             if team_ids is not None:
                 con.execute('INSERT INTO league_members_set VALUES (?)', (league_id,))
-                con.executemany('INSERT OR IGNORE INTO league_members VALUES (?, ?, ?)',
-                                [(league_id, tid, i) for i, tid in enumerate(team_ids)])
+                con.executemany('INSERT OR IGNORE INTO league_members VALUES (?, ?, ?, ?)',
+                                [(league_id, tid, i, int(tid in hidden)) for i, tid in enumerate(team_ids)])
             con.commit()
         finally:
             con.close()
@@ -342,6 +350,17 @@ class Project:
                 return None
             return [r[0] for r in con.execute(
                 'SELECT team_id FROM league_members WHERE league_id = ? ORDER BY ord', (league_id,))]
+        finally:
+            con.close()
+
+    def all_hidden_members(self) -> dict[int, set[int]]:
+        """The teams left out of the patch in a league only: {league: team ids}."""
+        con = self.connect()
+        try:
+            out: dict[int, set[int]] = {}
+            for r in con.execute('SELECT league_id, team_id FROM league_members WHERE hidden = 1'):
+                out.setdefault(r[0], set()).add(r[1])
+            return out
         finally:
             con.close()
 

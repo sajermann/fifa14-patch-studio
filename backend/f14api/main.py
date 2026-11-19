@@ -466,6 +466,7 @@ def delete_league(lid: int):
 
 class TeamsBody(BaseModel):
     team_ids: list[int]
+    hidden_team_ids: list[int] = []  # out of the patch in this league only
 
 
 @app.put('/api/leagues/{lid}/teams')
@@ -484,7 +485,7 @@ def save_league_teams(lid: int, body: TeamsBody):
         others = con.execute('SELECT COUNT(*) FROM v_league_teams WHERE league_id != ?', (lid,)).fetchone()[0]
         if others + len(team_ids) > fifa14.MAX_LEAGUE_LINKS:
             raise ApiError(409, 'limit_league_links', str(fifa14.MAX_LEAGUE_LINKS))
-    project().set_members(lid, team_ids)
+    project().set_members(lid, team_ids, {t for t in body.hidden_team_ids if t in team_ids})
     with db() as con:
         return queries.league(con, lang(), lid)
 
@@ -498,6 +499,48 @@ def reset_league_teams(lid: int):
     if out is None:
         raise ApiError(404, 'not_found')
     return out
+
+
+class TeamLeaguesBody(BaseModel):
+    league_ids: list[int]
+    hidden_league_ids: list[int] = []  # leagues where the team is out of the patch
+
+
+@app.put('/api/teams/{tid}/leagues')
+def save_team_leagues(tid: int, body: TeamLeaguesBody):
+    """The leagues the team plays in, set from the team's screen: each league that gains or loses it keeps its own
+    team list (the same one the league's screen edits; a league left with the game's teams follows the game again)."""
+    wanted = list(dict.fromkeys(body.league_ids))
+    with db() as con:
+        if queries.team(con, lang(), tid) is None:
+            raise ApiError(404, 'not_found')
+        if wanted:
+            marks = ','.join('?' * len(wanted))
+            found = {r[0] for r in con.execute(f'SELECT id FROM v_leagues WHERE id IN ({marks})', wanted)}
+            missing = [lid for lid in wanted if lid not in found]
+            if missing:
+                raise ApiError(400, 'unknown_league', str(missing[0]))
+        current = {r[0] for r in con.execute('SELECT league_id FROM v_league_teams WHERE team_id = ?', (tid,))}
+        now_hidden = {r[0] for r in con.execute(
+            'SELECT league_id FROM v_league_teams WHERE team_id = ? AND hidden = 1', (tid,))}
+        want_hidden = {lid for lid in body.hidden_league_ids if lid in wanted}
+        changed = (current ^ set(wanted)) | (now_hidden ^ want_hidden)
+        lists = {lid: [r[0] for r in con.execute('SELECT team_id FROM v_league_teams WHERE league_id = ? ORDER BY ord',
+                                                 (lid,))] for lid in changed}
+        hidden_in = {lid: {r[0] for r in con.execute(
+            'SELECT team_id FROM v_league_teams WHERE league_id = ? AND hidden = 1', (lid,))} for lid in changed}
+        game = {lid: [r[0] for r in con.execute('SELECT team_id FROM league_teams WHERE league_id = ?', (lid,))]
+                for lid in changed}
+        links = queries.league_link_count(con) + len(set(wanted) - current) - len(current - set(wanted))
+        if links > fifa14.MAX_LEAGUE_LINKS:
+            raise ApiError(409, 'limit_league_links', str(fifa14.MAX_LEAGUE_LINKS))
+    for lid, ids in lists.items():
+        team_ids = [*ids, tid] if lid in wanted else [x for x in ids if x != tid]
+        hidden = (hidden_in[lid] - {tid}) | ({tid} if lid in want_hidden else set())
+        follows_game = not hidden and not project().is_created('league', lid) and sorted(team_ids) == sorted(game[lid])
+        project().set_members(lid, None if follows_game else team_ids, hidden)
+    with db() as con:
+        return queries.team(con, lang(), tid)
 
 
 @app.get('/api/limits')

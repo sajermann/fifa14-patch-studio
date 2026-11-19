@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 
@@ -76,6 +77,31 @@ export function Stepper({
       <Button type="button" variant="outline" size="icon" onClick={() => go(1)} aria-label={t('form.next')}>
         <ChevronRight />
       </Button>
+    </div>
+  )
+}
+
+export type RGB = [number, number, number]
+export const toHex = (rgb: number[]) => '#' + rgb.map((v) => v.toString(16).padStart(2, '0')).join('')
+export const fromHex = (hex: string): RGB => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as RGB
+
+/** A color: the picker square and, beside it, the hex code to type (same as the Street Studio's). */
+export function ColorInput({ value, onChange }: { value: number[]; onChange: (v: RGB) => void }) {
+  const { t } = useI18n()
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        type="color"
+        value={toHex(value)}
+        onChange={(e) => onChange(fromHex(e.target.value))}
+        className="h-9 w-12 cursor-pointer rounded-md border bg-transparent p-1"
+        aria-label={t('form.pickColor')}
+      />
+      <Input
+        value={toHex(value).toUpperCase()}
+        onChange={(e) => /^#[0-9a-fA-F]{6}$/.test(e.target.value) && onChange(fromHex(e.target.value))}
+        className="w-28 font-mono"
+      />
     </div>
   )
 }

@@ -402,3 +402,52 @@ def test_generate_players_creates_random_strikers(client):
     assert client.post(f'/api/teams/{fakegame.TEAM}/generate-players', json={'count': 0}).status_code == 400
     for p in [*made, *keepers, *again]:  # the project is shared by the tests: leave it as it was
         assert client.delete(f"/api/players/{p['id']}").status_code == 200
+
+
+def test_team_leagues_from_the_team_screen(client):
+    tid, a, b = fakegame.TEAM, fakegame.LEAGUE, fakegame.PLAIN_LEAGUE
+    assert [lg['id'] for lg in client.get(f'/api/teams/{tid}').json()['leagues']] == [a]
+    r = client.put(f'/api/teams/{tid}/leagues', json={'league_ids': [a, b]})
+    assert r.status_code == 200, r.text
+    assert sorted(lg['id'] for lg in r.json()['leagues']) == [a, b]
+    assert tid in client.get(f'/api/leagues/{b}').json()['team_ids']  # the league screen sees the same list
+    r = client.put(f'/api/teams/{tid}/leagues', json={'league_ids': [b]})
+    assert [lg['id'] for lg in r.json()['leagues']] == [b]
+    assert tid not in client.get(f'/api/leagues/{a}').json()['team_ids']
+    bad = client.put(f'/api/teams/{tid}/leagues', json={'league_ids': [999999]})
+    assert bad.status_code == 400 and bad.json()['detail']['code'] == 'unknown_league'
+    client.put(f'/api/teams/{tid}/leagues', json={'league_ids': [a]})  # back to the game's lists
+    assert client.get('/api/status').json()['project'] == {}
+
+
+def test_team_hidden_in_one_league(client):
+    tid, a = fakegame.TEAM, fakegame.LEAGUE
+    r = client.put(f'/api/teams/{tid}/leagues', json={'league_ids': [a], 'hidden_league_ids': [a]})
+    assert r.status_code == 200, r.text
+    assert [(lg['id'], lg['hidden']) for lg in r.json()['leagues']] == [(a, True)]
+    league = client.get(f'/api/leagues/{a}').json()
+    assert tid in league['team_ids'] and league['hidden_team_ids'] == [tid]  # still listed, out of the patch
+    # the league screen can show it again
+    client.put(f'/api/leagues/{a}/teams', json={'team_ids': league['team_ids'], 'hidden_team_ids': []})
+    assert client.get(f'/api/leagues/{a}').json()['hidden_team_ids'] == []
+    client.delete(f'/api/leagues/{a}/teams')
+    assert client.get('/api/status').json()['project'] == {}
+
+
+def test_player_position_in_a_team_from_his_screen(client):
+    pid, tid = fakegame.STAR, fakegame.TEAM
+    player = client.get(f'/api/players/{pid}').json()
+    link = next(t for t in player['teams'] if t['id'] == tid)
+    assert link['slots']  # the lineup places of the team's formation
+    taken = {r['link_position']: r['id'] for r in client.get(f'/api/teams/{tid}').json()['roster']}
+    other = next(s for s in link['slots'] if s in taken and taken[s] != pid)  # a place somebody else holds
+    holder = taken[other]
+    rows = [{'team': tid, 'jersey': link['jersey'], 'hidden': False, 'slot': other}]
+    r = client.put(f'/api/players/{pid}', json={'fields': {}, 'teams': rows})
+    assert r.status_code == 200, r.text
+    squad = {p['id']: p['link_position'] for p in client.get(f'/api/teams/{tid}').json()['roster']}
+    assert squad[pid] == other and squad[holder] == 28  # the one who had that place goes to the bench
+    bad = client.put(f'/api/players/{pid}', json={'fields': {}, 'teams': [{**rows[0], 'slot': 99}]})
+    assert bad.status_code == 400
+    client.delete(f'/api/teams/{tid}/edits')
+    client.delete(f'/api/players/{pid}/edits')

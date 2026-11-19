@@ -278,6 +278,8 @@ def write_members(db: Database, project: Project) -> int:
     members = project.all_members()
     if not members:
         return 0
+    out = project.all_hidden_members()  # a team left out of the patch in a league has no link to it
+    members = {lid: [tid for tid in team_ids if tid not in out.get(lid, ())] for lid, team_ids in members.items()}
     links = db.table('leagueteamlinks')
     keep = [i for i, r in enumerate(links.records) if links.get(r, 'leagueid') not in members]
     if len(keep) + sum(len(v) for v in members.values()) > fifa14.MAX_LEAGUE_LINKS:

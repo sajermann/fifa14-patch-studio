@@ -162,7 +162,7 @@ export function PlayerPage() {
               {[data.position_name, data.nationality_name, data.birthdate, t('player.idHint', { id: data.id })].filter(Boolean).join(' · ')}
             </p>
           </div>
-          <OriginalBadge edited={data.edited} isNew={data.is_new} />
+          {!data.is_new && <OriginalBadge edited={data.edited} />}
           {hide.hidden && <OutOfPatchBadge alert />}
         </div>
         <div className="flex flex-wrap items-start gap-2">
@@ -190,28 +190,27 @@ export function PlayerPage() {
           <TabsTrigger value="accessories">{t('player.tab.accessories')}</TabsTrigger>
           <TabsTrigger value="raw">{t('tab.raw')}</TabsTrigger>
         </TabsList>
-        <TabsContent value="data" className="mt-4 space-y-4">
+        <TabsContent value="data" className="space-y-4">
           <div className="grid gap-4 xl:grid-cols-[1fr_22rem]">
             {editor(['names', 'info'], 'md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2')}
             <PlayerPhoto player={data} pending={pendingPhoto} setPending={setPendingPhoto} />
           </div>
-          {pendingTeams && <p className="text-xs text-amber-600 dark:text-amber-400">{t('playerTeams.pending')}</p>}
           <PlayerTeams player={data} rows={teams} setRows={setTeams} />
           {editor(['positions', 'style'])}
           <CodeGroup player={data} group="animations" fields={fields} setField={entity.setField} title={t('fieldGroup.animations')} description={t('code.hint')} />
           {editor(['career'])}
         </TabsContent>
-        <TabsContent value="ratings" className="mt-4 space-y-4">
+        <TabsContent value="ratings" className="space-y-4">
           <div className="flex items-center gap-2 text-sm">
             {t('col.overall')} <OverallBadge value={liveOverall ?? data.overall} />
             <span className="text-xs text-muted-foreground">{t('player.overallHint')}</span>
           </div>
           {editor(['physical', 'mental', 'skill', 'goalkeeper'], 'md:grid-cols-2 xl:grid-cols-4', true)}
         </TabsContent>
-        <TabsContent value="traits" className="mt-4">
+        <TabsContent value="traits">
           <PlayerTraits all={options?.traits ?? []} value={fields.traits} original={data.values.traits} onChange={(v) => entity.setField('traits', v)} />
         </TabsContent>
-        <TabsContent value="look" className="mt-4">
+        <TabsContent value="look">
           <PlayerLook
             player={data}
             fields={fields}
@@ -221,10 +220,10 @@ export function PlayerPage() {
             pendingPhoto={pendingPhoto}
           />
         </TabsContent>
-        <TabsContent value="accessories" className="mt-4">
+        <TabsContent value="accessories">
           <CodeGroup player={data} group="accessories" fields={fields} setField={entity.setField} title={t('fieldGroup.accessories')} description={t('look.accessoriesHint')} />
         </TabsContent>
-        <TabsContent value="raw" className="mt-4">
+        <TabsContent value="raw">
           <Section title={t('tab.raw')}>
             <RawTable raw={data.raw} />
           </Section>

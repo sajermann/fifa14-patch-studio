@@ -17,11 +17,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api } from '@/api/client'
 import type { KitPart, SquadRow, TeamDetail } from '@/api/types'
 import { Facts, OriginalBadge, OverallBadge, RawTable, Section } from '@/components/common/detail'
-import { EditActions, FieldsEditor, NamesEditor, useEntityForm } from '@/components/common/edit'
+import { EditActions, FieldsEditor, NamesGrid, useEntityForm } from '@/components/common/edit'
 import { HideButton, OutOfPatchBadge, usePendingHide } from '@/components/common/HideButton'
 import { Crest } from '@/components/common/pictures'
 import { TeamCrest } from '@/components/team/TeamCrest'
 import { TeamKits } from '@/components/team/TeamKits'
+import { TeamLeagues } from '@/components/team/TeamLeagues'
 import { TeamSquad } from '@/components/team/TeamSquad'
 import { RESERVE, type PendingKit, type PendingPicture } from '@/components/team/pending'
 import { LoadingBlock } from '@/components/layout/LoadingBlock'
@@ -30,7 +31,11 @@ import { BackButton, useBack, useFrom, useTabParam } from '@/lib/back'
 import { toast } from '@/lib/notify'
 import { useToken } from '@/state/queries'
 
-const TABS = ['names', 'data', 'crest', 'kits', 'roster', 'raw'] as const
+const TABS = ['data', 'crest', 'kits', 'leagues', 'roster', 'raw'] as const
+
+const sameIds = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => v === b[i])
+const sameSet = (a: number[], b: number[]) => a.length === b.length && a.every((v) => b.includes(v))
+type PendingLeagues = { ids: number[]; hidden: number[] } | null
 
 const savedSquad = (team: TeamDetail | undefined): SquadRow[] =>
   (team?.roster ?? []).map((p) => ({ player: p.id, jersey: p.jersey, slot: p.link_position ?? RESERVE, hidden: p.hidden }))
@@ -55,12 +60,15 @@ export function TeamPage() {
   const [pendingCrest, setPendingCrest] = useState<PendingPicture>(null)
   const [pendingKits, setPendingKits] = useState<Record<number, PendingKit>>({})
   const [pendingSquad, setPendingSquad] = useState<SquadRow[] | null>(null)
+  // the leagues the team plays in, being edited (null = the saved ones); Save sends them with the rest
+  const [pendingLeagues, setPendingLeagues] = useState<PendingLeagues>(null)
   const crestUrl = pendingCrest && pendingCrest !== 'remove' ? pendingCrest.url : null
   useEffect(() => () => void (crestUrl && URL.revokeObjectURL(crestUrl)), [crestUrl])
   const clearPending = () => {
     setPendingCrest(null)
     setPendingKits({})
     setPendingSquad(null)
+    setPendingLeagues(null)
     hide.clear()
   }
   const entity = useEntityForm({
@@ -77,6 +85,7 @@ export function TeamPage() {
         saved = await api.saveTeamKit(id, Number(kind), kit.config, pictures)
       }
       if (pendingSquad) saved = await api.saveTeamRoster(id, pendingSquad)
+      if (pendingLeagues) saved = await api.saveTeamLeagues(id, pendingLeagues.ids, pendingLeagues.hidden)
       if (hide.pending !== null) saved = await api.setTeamHidden(id, hide.pending)
       clearPending()
       return saved
@@ -85,7 +94,7 @@ export function TeamPage() {
       clearPending()
       return api.resetTeam(id)
     },
-    extraDirty: pendingCrest !== null || Object.keys(pendingKits).length > 0 || pendingSquad !== null || hide.pending !== null,
+    extraDirty: pendingCrest !== null || Object.keys(pendingKits).length > 0 || pendingSquad !== null || pendingLeagues !== null || hide.pending !== null,
     onDiscard: clearPending,
     // a created team has no name of the game: its "All" name is required
     invalid: (f) => !!team?.is_new && !f.names.full?.['*']?.trim(),
@@ -104,6 +113,11 @@ export function TeamPage() {
   })
   if (isLoading || !team) return <LoadingBlock />
   const squad = pendingSquad ?? savedSquad(team)
+  const savedLeagues = team.leagues.map((l) => l.id)
+  const savedHidden = team.leagues.filter((l) => l.hidden).map((l) => l.id)
+  const leagueIds = pendingLeagues?.ids ?? savedLeagues
+  const hiddenLeagues = pendingLeagues?.hidden ?? savedHidden
+  const setLeagues = (ids: number[], hidden: number[]) => setPendingLeagues(sameIds(ids, savedLeagues) && sameSet(hidden, savedHidden) ? null : { ids, hidden })
   const setSquad = (rows: SquadRow[]) => setPendingSquad(sameSquad(rows, savedSquad(team)) ? null : rows)
   const formationValue = entity.form.fields.formation ?? team.values.formation
   const formation = typeof formationValue === 'number' ? formationValue : null
@@ -130,7 +144,7 @@ export function TeamPage() {
             ))}
             {team.leagues.length > 0 && ' · '}ID {team.id}
           </span>
-          <OriginalBadge edited={team.edited} isNew={team.is_new} />
+          {!team.is_new && <OriginalBadge edited={team.edited} />}
           {hide.hidden && <OutOfPatchBadge alert label={team.is_new ? undefined : t('teams.hiddenByProject')} />}
         </div>
         <div className="flex flex-wrap items-start gap-2">
@@ -153,35 +167,49 @@ export function TeamPage() {
 
       <Tabs {...tabs}>
         <TabsList>
-          <TabsTrigger value="names">{t('team.tab.names')}</TabsTrigger>
           <TabsTrigger value="data">{t('team.tab.data')}</TabsTrigger>
           <TabsTrigger value="crest">{t('team.tab.crest')}</TabsTrigger>
           <TabsTrigger value="kits">{t('team.tab.kits')}</TabsTrigger>
+          <TabsTrigger value="leagues">
+            {t('col.leagues')} ({leagueIds.length})
+          </TabsTrigger>
           <TabsTrigger value="roster">
             {t('team.tab.roster')} ({squad.length})
           </TabsTrigger>
           <TabsTrigger value="raw">{t('tab.raw')}</TabsTrigger>
         </TabsList>
-        <TabsContent value="names" className="mt-4">
-          <NamesEditor kind="team" nameKeys={team.name_keys} languages={team.languages} original={team.original_names} names={entity.form.names} setNames={entity.setNames} />
+        <TabsContent value="data" className="space-y-4">
+          {/* ratings and club in a column, the tactics beside them; the names below (the colors are on the crest tab) */}
+          <div className="grid items-start gap-4 lg:grid-cols-2">
+            <div className="space-y-4">
+              <Section title={t('team.ratings')} description={t('team.ratingsHint')}>
+                <Facts
+                  items={[
+                    [t('col.overall'), <OverallBadge key="o" value={team.overall} />],
+                    [t('team.attack'), team.attack],
+                    [t('team.midfield'), team.midfield],
+                    [t('team.defense'), team.defense],
+                  ]}
+                />
+              </Section>
+              <FieldsEditor form={team} groups={['club']} fields={entity.form.fields} setField={entity.setField} roster={team.roster} columns="md:grid-cols-1" bars />
+            </div>
+            <FieldsEditor form={team} groups={['tactics']} fields={entity.form.fields} setField={entity.setField} roster={team.roster} columns="md:grid-cols-1" bars />
+          </div>
+          <NamesGrid
+            kind="team"
+            columns={team.name_keys}
+            languages={team.languages}
+            original={team.original_names}
+            names={entity.form.names}
+            setNames={entity.setNames}
+            required={team.is_new ? ['full'] : []}
+          />
         </TabsContent>
-        <TabsContent value="data" className="mt-4 space-y-4">
-          <Section title={t('team.ratings')} description={t('team.ratingsHint')}>
-            <Facts
-              items={[
-                [t('col.overall'), <OverallBadge key="o" value={team.overall} />],
-                [t('team.attack'), team.attack],
-                [t('team.midfield'), team.midfield],
-                [t('team.defense'), team.defense],
-              ]}
-            />
-          </Section>
-          <FieldsEditor form={team} groups={['colors', 'club', 'tactics']} fields={entity.form.fields} setField={entity.setField} roster={team.roster} />
+        <TabsContent value="crest">
+          <TeamCrest team={team} pending={pendingCrest} setPending={setPendingCrest} fields={entity.form.fields} setField={entity.setField} />
         </TabsContent>
-        <TabsContent value="crest" className="mt-4">
-          <TeamCrest team={team} pending={pendingCrest} setPending={setPendingCrest} />
-        </TabsContent>
-        <TabsContent value="kits" className="mt-4">
+        <TabsContent value="kits">
           <TeamKits
             team={team}
             pendingCrest={pendingCrest}
@@ -196,8 +224,10 @@ export function TeamPage() {
             }
           />
         </TabsContent>
-        <TabsContent value="roster" className="mt-4 space-y-4">
-          {pendingSquad && <p className="text-xs text-amber-600 dark:text-amber-400">{t('squad.pending')}</p>}
+        <TabsContent value="leagues">
+          <TeamLeagues ids={leagueIds} hidden={hiddenLeagues} setLeagues={setLeagues} linkState={from.state} />
+        </TabsContent>
+        <TabsContent value="roster" className="space-y-4">
           <TeamSquad
             team={team}
             rows={squad}
@@ -209,7 +239,7 @@ export function TeamPage() {
             linkState={from.state}
           />
         </TabsContent>
-        <TabsContent value="raw" className="mt-4">
+        <TabsContent value="raw">
           <Section title={t('tab.raw')}>
             <RawTable raw={team.raw} />
           </Section>

@@ -63,6 +63,8 @@ export interface PlayerTeamBody {
   team: number
   jersey: number | null
   hidden: boolean
+  /** lineup position (0-27), bench (28) or out of the squad (29); undefined = as it is (a new team: the bench) */
+  slot?: number
 }
 
 export const api = {
@@ -85,6 +87,8 @@ export const api = {
   createTeam: (body: { names: NameTable; fields?: Fields; template?: number; copy?: boolean; copy_squad?: boolean }) =>
     post<TeamDetail>('/api/teams', body),
   deleteTeam: (id: number) => request<{ deleted: number }>('DELETE', `/api/teams/${id}`),
+  saveTeamLeagues: (id: number, leagueIds: number[], hiddenLeagueIds: number[] = []) =>
+    request<TeamDetail>('PUT', `/api/teams/${id}/leagues`, { league_ids: leagueIds, hidden_league_ids: hiddenLeagueIds }),
   saveTeamRoster: (id: number, rows: SquadRow[] | null) => request<TeamDetail>('PUT', `/api/teams/${id}/roster`, { rows }),
   uploadTeamCrest: (id: number, data: string) => request<TeamDetail>('PUT', `/api/teams/${id}/crest`, { data }),
   removeTeamCrest: (id: number) => request<TeamDetail>('DELETE', `/api/teams/${id}/crest`),
@@ -96,7 +100,8 @@ export const api = {
   resetLeague: (id: number) => request<LeagueDetail>('DELETE', `/api/leagues/${id}/edits`),
   createLeague: (names: NameTable, fields: Fields) => post<LeagueDetail>('/api/leagues', { names, fields }),
   deleteLeague: (id: number) => request<{ deleted: number }>('DELETE', `/api/leagues/${id}`),
-  saveLeagueTeams: (id: number, teamIds: number[]) => request<LeagueDetail>('PUT', `/api/leagues/${id}/teams`, { team_ids: teamIds }),
+  saveLeagueTeams: (id: number, teamIds: number[], hiddenTeamIds: number[] = []) =>
+    request<LeagueDetail>('PUT', `/api/leagues/${id}/teams`, { team_ids: teamIds, hidden_team_ids: hiddenTeamIds }),
   resetLeagueTeams: (id: number) => request<LeagueDetail>('DELETE', `/api/leagues/${id}/teams`),
   uploadLeagueLogo: (id: number, data: string) => request<LeagueDetail>('PUT', `/api/leagues/${id}/logo`, { data }),
   removeLeagueLogo: (id: number) => request<LeagueDetail>('DELETE', `/api/leagues/${id}/logo`),

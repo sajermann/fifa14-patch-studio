@@ -87,7 +87,7 @@ export function CountriesPage() {
                 <CountryFlag id={c.flag_id} size={64} version={c.own_flag} available={c.has_flag || c.is_new || c.flag_id !== c.id || !!c.own_flag} className="h-6 w-9" />
               </TableCell>
               <TableCell data-grow>
-                <span className="font-medium text-foreground">{c.name}</span> <OriginalBadge edited={c.edited} isNew={c.is_new} />
+                <span className="font-medium text-foreground">{c.name}</span> {!c.is_new && <OriginalBadge edited={c.edited} />}
                 {c.game_hidden && <GameHiddenBadge country />}
                 {c.hidden && (c.is_new ? <OutOfPatchBadge /> : <HiddenByProjectBadge label={t('countries.hiddenByProject')} />)}
               </TableCell>

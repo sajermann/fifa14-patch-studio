@@ -272,3 +272,35 @@ def test_hidden_team_goes_to_the_hidden_league_and_empty_leagues_hide(installed,
     # the created league hidden: out of the patch (not hidden in the game: it does not exist there)
     project.set_hidden('league', 400, True)
     assert 400 not in project.visible().hidden_in_game('league') and 400 not in project.visible().created('league')
+
+
+def test_team_hidden_in_a_league_gets_no_link(installed, tmp_path):
+    project = Project(str(tmp_path / 'p.sqlite'))
+    project.set_members(fakegame.LEAGUE, [fakegame.TEAM, fakegame.SMALL_TEAM], {fakegame.SMALL_TEAM})
+    assert project.members(fakegame.LEAGUE) == [fakegame.TEAM, fakegame.SMALL_TEAM]  # still listed on the screen
+    assert project.all_hidden_members() == {fakegame.LEAGUE: {fakegame.SMALL_TEAM}}
+    project.set_members(fakegame.LEAGUE, [fakegame.SMALL_TEAM, fakegame.TEAM])  # a new list keeps who was hidden
+    assert project.all_hidden_members() == {fakegame.LEAGUE: {fakegame.SMALL_TEAM}}
+    patch_dir = str(tmp_path / 'patch')
+    builder.build(catalog.open_game(installed), project, patch_dir)
+    with open(os.path.join(patch_dir, 'data', 'db', 'fifa_ng_db-meta.xml'), 'rb') as f:
+        meta = t3db.load_meta(f.read())
+    with open(os.path.join(patch_dir, 'data', 'db', 'fifa_ng_db.db'), 'rb') as f:
+        tables = t3db.read_tables(f.read(), meta)
+    links = [(r['leagueid'], r['teamid']) for r in tables['leagueteamlinks']['rows'] if r['leagueid'] == fakegame.LEAGUE]
+    assert links == [(fakegame.LEAGUE, fakegame.TEAM)]
+
+
+def test_project_without_the_hidden_column_is_upgraded(tmp_path):
+    import sqlite3
+    path = str(tmp_path / 'old.sqlite')
+    con = sqlite3.connect(path)
+    con.execute('CREATE TABLE league_members (league_id INTEGER, team_id INTEGER, ord INTEGER, '
+                'PRIMARY KEY (league_id, team_id))')
+    con.execute('CREATE TABLE league_members_set (league_id INTEGER PRIMARY KEY)')
+    con.execute('INSERT INTO league_members_set VALUES (9)')
+    con.execute('INSERT INTO league_members VALUES (9, 1, 0)')
+    con.commit()
+    con.close()
+    project = Project(path)
+    assert project.members(9) == [1] and project.all_hidden_members() == {}
