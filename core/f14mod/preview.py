@@ -69,6 +69,30 @@ class PreviewError(LookupError):
     """The game has no such file (or it cannot be read)."""
 
 
+class FaceFiles:
+    """The game's files with one face (a pack face or one kept in the project: {kind of fifa14.PLAYER_FACE_FILES:
+    bytes}) under the id `face_id`, so the preview shows it as a player's own face. `key` names the face (the caches
+    tell faces apart by it)."""
+
+    def __init__(self, files, key: str, face_id: int, data: dict[str, bytes]):
+        from . import fifa14
+        self.files, self.key = files, key
+        self._own = {fifa14.PLAYER_FACE_FILES[kind].format(face_id): v for kind, v in data.items()
+                     if kind in fifa14.PLAYER_FACE_FILES}
+
+    def read(self, path: str):
+        return self._own.get(path.lower()) or self.files.read(path)
+
+    def exists(self, path: str) -> bool:
+        return path.lower() in self._own or self.files.exists(path)
+
+    def __hash__(self):
+        return hash((id(self.files), self.key))
+
+    def __eq__(self, other):
+        return isinstance(other, FaceFiles) and other.files is self.files and other.key == self.key
+
+
 def _tone(code) -> int:
     return code + 1 if code in (1, 3, 7) else code
 

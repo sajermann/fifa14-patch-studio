@@ -24,12 +24,17 @@ from and whether its crest and kits are copied), `team_rosters` (the whole squad
 29 out of the squad) and `team_kits` (each kit of a team the user changed: where it comes from, as JSON; its pictures
 live in `pictures`, slots `kit<type>_jersey`/`_shorts`/`_mini`). A team's crest picture is slot `crest`. Older files
 open as they are.
+Schema 6 (19/11/2026) adds the player's own things: `player_sources` (a created player: the game player whose row it
+starts from), `player_files` (the files of the face picked from a pack, kept in the project so it stays one file:
+name = the kind of fifa14.PLAYER_FACE_FILES) and `team_rosters.hidden` (a player left out of the patch in that team
+only, kept in its squad on the screen: same rule as the Street Studio). A player's photo is picture slot `photo`.
+Older files open as they are (the new column is added).
 """
 import json
 import sqlite3
 import time
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 DEFAULT_LANG = '*'
 KINDS = ('team', 'league', 'player', 'country')
 NAME_TABLES = {'team': ('team_names', 'team_id'), 'league': ('league_names', 'league_id'),
@@ -57,6 +62,8 @@ CREATE TABLE IF NOT EXISTS team_rosters_set (team_id INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS team_rosters (team_id INTEGER, player_id INTEGER, ord INTEGER, jersey INTEGER,
                                          slot INTEGER, PRIMARY KEY (team_id, player_id));
 CREATE TABLE IF NOT EXISTS team_kits (team_id INTEGER, kind INTEGER, config TEXT, PRIMARY KEY (team_id, kind));
+CREATE TABLE IF NOT EXISTS player_sources (player_id INTEGER PRIMARY KEY, template INTEGER);
+CREATE TABLE IF NOT EXISTS player_files (player_id INTEGER, name TEXT, data BLOB, PRIMARY KEY (player_id, name));
 """
 BENCH, RESERVE = 28, 29  # team_rosters.slot of a substitute and of a player out of the squad
 
@@ -79,6 +86,8 @@ class Project:
                 if row and int(row[0]) > SCHEMA_VERSION:
                     raise ProjectError('project made by a newer version of the app')
             con.executescript(SCHEMA)
+            if 'hidden' not in {r[1] for r in con.execute('PRAGMA table_info(team_rosters)')}:  # schema 5 and older
+                con.execute('ALTER TABLE team_rosters ADD COLUMN hidden INTEGER DEFAULT 0')
             con.execute("INSERT OR REPLACE INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
             con.commit()
         finally:
@@ -133,6 +142,9 @@ class Project:
             own = kind == 'team' and con.execute(  # a team's squad, kits or pictures keep it edited
                 'SELECT 1 FROM team_rosters_set WHERE team_id = ? UNION SELECT 1 FROM team_kits WHERE team_id = ? '
                 "UNION SELECT 1 FROM pictures WHERE kind = 'team' AND id = ?", (oid, oid, oid)).fetchone()
+            own = own or kind == 'player' and con.execute(  # a player's photo or face files too
+                "SELECT 1 FROM pictures WHERE kind = 'player' AND id = ? UNION "
+                'SELECT 1 FROM player_files WHERE player_id = ?', (oid, oid)).fetchone()
             if name_rows or field_rows or own:
                 con.execute('INSERT OR REPLACE INTO edited VALUES (?, ?, ?)', (kind, oid, int(time.time())))
             else:
@@ -148,6 +160,8 @@ class Project:
             if kind == 'team':
                 for table in ('team_rosters', 'team_rosters_set', 'team_kits'):
                     con.execute(f'DELETE FROM {table} WHERE team_id = ?', (oid,))
+            if kind == 'player':
+                con.execute('DELETE FROM player_files WHERE player_id = ?', (oid,))
             con.commit()
         finally:
             con.close()
@@ -269,6 +283,9 @@ class Project:
                 con.execute('DELETE FROM league_members WHERE team_id = ?', (oid,))
                 for table in ('team_sources', 'team_rosters', 'team_rosters_set', 'team_kits'):
                     con.execute(f'DELETE FROM {table} WHERE team_id = ?', (oid,))
+            if kind == 'player':  # out of every squad the user set too
+                con.execute('DELETE FROM player_sources WHERE player_id = ?', (oid,))
+                con.execute('DELETE FROM team_rosters WHERE player_id = ?', (oid,))
             con.commit()
         finally:
             con.close()
@@ -358,16 +375,18 @@ class Project:
             con.close()
 
     def set_roster(self, team_id: int, rows: list[dict] | None) -> None:
-        """The whole squad of a team, in order: [{'player', 'jersey', 'slot'}]; None = the game's squad again."""
+        """The whole squad of a team, in order: [{'player', 'jersey', 'slot', 'hidden'}]; None = the game's squad
+        again. `hidden` = out of the patch in this team only."""
         con = self.connect()
         try:
             con.execute('DELETE FROM team_rosters WHERE team_id = ?', (team_id,))
             con.execute('DELETE FROM team_rosters_set WHERE team_id = ?', (team_id,))
             if rows is not None:
                 con.execute('INSERT INTO team_rosters_set VALUES (?)', (team_id,))
-                con.executemany('INSERT OR IGNORE INTO team_rosters VALUES (?, ?, ?, ?, ?)',
-                                [(team_id, r['player'], i, r.get('jersey'), r.get('slot', RESERVE))
-                                 for i, r in enumerate(rows)])
+                con.executemany('INSERT OR IGNORE INTO team_rosters (team_id, player_id, ord, jersey, slot, hidden) '
+                                'VALUES (?, ?, ?, ?, ?, ?)',
+                                [(team_id, r['player'], i, r.get('jersey'), r.get('slot', RESERVE),
+                                  int(bool(r.get('hidden')))) for i, r in enumerate(rows)])
                 con.execute('INSERT OR REPLACE INTO edited VALUES (?, ?, ?)', ('team', team_id, int(time.time())))
             con.commit()
         finally:
@@ -378,8 +397,8 @@ class Project:
         try:
             if not con.execute('SELECT 1 FROM team_rosters_set WHERE team_id = ?', (team_id,)).fetchone():
                 return None
-            return [{'player': r[0], 'jersey': r[1], 'slot': r[2]} for r in con.execute(
-                'SELECT player_id, jersey, slot FROM team_rosters WHERE team_id = ? ORDER BY ord', (team_id,))]
+            return [{'player': r[0], 'jersey': r[1], 'slot': r[2], 'hidden': bool(r[3])} for r in con.execute(
+                'SELECT player_id, jersey, slot, hidden FROM team_rosters WHERE team_id = ? ORDER BY ord', (team_id,))]
         finally:
             con.close()
 
@@ -387,8 +406,9 @@ class Project:
         con = self.connect()
         try:
             out: dict[int, list[dict]] = {r[0]: [] for r in con.execute('SELECT team_id FROM team_rosters_set')}
-            for r in con.execute('SELECT team_id, player_id, jersey, slot FROM team_rosters ORDER BY team_id, ord'):
-                out.setdefault(r[0], []).append({'player': r[1], 'jersey': r[2], 'slot': r[3]})
+            for r in con.execute('SELECT team_id, player_id, jersey, slot, hidden FROM team_rosters '
+                                 'ORDER BY team_id, ord'):
+                out.setdefault(r[0], []).append({'player': r[1], 'jersey': r[2], 'slot': r[3], 'hidden': bool(r[4])})
             return out
         finally:
             con.close()
@@ -422,6 +442,44 @@ class Project:
             for r in con.execute('SELECT team_id, kind, config FROM team_kits ORDER BY team_id, kind'):
                 out.setdefault(r[0], {})[r[1]] = json.loads(r[2])
             return out
+        finally:
+            con.close()
+
+    # ---- players: source and face files ------------------------------------------------------------------------
+
+    def set_player_source(self, player_id: int, template: int) -> None:
+        con = self.connect()
+        try:
+            con.execute('INSERT OR REPLACE INTO player_sources VALUES (?, ?)', (player_id, template))
+            con.commit()
+        finally:
+            con.close()
+
+    def player_source(self, player_id: int) -> int | None:
+        """The game player whose row a created player starts from."""
+        con = self.connect()
+        try:
+            r = con.execute('SELECT template FROM player_sources WHERE player_id = ?', (player_id,)).fetchone()
+            return r[0] if r else None
+        finally:
+            con.close()
+
+    def set_player_files(self, player_id: int, files: dict[str, bytes] | None) -> None:
+        """The face files of a player (kind -> bytes, see fifa14.PLAYER_FACE_FILES); None or {} = none."""
+        con = self.connect()
+        try:
+            con.execute('DELETE FROM player_files WHERE player_id = ?', (player_id,))
+            con.executemany('INSERT INTO player_files VALUES (?, ?, ?)',
+                            [(player_id, name, data) for name, data in (files or {}).items()])
+            con.commit()
+        finally:
+            con.close()
+
+    def player_files(self, player_id: int) -> dict[str, bytes]:
+        con = self.connect()
+        try:
+            return {r[0]: bytes(r[1]) for r in con.execute(
+                'SELECT name, data FROM player_files WHERE player_id = ?', (player_id,))}
         finally:
             con.close()
 
@@ -486,6 +544,14 @@ class VisibleProject:
 
     def all_members(self) -> dict[int, list[int]]:
         return {i: v for i, v in self._project.all_members().items() if not self._out('league', i)}
+
+    def all_rosters(self) -> dict[int, list[dict]]:
+        """Squads without the created players left out of the patch."""
+        return {t: [r for r in rows if not self._out('player', r['player'])]
+                for t, rows in self._project.all_rosters().items()}
+
+    def player_files(self, player_id: int) -> dict[str, bytes]:
+        return {} if self._out('player', player_id) else self._project.player_files(player_id)
 
     def all_team_names(self) -> dict[int, Names]:
         return self.all_names('team')

@@ -49,6 +49,7 @@ class Config(BaseModel):
     language: Optional[Language] = None  # interface language
     game_dir: Optional[str] = None       # the FIFA 14 installation the app patches
     names_language: Optional[str] = None  # game language the lists show names in (None = the interface's)
+    face_pack_dirs: list[str] = []         # folders of face packs (one folder = one pack, read in place)
 
     def shown_language(self) -> str:
         return self.names_language or GAME_LANGUAGE_OF.get(self.language or 'en', 'eng_us')

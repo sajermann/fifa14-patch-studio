@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Plus, X } from 'lucide-react'
+import { Eye, EyeOff, Plus, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '@/api/client'
@@ -88,7 +88,9 @@ export function TeamSquad({
   const slots = current?.positions ?? []
   const posName = (code: number) => positions.find((p) => p.id === code)?.name ?? String(code)
   const starters = rows.filter((r) => r.slot < BENCH)
-  const inPatch = Math.min(rows.length, team.max_squad)
+  const kept = rows.filter((r) => !r.hidden) // a player hidden in this team stays out of the patch
+  const inPatch = Math.min(kept.length, team.max_squad)
+  const hiddenCount = rows.length - kept.length
   const order = (r: SquadRow) => (r.slot < BENCH ? slots.indexOf(r.slot) : r.slot * 100)
   const shown = [...rows].sort((a, b) => order(a) - order(b))
   const numbers = rows.map((r) => r.jersey).filter((n) => n !== null)
@@ -134,12 +136,13 @@ export function TeamSquad({
         </label>
         <span className={cn('tabular-nums', starters.length !== 11 && 'text-amber-600 dark:text-amber-400')}>{t('squad.starters', { count: starters.length })}</span>
         <span className="tabular-nums">{t('squad.bench', { count: rows.filter((r) => r.slot === BENCH).length })}</span>
-        <span className={cn('tabular-nums', rows.length > team.max_squad && 'text-amber-600 dark:text-amber-400')}>
+        <span className={cn('tabular-nums', kept.length > team.max_squad && 'text-amber-600 dark:text-amber-400')}>
           {t('squad.inPatch', { count: inPatch, max: team.max_squad, total: rows.length })}
         </span>
+        {hiddenCount > 0 && <span className="text-muted-foreground tabular-nums">{t('squad.hiddenCount', { count: hiddenCount })}</span>}
       </div>
       {starters.length < 11 && rows.length >= 11 && <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">{t('squad.fillHint')}</p>}
-      {rows.length < 11 && <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">{t('squad.tooFew')}</p>}
+      {kept.length < 11 && <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">{t('squad.tooFew')}</p>}
       <Table>
         <TableHeader>
           <TableRow>
@@ -149,13 +152,13 @@ export function TeamSquad({
             <TableHead className="w-44">{t('col.role')}</TableHead>
             <TableHead>{t('col.position')}</TableHead>
             <TableHead>{t('col.overall')}</TableHead>
-            <TableHead className="w-12" />
+            <TableHead className="w-20" />
           </TableRow>
         </TableHeader>
         <TableBody>
           {shown.map((r) => {
             const p = info[r.player]
-            const outOfPatch = rows.indexOf(r) >= team.max_squad
+            const outOfPatch = r.hidden || kept.indexOf(r) >= team.max_squad
             return (
               <TableRow key={r.player} className={cn(r.slot === RESERVE && 'text-muted-foreground', outOfPatch && 'opacity-60')}>
                 <TableCell>
@@ -197,7 +200,16 @@ export function TeamSquad({
                 <TableCell>
                   <OverallBadge value={p?.overall ?? null} />
                 </TableCell>
-                <TableCell>
+                <TableCell className="whitespace-nowrap">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title={r.hidden ? t('squad.showHint') : t('squad.hideHint')}
+                    aria-label={r.hidden ? t('squad.showHint') : t('squad.hideHint')}
+                    onClick={() => setRows(rows.map((x) => (x.player === r.player ? { ...x, hidden: !x.hidden } : x)))}
+                  >
+                    {r.hidden ? <Eye /> : <EyeOff />}
+                  </Button>
                   <Button variant="ghost" size="icon-sm" title={t('squad.remove')} aria-label={t('squad.remove')} onClick={() => setRows(rows.filter((x) => x.player !== r.player))}>
                     <X />
                   </Button>

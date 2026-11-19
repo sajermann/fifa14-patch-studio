@@ -65,7 +65,8 @@ def test_kit_preview_files(client):
     assert client.get('/api/preview/mesh/jersey/1.glb?collar=5').status_code == 404  # not in the game
     assert client.get('/api/preview/texture/tattoo/1.png').status_code == 404
     look = client.get(f'/api/preview/look/{fakegame.STAR}').json()
-    assert look['real'] is False and look['scale'] > 0  # no headclasscode in the fake rows: generic
+    assert look['real'] is True and look['head'] == fakegame.STAR and look['scale'] > 0  # his own face files
+    assert client.get(f'/api/preview/look/{fakegame.KEEPER}').json()['real'] is False  # generic head (class 1)
     assert client.get('/api/preview/look/999999').json()['head'] == 1  # not in the game: the model
     assert client.get('/api/preview/face/0_0_0_0_0_4.png').status_code == 200
     assert client.get('/api/preview/face/x.png').status_code == 404

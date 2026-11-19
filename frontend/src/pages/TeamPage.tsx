@@ -33,10 +33,10 @@ import { useToken } from '@/state/queries'
 const TABS = ['names', 'data', 'crest', 'kits', 'roster', 'raw'] as const
 
 const savedSquad = (team: TeamDetail | undefined): SquadRow[] =>
-  (team?.roster ?? []).map((p) => ({ player: p.id, jersey: p.jersey, slot: p.link_position ?? RESERVE }))
+  (team?.roster ?? []).map((p) => ({ player: p.id, jersey: p.jersey, slot: p.link_position ?? RESERVE, hidden: p.hidden }))
 
 const sameSquad = (a: SquadRow[], b: SquadRow[]) =>
-  a.length === b.length && a.every((r, i) => r.player === b[i].player && r.jersey === b[i].jersey && r.slot === b[i].slot)
+  a.length === b.length && a.every((r, i) => r.player === b[i].player && r.jersey === b[i].jersey && r.slot === b[i].slot && !!r.hidden === !!b[i].hidden)
 
 export function TeamPage() {
   const { t } = useI18n()

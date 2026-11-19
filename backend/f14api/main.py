@@ -71,6 +71,7 @@ def get_status():
 class SettingsBody(BaseModel):
     language: Optional[settings.Language] = None
     names_language: Optional[str] = None
+    face_pack_dirs: Optional[list[str]] = None
 
 
 @app.put('/api/settings')
@@ -160,9 +161,10 @@ def list_teams(q: str = '', league: Optional[int] = None, edited: Optional[str] 
 @app.get('/api/players')
 def list_players(q: str = '', team: Optional[int] = None, position: Optional[int] = None,
                  sort: Optional[str] = None, dir: Optional[str] = None, page: int = 1,
-                 size: int = queries.DEFAULT_PAGE_SIZE):
+                 size: int = queries.DEFAULT_PAGE_SIZE, origin: Optional[str] = None, status: Optional[str] = None,
+                 face: Optional[str] = None):
     with db() as con:
-        return queries.players(con, lang(), q, team, position, sort, dir, page, size)
+        return queries.players(con, lang(), q, team, position, sort, dir, page, size, origin, status, face == 'yes')
 
 
 @app.get('/api/options')
@@ -308,25 +310,6 @@ def reset_league(lid: int):
     if project().is_created('league', lid):
         raise ApiError(400, 'created_has_no_original')
     return _reset('league', lid)
-
-
-@app.put('/api/players/{pid}')
-def save_player(pid: int, body: EntityBody):
-    return _save('player', pid, body)
-
-
-@app.delete('/api/players/{pid}/edits')
-def reset_player(pid: int):
-    return _reset('player', pid)
-
-
-@app.get('/api/players/{pid}')
-def player_detail(pid: int):
-    with db() as con:
-        out = queries.player(con, lang(), pid)
-    if out is None:
-        raise ApiError(404, 'not_found')
-    return out
 
 
 # ---- free countries and leagues (created by the user) --------------------------------------------------------------
@@ -575,11 +558,6 @@ def crest_image(tid: int, size: Optional[int] = None, game_only: bool = False):
     return _picture('crest', tid, fifa14.CREST.format(tid), size)
 
 
-@app.get('/api/image/photo/{pid}')
-def photo_image(pid: int, size: Optional[int] = None):
-    return _picture('photo', pid, fifa14.PHOTO.format(pid), size)
-
-
 @app.get('/api/image/flag/{cid}')
 def flag_image(cid: int, size: Optional[int] = None, game_only: bool = False):
     """The flag of a country: its own picture drawn as the game will show it, else the game's file (a created country
@@ -793,6 +771,7 @@ class RosterRow(BaseModel):
     player: int
     jersey: Optional[int] = None
     slot: int = 29  # 0-27 = starter in that position, 28 = bench, 29 = out of the squad
+    hidden: bool = False  # out of the patch in this team only (kept in the squad on the screen)
 
 
 class RosterBody(BaseModel):
@@ -814,7 +793,7 @@ def save_team_roster(tid: int, body: RosterBody):
                 seen.add(r.player)
                 if not 0 <= r.slot <= 29 or (r.jersey is not None and not 1 <= r.jersey <= 99):
                     raise ApiError(400, 'field_out_of_range', str(r.player))
-                if not con.execute('SELECT 1 FROM players WHERE id = ?', (r.player,)).fetchone():
+                if not con.execute('SELECT 1 FROM v_players WHERE id = ?', (r.player,)).fetchone():
                     raise ApiError(400, 'unknown_player', str(r.player))
             rows = [r.model_dump() for r in body.rows]
     if rows is None and project().is_created('team', tid):
@@ -1055,56 +1034,6 @@ def team_kit_image(tid: int, kind: int, part: str = 'mini', size: Optional[int] 
 
 # ---- 3D preview of a kit: game meshes (GLB) and textures (PNG) of the player that wears it -------------------------
 
-@app.get('/api/preview/look/{pid}')
-def preview_look(pid: int):
-    """How the preview dresses a player (f14mod.preview.look); a player the game does not have = the model."""
-    import json as json_lib
-    if game.state != 'ready':
-        raise ApiError(409, 'game_not_ready')
-    with db() as con:
-        row = con.execute('SELECT raw FROM players WHERE id = ?', (pid,)).fetchone()
-    raw = json_lib.loads(row['raw']) if row and row['raw'] else None
-    return preview.look(game.files(), pid if raw else None, raw)
-
-
-@app.get('/api/preview/mesh/{part}/{code}.glb')
-def preview_mesh(part: str, code: int, collar: int = 0, real: bool = False):
-    """One part of the player (head, hair, jersey, arms, shorts, socks, legs, shoes, gloves) as GLB; real = the
-    head/hair of a player's own face (code = his id)."""
-    if game.state != 'ready':
-        raise ApiError(409, 'game_not_ready')
-    try:
-        data = preview.mesh_glb(game.files(), part, code, collar, real)
-    except preview.PreviewError as e:
-        raise ApiError(404, 'not_found', str(e))
-    return Response(data, media_type='model/gltf-binary', headers=IMAGE_HEADERS)
-
-
-@app.get('/api/preview/texture/{name}/{code}.png')
-def preview_texture(name: str, code: int, real: bool = False):
-    """A texture of the player (eyes, hair, hair-cap, hair-strands, skin, shoe, glove, jersey-shade,
-    shorts-shade); real = eyes/hair of a player's own face."""
-    if game.state != 'ready':
-        raise ApiError(409, 'game_not_ready')
-    try:
-        data = preview.texture_png(game.files(), name, code, real)
-    except preview.PreviewError as e:
-        raise ApiError(404, 'not_found', str(e))
-    return Response(data, media_type='image/png', headers=IMAGE_HEADERS)
-
-
-@app.get('/api/preview/face/{key}.png')
-def preview_face(key: str):
-    """The face texture: a player's own (key = his id) or a generic one (key = preview.face_key)."""
-    if game.state != 'ready':
-        raise ApiError(409, 'game_not_ready')
-    try:
-        data = preview.face_png(game.files(), key)
-    except preview.PreviewError as e:
-        raise ApiError(404, 'not_found', str(e))
-    return Response(data, media_type='image/png', headers=IMAGE_HEADERS)
-
-
 class KitPrintBody(BaseModel):
     part: str = 'jersey'
     config: Optional[dict] = None
@@ -1235,6 +1164,9 @@ def open_patch_folder():
 @app.get('/api/job')
 def job_status():
     return jobs.view()
+
+
+from . import player_routes  # noqa: E402,F401 - the player routes (before the interface's catch-all)
 
 
 # ---- errors and the interface ---------------------------------------------------------------------------------------

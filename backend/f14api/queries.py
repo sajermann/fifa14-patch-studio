@@ -51,15 +51,30 @@ VIEWS = [
              LEFT JOIN teams t ON t.id = COALESCE(s.template, {MODEL_TEAM})
         WHERE c.kind = 'team'""",
     # squads: the game's, a squad the user set (whole), and the model's squad of a created copy not changed yet
+    # (`hidden` = the player is left out of the patch in that team only)
     """CREATE TEMP VIEW v_team_players AS
-        SELECT team_id, player_id, jersey, position, 0 AS ord FROM team_players
+        SELECT team_id, player_id, jersey, position, 0 AS ord, 0 AS hidden FROM team_players
         WHERE team_id NOT IN (SELECT team_id FROM p.team_rosters_set)
         UNION ALL
-        SELECT team_id, player_id, jersey, slot, ord FROM p.team_rosters
+        SELECT team_id, player_id, jersey, slot, ord, COALESCE(hidden, 0) FROM p.team_rosters
         UNION ALL
-        SELECT s.team_id, tp.player_id, tp.jersey, tp.position, 0 FROM p.team_sources s
+        SELECT s.team_id, tp.player_id, tp.jersey, tp.position, 0, 0 FROM p.team_sources s
             JOIN team_players tp ON tp.team_id = s.template
         WHERE s.copy = 1 AND s.team_id NOT IN (SELECT team_id FROM p.team_rosters_set)""",
+    # a created player shows the values of the player it starts from (its row is a copy of that one in the patch)
+    f"""CREATE TEMP VIEW v_players AS
+        SELECT id, name, first, last, common, jersey_name, overall, potential, position, nationality, birthdate,
+               height, has_photo OR EXISTS (SELECT 1 FROM p.pictures WHERE kind = 'player' AND id = players.id
+                                            AND slot = 'photo') AS has_photo, search, raw, 0 AS is_new
+        FROM players
+        UNION ALL
+        SELECT c.id, 'Player ' || c.id, NULL, NULL, NULL, NULL, t.overall, t.potential,
+               COALESCE({_saved_sql('player', 'c', 'preferredposition1')}, t.position),
+               COALESCE({_saved_sql('player', 'c', 'nationality')}, t.nationality), t.birthdate,
+               COALESCE({_saved_sql('player', 'c', 'height')}, t.height),
+               EXISTS (SELECT 1 FROM p.pictures WHERE kind = 'player' AND id = c.id AND slot = 'photo'), '', t.raw, 1
+        FROM p.created c LEFT JOIN p.player_sources s ON s.player_id = c.id LEFT JOIN players t ON t.id = s.template
+        WHERE c.kind = 'player'""",
     """CREATE TEMP VIEW v_league_teams AS
         SELECT league_id, team_id, 0 AS ord FROM league_teams
         WHERE league_id NOT IN (SELECT league_id FROM p.league_members_set)
@@ -253,7 +268,8 @@ def teams(con, lang: str, q='', league: int | None = None, edited: bool | None =
 
 
 def players(con, lang: str, q='', team: int | None = None, position: int | None = None, sort=None, direction=None,
-            page=1, size=DEFAULT_PAGE_SIZE) -> dict:
+            page=1, size=DEFAULT_PAGE_SIZE, origin: str | None = None, status: str | None = None,
+            face: bool = False) -> dict:
     params: dict = {'lang': lang}
     club = '(SELECT MIN(tp.team_id) FROM v_team_players tp JOIN v_teams x ON x.id = tp.team_id ' \
            'WHERE tp.player_id = pl.id AND x.national_of IS NULL)'
@@ -261,8 +277,9 @@ def players(con, lang: str, q='', team: int | None = None, position: int | None 
                  pl.nationality, (SELECT {_country_name()} FROM v_nations n WHERE n.id = pl.nationality) AS nationality_name,
                  pl.has_photo, {club} AS team_id,
                  (SELECT {_team_name('abbr15')} FROM v_teams t WHERE t.id = {club}) AS team,
-                 {_edited('player', 'pl')} AS edited, pl.search || ' ' || fold({_player_name()}) AS search_all
-                 FROM players pl"""
+                 {_edited('player', 'pl')} AS edited, pl.is_new, {_flag('hidden', 'player', 'pl')} AS hidden,
+                 pl.raw, pl.search || ' ' || fold({_player_name()}) AS search_all
+                 FROM v_players pl"""
     where = []
     if team is not None:
         params['team'] = team
@@ -270,16 +287,25 @@ def players(con, lang: str, q='', team: int | None = None, position: int | None 
     if position is not None:
         params['position'] = position
         where.append('position = :position')
+    if origin == 'project':
+        where.append('is_new = 1')
+    elif origin == 'original':
+        where.append('is_new = 0')
+    if status == 'edited':
+        where.append('edited = 1')
+    if face:  # only the players with their own face in the game
+        where.append("is_new = 0 AND json_extract(raw, '$.headclasscode') = 0")
     if q.strip():
         where.append(_search('search_all', q, params))
     sorts = {'name': 'fold(name)', 'id': 'id', 'overall': 'overall', 'potential': 'potential',
              'position': 'position', 'team': 'fold(team)', 'height': 'height', 'birthdate': 'birthdate'}
-    out = _page(con, select, where, params, sorts, sort, direction, ('overall', 'desc'), page, size)
+    out = _page(con, select, where, params, sorts, sort, direction, ('overall', 'desc'), page, size, new_first=True)
     for r in out['items']:
         r.pop('search', None)
         r.pop('search_all', None)
-        r['has_photo'] = bool(r['has_photo'])
-        r['edited'] = bool(r['edited'])
+        r.pop('raw', None)
+        for key in ('has_photo', 'edited', 'is_new', 'hidden'):
+            r[key] = bool(r[key])
         r['position_name'] = fifa14.position_name(r['position'])
     return out
 
@@ -329,13 +355,14 @@ def team(con, lang: str, tid: int) -> dict | None:
         f"""SELECT pl.id, {_player_name()} AS name, pl.overall, pl.position, tp.jersey, tp.position AS link_position,
                   COALESCE({_saved('player', 'pl', 'name.jersey')}, pl.jersey_name, {_saved('player', 'pl', 'name.last')},
                            pl.last, pl.name) AS back_name,
-                  pl.has_photo, tp.ord
-           FROM v_team_players tp JOIN players pl ON pl.id = tp.player_id WHERE tp.team_id = ?
+                  pl.has_photo, tp.ord, tp.hidden
+           FROM v_team_players tp JOIN v_players pl ON pl.id = tp.player_id WHERE tp.team_id = ?
            ORDER BY tp.ord, tp.position, pl.overall DESC""", (tid,))]
     for r in roster:
         r['position_name'] = fifa14.position_name(r['position'])
         r['link_position_name'] = fifa14.position_name(r['link_position'])
         r['has_photo'] = bool(r['has_photo'])
+        r['hidden'] = bool(r['hidden'])
     leagues_of = [dict(r) for r in con.execute(
         f'SELECT l.id, {_league_name()} AS name, l.is_new FROM v_leagues l WHERE l.id IN '
         '(SELECT league_id FROM v_league_teams WHERE team_id = :tid)', {'lang': lang, 'tid': tid})]
@@ -460,28 +487,54 @@ def league(con, lang: str, lid: int) -> dict | None:
 
 
 def player(con, lang: str, pid: int) -> dict | None:
-    row = con.execute(f'SELECT pl.*, {_player_name()} AS shown FROM players pl WHERE pl.id = ?', (pid,)).fetchone()
+    row = con.execute(f'SELECT pl.*, {_player_name()} AS shown FROM v_players pl WHERE pl.id = :pid',
+                      {'pid': pid}).fetchone()
     if not row:
         return None
-    raw = json.loads(row['raw'])
+    raw = json.loads(row['raw'] or '{}')
     names = {k: row[k] for k in ('first', 'last', 'common', 'jersey_name') if row[k]}
     links = [dict(r) for r in con.execute(
-        f"""SELECT t.id, {_team_name('abbr15')} AS name, tp.jersey, tp.position, t.national_of
-            FROM v_team_players tp JOIN v_teams t ON t.id = tp.team_id WHERE tp.player_id = :pid""",
+        f"""SELECT t.id, {_team_name('abbr15')} AS name, tp.jersey, tp.position, tp.hidden, t.national_of, t.is_new,
+                   (SELECT COUNT(*) FROM v_team_players x WHERE x.team_id = t.id AND x.hidden = 0) AS squad_size
+            FROM v_team_players tp JOIN v_teams t ON t.id = tp.team_id WHERE tp.player_id = :pid
+            ORDER BY t.national_of IS NOT NULL, tp.ord, t.id""",
         {'lang': lang, 'pid': pid})]
     for r in links:
         r['position_name'] = fifa14.position_name(r['position'])
+        r['hidden'] = bool(r['hidden'])
+        r['is_new'] = bool(r['is_new'])
+    source = con.execute('SELECT template FROM p.player_sources WHERE player_id = ?', (pid,)).fetchone()
+    form = _form(con, 'player', pid, raw, names)
+    is_new = bool(row['is_new'])
+    if is_new:  # a created player starts empty: his names are his own
+        form['values'].update({k: '' for k in fields.NAME_FIELDS})
+        form['values']['face'] = None
+    photo = con.execute("SELECT updated_at FROM p.pictures WHERE kind = 'player' AND id = ? AND slot = 'photo'",
+                        (pid,)).fetchone()
     return {
-        'id': pid, 'name': row['shown'], 'names': names,
+        'id': pid, 'name': row['shown'], 'names': names, 'is_new': is_new,
+        'template': source['template'] if source else None,
+        'hidden': bool(con.execute("SELECT 1 FROM p.hidden WHERE kind = 'player' AND id = ?", (pid,)).fetchone()),
         'overall': row['overall'], 'potential': row['potential'], 'position': row['position'],
         'position_name': fifa14.position_name(row['position']), 'birthdate': row['birthdate'],
         'height': row['height'], 'weight': raw.get('weight'), 'nationality': row['nationality'],
         'nationality_name': (con.execute(f'SELECT {_country_name()} FROM v_nations n WHERE n.id = :id',
                                          {'lang': lang, 'id': row['nationality']}).fetchone() or [None])[0],
-        'has_photo': bool(row['has_photo']),
+        'has_photo': bool(row['has_photo']), 'own_photo': photo[0] if photo else None,
+        'game_face': bool(raw.get('headclasscode') == 0) and not is_new,
         'attributes': {name: raw[col] for col, name in fifa14.ATTRIBUTES.items() if col in raw},
-        'teams': links, **_form(con, 'player', pid, raw, names), 'raw': raw,
+        'teams': links, 'max_squad': fifa14.MAX_SQUAD, **form, 'raw': raw,
     }
+
+
+def free_player_id(con, taken=frozenset()) -> int:
+    """The first player id from fifa14.FIRST_FREE_PLAYER the game and the project do not use (`taken`: ids that have
+    files in the game, e.g. a face or a photo)."""
+    used = {r[0] for r in con.execute('SELECT id FROM v_players WHERE id >= ?', (fifa14.FIRST_FREE_PLAYER,))}
+    pid = fifa14.FIRST_FREE_PLAYER
+    while pid in used or pid in taken:
+        pid += 1
+    return pid
 
 
 # ---- countries ------------------------------------------------------------------------------------------------------

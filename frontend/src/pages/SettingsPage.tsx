@@ -3,6 +3,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { api } from '@/api/client'
 import type { Config } from '@/api/types'
 import { Facts, Section } from '@/components/common/detail'
+import { FacePackFolders } from '@/components/player/FacePackFolders'
 import { LANGS, useI18n, type Lang } from '@/i18n'
 import { toast } from '@/lib/notify'
 import { APP_NAME, APP_VERSION, AUTHOR_GITHUB, AUTHOR_NAME, REPO_URL } from '@/lib/about'
@@ -74,6 +75,7 @@ export function SettingsPage() {
           </SelectContent>
         </Select>
       </Section>
+      <FacePackFolders />
       <Section title={t('settings.about')}>
         <Facts
           items={[

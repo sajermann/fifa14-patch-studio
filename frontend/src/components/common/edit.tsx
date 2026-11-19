@@ -636,7 +636,7 @@ function FieldInput({ spec, value, original, onChange, roster }: { spec: FieldSp
         />
       )
     case 'nations':
-      return <NationsInput value={Array.isArray(current) ? current : []} onChange={onChange} title={label(spec.name)} className={ring} />
+      return <NationsInput value={Array.isArray(current) ? (current as number[]) : []} onChange={onChange} title={label(spec.name)} className={ring} />
     case 'roster':
       return select((roster ?? []).map((p) => ({ id: p.id, name: p.jersey !== null ? `${p.jersey} · ${p.name}` : p.name })))
     default:

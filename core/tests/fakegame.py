@@ -76,6 +76,8 @@ def _players():
             'playerjerseynameid': name(last.upper() if last else common.upper()), 'overallrating': overall,
             'preferredposition1': position, 'height': 180, 'weight': 75, 'preferredfoot': 1 + pid % 2,
             'birthdate': birthdate, 'nationality': 54, 'skillmoves': 2,
+            # traits: flair (trait1 bit 14) for the star; trait2 bit 12 is one the app does not know (kept)
+            'trait1': 1 << 14 if pid == STAR else 0, 'trait2': 1 << 12, 'headclasscode': 0 if pid == STAR else 1,
             # appearance codes outside any short list: they must go exactly as they are
             'headtypecode': 2500 + pid % 7, 'hairtypecode': 300 + pid % 5, 'skintonecode': 1 + pid % 10,
             **{attr: overall for attr in ('acceleration', 'sprintspeed', 'finishing', 'shortpassing', 'dribbling',

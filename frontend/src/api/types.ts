@@ -6,6 +6,7 @@ export interface Config {
   language: 'pt-BR' | 'en' | null
   game_dir: string | null
   names_language: string | null
+  face_pack_dirs?: string[]
 }
 
 export interface Issue {
@@ -162,13 +163,23 @@ export interface PlayerRow {
   team_id: number | null
   team: string | null
   edited: boolean
+  /** Created in the project. */
+  is_new: boolean
+  /** A created player left out of the patch (Hide). */
+  hidden: boolean
 }
 
 /** {name key: {language code or '*': text}} */
 export type NameTable = Record<string, Record<string, string>>
 
-export type FieldKind = 'int' | 'select' | 'text' | 'date' | 'color' | 'nation' | 'nations' | 'team' | 'roster' | 'position'
-export type FieldValue = string | number | number[] | null
+export type FieldKind = 'int' | 'select' | 'text' | 'date' | 'color' | 'nation' | 'nations' | 'team' | 'roster' | 'position' | 'code' | 'traits' | 'face'
+export type FieldValue = string | number | number[] | string[] | FaceChoice | null
+
+/** Where a player's head comes from (field `face`; none = his own: his real face when the game has one). */
+export type FaceChoice =
+  | { source: 'generic' }
+  | { source: 'player'; player: number }
+  | { source: 'pack'; pack: string; id: number; pack_name?: string; part?: string; name?: string; credits?: string; credits_url?: string }
 
 /** One editable value of a database row (backend f14mod.fields). */
 export interface FieldSpec {
@@ -202,6 +213,8 @@ export interface RosterRow {
   /** the name printed on the back of the jersey (jersey name, else last name) */
   back_name: string | null
   has_photo: boolean
+  /** out of the patch in this team only */
+  hidden: boolean
 }
 
 /** One row of a squad being edited: lineup slot = a position code (starter), 28 = bench, 29 = out of the squad. */
@@ -209,6 +222,8 @@ export interface SquadRow {
   player: number
   jersey: number | null
   slot: number
+  /** out of the patch in this team only (kept in the squad on the screen) */
+  hidden?: boolean
 }
 
 /** One of the game's 33 formations: the position code of each of the 11 slots. */
@@ -332,6 +347,11 @@ export interface PlayerTeam {
   position: number | null
   position_name: string | null
   national_of: number | null
+  /** out of the patch in this team only */
+  hidden: boolean
+  is_new: boolean
+  /** players of the team in the patch (hidden ones not counted) */
+  squad_size: number
 }
 
 export interface PlayerDetail extends EditForm {
@@ -348,9 +368,69 @@ export interface PlayerDetail extends EditForm {
   nationality: number | null
   nationality_name: string | null
   has_photo: boolean
+  /** When the user's photo was saved (null = none). */
+  own_photo: number | null
+  /** The game has his own face (headclasscode 0). */
+  game_face: boolean
+  /** The pack face chosen has its files kept in the project. */
+  face_stored?: boolean
+  is_new: boolean
+  /** A created player: the player whose values he started from. */
+  template: number | null
+  /** A created player left out of the patch (Hide). */
+  hidden: boolean
+  max_squad: number
   attributes: Record<string, number>
   teams: PlayerTeam[]
   raw: Raw
+}
+
+/** The values the screen offers for the player's codes and the traits (GET /api/player-options). */
+export interface PlayerOptions {
+  codes: Record<string, number[]>
+  traits: string[]
+  /** codes with pictures (front view of the generic head / hair) */
+  thumbs: string[]
+  hair_colors: string[]
+}
+
+export interface FacePackPart {
+  path: string
+  label: string
+  count: number
+  named: number
+  warnings: { code: string; count?: number; detail?: string }[]
+}
+
+export interface FacePackFolder {
+  folder: string
+  exists: boolean
+  parts: FacePackPart[]
+}
+
+/** A pack of the face picker's page (folder = its asset folder; error = a folder without faces). */
+export interface FacePagePack {
+  folder: string
+  name: string
+  count: number
+  warnings: { code: string; count?: number; detail?: string }[]
+  error: string | null
+}
+
+export interface FacePage {
+  packs: FacePagePack[]
+  items: (PackFace & { folder: string; pack: string })[]
+  total: number
+}
+
+export interface PackFace {
+  id: number
+  hair: boolean
+  hairlod: boolean
+  photo: boolean
+  name?: string
+  credits?: string
+  credits_url?: string
 }
 
 export interface Options {
@@ -376,4 +456,6 @@ export interface PreviewLook {
   shoe: number
   glove: number
   scale: number
+  /** with a face of a pack (or kept in the project): what the face URLs carry */
+  query?: string
 }

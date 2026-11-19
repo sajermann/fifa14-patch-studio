@@ -104,6 +104,32 @@ APPEARANCE = ('headtypecode', 'headclasscode', 'hairtypecode', 'haircolorcode', 
 TAKERS = {'penalty': 'penaltytakerid', 'free_kick': 'freekicktakerid', 'long_free_kick': 'longkicktakerid',
           'left_corner': 'leftcornerkicktakerid', 'right_corner': 'rightcornerkicktakerid'}
 
+# player traits: bits of players.trait1 / trait2 (bit -> key); bits not listed (trait2 11 and 12 in the clean game)
+# are kept as the row has them
+TRAITS1 = ('inflexible', 'long_throws', 'powerful_free_kicks', 'diver', 'injury_prone', 'injury_free',
+           'avoids_weak_foot', 'dives_into_tackles', 'beat_defensive_line', 'selfish', 'leadership',
+           'argues_with_officials', 'early_crosser', 'finesse_shot', 'flair', 'long_passer', 'long_shot_taker',
+           'technical_dribbler', 'playmaker', 'pushes_up_for_corners', 'puncher', 'gk_long_thrower', 'power_header',
+           'gk_one_on_one', 'giant_throw', 'outside_foot_shot', 'crowd_favourite', 'swerve_passer', 'second_wind',
+           'acrobatic_clearance')
+TRAITS2 = ('fancy_feet', 'fancy_passes', 'fancy_flicks', 'stutter_penalty', 'chipped_penalty', 'bicycle_kicks',
+           'diving_header', 'driven_pass', 'gk_flat_kick', 'one_club_player', 'team_player')
+TRAITS = {**{k: ('trait1', i) for i, k in enumerate(TRAITS1)}, **{k: ('trait2', i) for i, k in enumerate(TRAITS2)}}
+
+# new players
+FIRST_FREE_PLAYER = 300001  # new players get the first id from here the game does not use (nor any file named after it)
+MAX_PLAYER_ID = 524287      # players.playerid has 19 bits
+MODEL_PLAYER = 139541       # the row a player made from scratch starts from (a plain central midfielder of the game, no traits)
+PLAYER_FACE_FILES = {       # a player's own face (headclasscode 0): every file named after his id
+    'head': 'data/sceneassets/heads/head_{}_0.rx3',
+    'face': 'data/sceneassets/faces/face_{}_0_0_0_0_0_0_0_0_textures.rx3',
+    'eyes': 'data/sceneassets/heads/eyes_{}_0_textures.rx3',
+    'hair': 'data/sceneassets/hair/hair_{}_0_0.rx3',
+    'hair_textures': 'data/sceneassets/hair/hair_{}_0_textures.rx3',
+    'hairlod': 'data/sceneassets/hairlod/hairlod_{}_0_0.rx3',
+}
+PHOTO_SIZE = (128, 128)  # heads/p<id>.dds: 128x128 DXT5
+
 DATE_ZERO = datetime.date(1582, 10, 14)  # database dates are days since this day
 SUSPECT_SHARE = 0.20  # a birth date shared by more than this share of the players is a placeholder
 

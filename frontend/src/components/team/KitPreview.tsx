@@ -16,7 +16,7 @@ import { useToken } from '@/state/queries'
 // Each part loads on its own and keeps showing the previous version until the new one is ready.
 
 /** Shown until the wearer's look arrives (and when the squad is empty). */
-const MODEL_LOOK: PreviewLook = { real: false, head: 1, hair: 1, hair_color: '#1f160e', eyes: 1, face: '0_0_0_0_0_4', skin: 4, sleeve: 0, socks: 0, shoe: 0, glove: 1, scale: 1 }
+export const MODEL_LOOK: PreviewLook = { real: false, head: 1, hair: 1, hair_color: '#1f160e', eyes: 1, face: '0_0_0_0_0_4', skin: 4, sleeve: 0, socks: 0, shoe: 0, glove: 1, scale: 1 }
 
 /** What the player wears: the kit's textures (null = the kit has none, shown grey), the crest/name/numbers layers,
  * its collar mesh and whether it is the goalkeeper's (gloves). */
@@ -30,7 +30,7 @@ export interface PreviewKit {
 }
 
 const HAIR_TINT_GAIN = 1.8 // the game's hair_cm is a mid grey brightened by its shader
-type View = 'face' | 'body'
+export type View = 'face' | 'body'
 type Vec3 = [number, number, number]
 const VIEWS: Record<View, { camera: Vec3; target: Vec3 }> = {
   face: { camera: [0, 1.62, 1.25], target: [0, 1.58, 0] },
@@ -135,9 +135,12 @@ function useAssetUrl() {
 const meshUrl = (part: string, code: number, collar = 0, real = false) => `/api/preview/mesh/${part}/${code}.glb${collar ? `?collar=${collar}` : real ? '?real=1' : ''}`
 const textureUrl = (name: string, code: number, real = false) => `/api/preview/texture/${name}/${code}.png${real ? '?real=1' : ''}`
 
+/** A face URL with the pack face (or the one kept in the project) the look carries. */
+const withFace = (path: string, look: PreviewLook) => (look.real && look.query ? `${path}${path.includes('?') ? '&' : '?'}${look.query}` : path)
+
 function Head({ look }: { look: PreviewLook }) {
   const url = useAssetUrl()
-  const [glb, face, eyes] = [url(meshUrl('head', look.head, 0, look.real)), url(`/api/preview/face/${look.face}.png`), url(textureUrl('eyes', look.eyes, look.real))]
+  const [glb, face, eyes] = [meshUrl('head', look.head, 0, look.real), `/api/preview/face/${look.face}.png`, textureUrl('eyes', look.eyes, look.real)].map((p) => url(withFace(p, look)))
   const loaded = useLoaded([glb, face, eyes].join('|'), () => Promise.all([loadMeshes(glb), loadTexture(face), loadTexture(eyes, true, 0, true)]))
   if (!loaded) return null
   const [meshes, faceMap, eyesMap] = loaded
@@ -160,7 +163,7 @@ function Head({ look }: { look: PreviewLook }) {
 function Hair({ look }: { look: PreviewLook }) {
   const url = useAssetUrl()
   const { hair, real } = look
-  const urls = [meshUrl('hair', hair, 0, real), textureUrl('hair', hair, real), textureUrl('hair-cap', hair, real), textureUrl('hair-strands', hair, real)].map(url)
+  const urls = [meshUrl('hair', hair, 0, real), textureUrl('hair', hair, real), textureUrl('hair-cap', hair, real), textureUrl('hair-strands', hair, real)].map((p) => url(withFace(p, look)))
   // hair_cm uses the first UV set; the opacity (hair_coeff) the second one
   const loaded = useLoaded(hair ? urls.join('|') : null, () =>
     Promise.all([loadMeshes(urls[0]), loadTexture(urls[1]), loadTexture(urls[2], false, 1), loadTexture(urls[3], false, 1)]),
@@ -334,8 +337,8 @@ function CameraRig({ goal }: { goal: CameraGoal | null }) {
   return null
 }
 
-function Scene({ kit, look, goal }: { kit: PreviewKit; look: PreviewLook; goal: CameraGoal | null }) {
-  const [initialTarget] = useState(() => presetGoal('body').target)
+function Scene({ kit, look, goal, initialView }: { kit: PreviewKit; look: PreviewLook; goal: CameraGoal | null; initialView: View }) {
+  const [initialTarget] = useState(() => presetGoal(initialView, look.scale).target)
   return (
     <>
       {/* no tone mapping (Canvas flat): the game's textures already carry their shading */}
@@ -350,15 +353,23 @@ function Scene({ kit, look, goal }: { kit: PreviewKit; look: PreviewLook; goal: 
   )
 }
 
-export default function KitPreview({ kit, look }: { kit: PreviewKit; look?: PreviewLook }) {
+/** `viewRequest`: a view the page asks for (a face option touched shows the face; seq makes the same view count
+ * again), like the Street Studio's preview. */
+export default function KitPreview({ kit, look, initialView = 'body', viewRequest }: { kit: PreviewKit; look?: PreviewLook; initialView?: View; viewRequest?: { view: View; seq: number } }) {
   const { t } = useI18n()
-  const [view, setView] = useState<View>('body')
+  const [view, setView] = useState<View>(initialView)
   const [goal, setGoal] = useState<CameraGoal | null>(null)
   const loading = useLoading()
   const shownLook = look ?? MODEL_LOOK
   const choose = (v: View) => {
     setView(v)
     setGoal(presetGoal(v, shownLook.scale))
+  }
+  const [lastRequest, setLastRequest] = useState(viewRequest?.seq)
+  if (viewRequest && viewRequest.seq !== lastRequest) {
+    setLastRequest(viewRequest.seq)
+    setView(viewRequest.view)
+    setGoal(presetGoal(viewRequest.view, shownLook.scale))
   }
   // the face view keeps the head framed when another player (taller or shorter) wears the kit
   const [lastScale, setLastScale] = useState(shownLook.scale)
@@ -368,8 +379,8 @@ export default function KitPreview({ kit, look }: { kit: PreviewKit; look?: Prev
   }
   return (
     <div className="relative size-full">
-      <Canvas flat camera={{ position: presetGoal('body').camera.toArray(), fov: 30, near: 0.05, far: 20 }} dpr={[1, 2]}>
-        <Scene kit={kit} look={shownLook} goal={goal} />
+      <Canvas flat camera={{ position: presetGoal(initialView, shownLook.scale).camera.toArray(), fov: 30, near: 0.05, far: 20 }} dpr={[1, 2]}>
+        <Scene kit={kit} look={shownLook} goal={goal} initialView={initialView} />
       </Canvas>
       <div className="absolute top-2 right-2 flex rounded-md border bg-background/80 p-0.5 text-xs backdrop-blur">
         {(['face', 'body'] as const).map((v) => (

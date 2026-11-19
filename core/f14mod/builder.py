@@ -190,7 +190,11 @@ def apply_database(db: Database, project: Project) -> dict:
             if row is None:
                 skipped.append(f'{kind} {oid}')
                 continue
-            for column, value in fields.to_columns(kind, values).items():
+            columns_values = fields.to_columns(kind, values)
+            if kind == 'player' and values.get('traits') is not None and {'trait1', 'trait2'} <= columns:
+                current = {c: table.get(row, c) for c in ('trait1', 'trait2')}
+                columns_values.update(fields.trait_columns(current, values['traits']))
+            for column, value in columns_values.items():
                 if column not in columns:
                     skipped.append(f'{kind} {oid}: {column}')
                     continue
@@ -546,6 +550,7 @@ def write_rosters(db: Database, project: Project) -> int:
     teams, links, formations = db.table('teams'), db.table('teamplayerlinks'), db.table('formations')
     count = 0
     for tid, rows in rosters.items():
+        rows = [r for r in rows if not r.get('hidden')]  # hidden in this team: out of the patch, kept on the screen
         team_rows = teams.find(teamid=tid)
         if not team_rows:
             continue
@@ -579,6 +584,64 @@ def write_rosters(db: Database, project: Project) -> int:
                 teams.set(team_rows[0], column, starters[-1])
         count += 1
     return count
+
+
+# ---- players ---------------------------------------------------------------------------------------------------
+
+def add_created_players(db: Database, project: Project) -> int:
+    """Rows of the players the user created: a copy of the row of the player each one starts from (a game player, or
+    the model player) under the new id; names, values, face and teams come after (saved fields, write_rosters)."""
+    created = project.created('player')
+    if not created:
+        return 0
+    players = db.table('players')
+    by_id = {players.get(r, 'playerid'): r for r in players.records}
+    for pid in created:
+        if pid in by_id:
+            raise BuildError('player_id_taken', str(pid))
+        template = project.player_source(pid) or fifa14.MODEL_PLAYER
+        model = by_id.get(template) or by_id.get(fifa14.MODEL_PLAYER) or players.records[0]
+        by_id[pid] = _clone(players, model, playerid=pid)
+    return len(created)
+
+
+def write_player_files(files: GameFiles, db: Database, project: Project, builder: 'PatchBuilder') -> dict:
+    """The head of every player whose face the user chose (headclasscode 0 = his own face files, named after his id:
+    copied from another game player or from the pack face kept in the project; 1 = the generic head of his look
+    codes) and the photo of every player with a picture (heads/p<id>.dds)."""
+    players = db.table('players')
+    rows = {players.get(r, 'playerid'): r for r in players.records}
+    has_class = _has(players, 'headclasscode')
+    counts = {'faces': 0, 'photos': 0}
+    for pid, values in project.all_fields('player').items():
+        face, row = values.get('face'), rows.get(pid)
+        if not face or row is None:
+            continue
+        if face['source'] == 'generic':
+            if has_class:
+                players.set(row, 'headclasscode', 1)
+            continue
+        if face['source'] == 'player':
+            own = {kind: files.read(path.format(face['player'])) for kind, path in fifa14.PLAYER_FACE_FILES.items()}
+        else:
+            own = project.player_files(pid)
+        own = {kind: data for kind, data in own.items() if data is not None and kind in fifa14.PLAYER_FACE_FILES}
+        if not all(kind in own for kind in fifa14.FACE_REQUIRED):
+            raise BuildError('player_face_missing', str(pid))
+        if face['source'] != 'player' or face['player'] != pid:
+            for kind, data in own.items():
+                builder.put(fifa14.PLAYER_FACE_FILES[kind].format(pid), data)
+        if has_class:
+            players.set(row, 'headclasscode', 0)
+        counts['faces'] += 1
+    for pid in project.with_picture('player', 'photo'):
+        if pid not in rows:
+            continue
+        model = files.read(fifa14.PHOTO.format(pid)) or files.read(fifa14.PHOTO.format(fifa14.MODEL_PLAYER))
+        picture = images.fit(_picture(project, 'player', pid, 'photo'), fifa14.PHOTO_SIZE)
+        builder.put(fifa14.PHOTO.format(pid), teamkits.dds_like(model, picture) if model else images.dds(picture))
+        counts['photos'] += 1
+    return {k: v for k, v in counts.items() if v}
 
 
 def _picture(project: Project, kind: str, oid: int, slot: str) -> Image.Image | None:
@@ -682,9 +745,11 @@ def team_files(files: GameFiles, db: Database, project: Project, builder: 'Patch
 
 def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') -> dict | None:
     """The database with the project's fields, created entities and league teams, loose (with its meta file)."""
-    has_created = bool(project.created('country') or project.created('league') or project.created('team'))
+    has_created = bool(project.created('country') or project.created('league') or project.created('team')
+                       or project.created('player'))
     hiding = any(project.hidden_in_game(kind) for kind in ('country', 'league', 'team'))
-    team_work = project.all_rosters() or project.all_kits() or project.with_picture('team', 'crest')
+    team_work = project.all_rosters() or project.all_kits() or project.with_picture('team', 'crest') \
+        or project.with_picture('player', 'photo')
     if not any(project.all_fields(kind) for kind in ID_COLUMNS) and not has_created and not project.all_members() \
             and not hiding and not team_work:
         return None
@@ -695,10 +760,13 @@ def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') 
     created = add_created(db, project)
     if new_teams := add_created_teams(db, project):
         created['team'] = new_teams
+    if new_players := add_created_players(db, project):
+        created['player'] = new_players
     result = apply_database(db, project)
     result['created'] = created
     for key, value in (('formations', write_formations(db, project)), ('rosters', write_rosters(db, project)),
-                       ('team_files', team_files(files, db, project, builder))):
+                       ('team_files', team_files(files, db, project, builder)),
+                       ('player_files', write_player_files(files, db, project, builder))):
         if value:
             result[key] = value
     result['league_links'] = write_members(db, project)

@@ -1,5 +1,5 @@
 import { hasMessage, translate } from '@/i18n'
-import type { Config, CountryDetail, CountryRow, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, NameTable, Options, Page, PlayerDetail, PlayerRow, Status, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook } from './types'
+import type { Config, CountryDetail, CountryRow, FaceChoice, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, Status, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook } from './types'
 
 /** Error of the backend; `message` is in the interface language when the app knows its code. */
 export class ApiError extends Error {
@@ -57,6 +57,13 @@ export function query(params: Record<string, string | number | boolean | null | 
 type Fields = Record<string, FieldValue>
 
 export type ListParams = Record<string, string | number | undefined>
+
+/** A team of a player as his screen keeps it (number and whether he is hidden in it). */
+export interface PlayerTeamBody {
+  team: number
+  jersey: number | null
+  hidden: boolean
+}
 
 export const api = {
   status: () => get<Status>('/api/status'),
@@ -118,8 +125,23 @@ export const api = {
   deleteCountry: (id: number) => request<{ deleted: number }>('DELETE', `/api/countries/${id}`),
   limits: () => get<Limits>('/api/limits'),
   player: (id: number) => get<PlayerDetail>(`/api/players/${id}`),
-  savePlayer: (id: number, fields: Fields) => request<PlayerDetail>('PUT', `/api/players/${id}`, { fields }),
+  /** The whole form of a player: fields (face included) and, when given, his teams. */
+  savePlayer: (id: number, fields: Fields, teams?: PlayerTeamBody[]) => request<PlayerDetail>('PUT', `/api/players/${id}`, { fields, teams }),
   resetPlayer: (id: number) => request<PlayerDetail>('DELETE', `/api/players/${id}/edits`),
+  /** A new player: from scratch (template null) or a copy of a player; optionally straight into a team. */
+  createPlayer: (body: { fields: Fields; template?: number | null; team?: number | null }) => post<PlayerDetail>('/api/players', body),
+  deletePlayer: (id: number) => request<{ deleted: number }>('DELETE', `/api/players/${id}`),
+  setPlayerHidden: (id: number, hidden: boolean) => request<PlayerDetail>('PUT', `/api/players/${id}/hidden`, { hidden }),
+  uploadPlayerPhoto: (id: number, data: string) => request<PlayerDetail>('PUT', `/api/players/${id}/photo`, { data }),
+  /** The photo a pack ships with a face. */
+  playerPhotoFromPack: (id: number, pack: string, face: number) => request<PlayerDetail>('PUT', `/api/players/${id}/photo`, { pack, face }),
+  removePlayerPhoto: (id: number) => request<PlayerDetail>('DELETE', `/api/players/${id}/photo`),
+  playerOptions: () => get<PlayerOptions>('/api/player-options'),
+  /** How the 3D preview dresses a player with the values of his screen (saved or not). */
+  playerLook: (id: number, values: Record<string, FieldValue>, face: FaceChoice | null) => post<PreviewLook>(`/api/preview/player-look/${id}`, { values, face }),
+  facePacks: () => get<FacePackFolder[]>('/api/facepacks'),
+  /** One page of the faces of the packs (all, one pack, or only a folder opened on the picker for this visit). */
+  facePage: (p: { offset: number; limit: number; q?: string; pack?: string; folder?: string }) => get<FacePage>(`/api/facepack/page${query(p)}`),
 
   buildPatch: () => post<Job>('/api/patch/build'),
   installPatch: () => post<Job>('/api/patch/install'),

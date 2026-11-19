@@ -24,7 +24,8 @@ NAME_KEYS = {'name.first': 'first', 'name.last': 'last', 'name.common': 'common'
 class FieldSpec:
     name: str
     group: str
-    kind: str  # int | select | text | date | color | nation | nations | team | roster | position
+    kind: str  # int | select | text | date | color | nation | nations | team | roster | position | code
+    #          | traits | face
     min: int | None = None
     max: int | None = None
     options: tuple = ()
@@ -47,6 +48,12 @@ def _ratings(columns, group):
     return [FieldSpec(c, group, 'int', 1, 99) for c in columns]
 
 
+def _codes(columns, group):
+    """Appearance/animation codes of the game: the options the screen offers come from the game (the values its
+    players use, or its files); min/max = what the database field holds."""
+    return [FieldSpec(c, group, 'code', lo, hi) for c, lo, hi in columns]
+
+
 PLAYER = [
     *(FieldSpec(n, 'names', 'text', max_length=30 if n == 'name.jersey' else 40) for n in NAME_FIELDS),
     FieldSpec('birthdate', 'info', 'date'),
@@ -62,6 +69,8 @@ PLAYER = [
     FieldSpec('internationalrep', 'style', 'select', options=(1, 2, 3, 4, 5)),
     FieldSpec('attackingworkrate', 'style', 'select', options=(0, 1, 2)),
     FieldSpec('defensiveworkrate', 'style', 'select', options=(0, 1, 2)),
+    # the traits the player has (keys of fifa14.TRAITS); written as bits of trait1/trait2, other bits kept
+    FieldSpec('traits', 'traits', 'traits'),
     *_ratings(['acceleration', 'sprintspeed', 'agility', 'balance', 'jumping', 'stamina', 'strength',
                'reactions'], 'physical'),
     *_ratings(['aggression', 'interceptions', 'positioning', 'vision'], 'mental'),
@@ -69,6 +78,26 @@ PLAYER = [
                'longpassing', 'longshots', 'marking', 'penalties', 'shortpassing', 'shotpower', 'slidingtackle',
                'standingtackle', 'volleys'], 'skill'),
     *_ratings(['gkdiving', 'gkhandling', 'gkkicking', 'gkpositioning', 'gkreflexes'], 'goalkeeper'),
+    # generic head (headclasscode 1): the game builds it from these codes
+    *_codes([('headtypecode', 0, 16383), ('hairtypecode', 0, 8191), ('haircolorcode', 0, 15),
+             ('facialhairtypecode', 0, 31), ('facialhaircolorcode', 0, 15), ('eyebrowcode', 0, 3),
+             ('sideburnscode', 0, 3), ('eyecolorcode', 1, 16), ('skintypecode', 0, 15)], 'look'),
+    *_codes([('skintonecode', 1, 16), ('bodytypecode', 1, 32), ('jerseysleevelengthcode', 0, 7),
+             ('socklengthcode', 0, 3), ('jerseystylecode', 0, 1), ('jerseyfit', 0, 3), ('shortstyle', 0, 1),
+             ('hasseasonaljersey', 0, 7)], 'body'),
+    *_codes([(f'{kind}{n}', 0, hi) for n in (1, 2, 3, 4)
+             for kind, hi in (('accessorycode', 31), ('accessorycolourcode', 15))], 'accessories'),
+    *_codes([('runningcode1', 0, 127), ('runningcode2', 0, 127), ('finishingcode1', 0, 127),
+             ('finishingcode2', 0, 127), ('animfreekickstartposcode', 0, 15), ('animpenaltieskickstylecode', 0, 3),
+             ('animpenaltiesmotionstylecode', 0, 7), ('animpenaltiesstartposcode', 0, 15), ('gkkickstyle', 0, 3),
+             ('gksavetype', 0, 1), ('faceposercode', 0, 3)], 'animations'),
+    FieldSpec('contractvaliduntil', 'career', 'int', 2000, 2047),
+    FieldSpec('playerjointeamdate', 'career', 'date'),
+    FieldSpec('isretiring', 'career', 'select', options=(0, 1)),
+    # where the head comes from: {'source': 'generic'} (the look codes), {'source': 'player', 'player': id} (the
+    # real face of a player of the game) or {'source': 'pack', ...} (a face of a pack, its files kept in the
+    # project); none = the player's own (his real face when the game has one); no column (see builder)
+    FieldSpec('face', 'face', 'face'),
 ]
 
 TEAM = [
@@ -98,7 +127,7 @@ LEAGUE = [
     # countries of the league (own or extra) where it is left out of the patch; edited on the country's screen only
     FieldSpec('hidden_in_countries', 'countries', 'nations', 1, 255),
 ]
-NO_COLUMN = {'extra_countries', 'hidden_in_countries', 'flag_from', 'formation'}  # fields the builder uses itself (not written as columns)
+NO_COLUMN = {'extra_countries', 'hidden_in_countries', 'flag_from', 'formation', 'traits', 'face'}  # fields the builder uses itself (not written as columns)
 
 COUNTRY = [
     FieldSpec('flag_from', 'info', 'nation', 1, fifa14.MAX_NATION_ID, optional=True),  # whose flag is copied
@@ -134,6 +163,10 @@ def original_values(kind: str, raw: dict, names: dict | None = None) -> dict:
             out[spec.name] = _to_iso(raw.get(spec.name))
         elif spec.kind == 'nations':
             out[spec.name] = []  # the game's leagues are in one country
+        elif spec.kind == 'traits':
+            out[spec.name] = traits_of(raw)
+        elif spec.kind == 'face':
+            out[spec.name] = None  # the player's own head
         else:
             out[spec.name] = raw.get(spec.name)
     return out
@@ -148,7 +181,7 @@ def clean(kind: str, values: dict, original: dict) -> dict:
             raise FieldError('unknown_field', name)
         value = _check(spec, value)
         if value is None or value == original.get(name):
-            continue
+            continue  # (an empty trait list is [], not None: taking every trait away is kept)
         out[name] = value
     if kind == 'league' and 'hidden_in_countries' in out:
         countries = league_countries({**original, **out})
@@ -172,7 +205,7 @@ def _int(spec: FieldSpec, value) -> int:
 
 
 def _check(spec: FieldSpec, value):
-    if value is None or value == '':
+    if value is None or value == '' or (spec.kind == 'face' and value == {}):
         return None  # empty = the original
     if spec.kind == 'text':
         text = str(value).strip()
@@ -187,6 +220,12 @@ def _check(spec: FieldSpec, value):
         if not 1900 <= day.year <= 2100:
             raise FieldError('out_of_range', spec.name)
         return day.isoformat()
+    if spec.kind == 'traits':
+        if not isinstance(value, (list, tuple)) or any(v not in fifa14.TRAITS for v in value):
+            raise FieldError('bad_value', spec.name)
+        return sorted(set(value), key=list(fifa14.TRAITS).index)
+    if spec.kind == 'face':
+        return check_face(value)
     if spec.kind == 'nations':
         if not isinstance(value, (list, tuple)):
             raise FieldError('bad_value', spec.name)
@@ -224,4 +263,45 @@ def to_columns(kind: str, values: dict) -> dict:
             out[name] = _to_days(value)
         else:
             out[name] = value
+    return out
+
+
+# ---- player traits and face --------------------------------------------------------------------------------------
+
+def traits_of(raw: dict) -> list[str]:
+    """The trait keys a database row has (its trait1/trait2 bits)."""
+    return [key for key, (column, bit) in fifa14.TRAITS.items() if int(raw.get(column) or 0) >> bit & 1]
+
+
+def trait_columns(raw: dict, traits: list[str]) -> dict:
+    """{trait1, trait2} with the known bits set from `traits` and the unknown bits of `raw` kept."""
+    out = {}
+    for column in ('trait1', 'trait2'):
+        value = int(raw.get(column) or 0)
+        for key, (c, bit) in fifa14.TRAITS.items():
+            if c == column:
+                value = value | (1 << bit) if key in traits else value & ~(1 << bit)
+        out[column] = value
+    return out
+
+
+FACE_SOURCES = {'generic': (), 'player': ('player',), 'pack': ('pack', 'id')}
+FACE_TEXTS = ('pack_name', 'part', 'name', 'credits', 'credits_url')
+
+
+def check_face(value) -> dict:
+    """A face choice of the screen, checked (the backend checks that the player or the pack face exists)."""
+    if not isinstance(value, dict) or value.get('source') not in FACE_SOURCES:
+        raise FieldError('bad_value', 'face')
+    out = {'source': value['source']}
+    for key in FACE_SOURCES[value['source']]:
+        v = value.get(key)
+        if key == 'pack':
+            if not isinstance(v, str) or not v.strip():
+                raise FieldError('bad_value', 'face')
+        elif isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= fifa14.MAX_PLAYER_ID:
+            raise FieldError('bad_value', 'face')
+        out[key] = v
+    if out['source'] == 'pack':
+        out.update({k: str(value[k])[:200] for k in FACE_TEXTS if isinstance(value.get(k), str) and value[k]})
     return out

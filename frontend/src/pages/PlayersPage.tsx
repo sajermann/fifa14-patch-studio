@@ -1,4 +1,11 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Plus } from 'lucide-react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { Button } from '@/components/ui/button'
+import { OutOfPatchBadge } from '@/components/common/HideButton'
+import { NewPlayerDialog, nameFields, type NewPlayer } from '@/components/player/NewPlayerDialog'
+import { toast } from '@/lib/notify'
 import { useFrom } from '@/lib/back'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
@@ -8,7 +15,7 @@ import { useI18n } from '@/i18n'
 import { FilterBar, FilterSelect, LIST_PAGE, Pager, ScrollTable, SearchInput, SortHead, useListState } from '@/lib/list'
 import { useList, useOptions } from '@/state/queries'
 
-const FILTERS = ['q', 'position'] as const
+const FILTERS = ['q', 'position', 'origin'] as const
 
 export function PlayersPage() {
   const { t } = useI18n()
@@ -17,6 +24,18 @@ export function PlayersPage() {
   const list = useListState(FILTERS)
   const { data, isFetching } = useList('players', list.request, api.players)
   const options = useOptions().data
+  const qc = useQueryClient()
+  const [creating, setCreating] = useState(false)
+  const create = useMutation({
+    mutationFn: (n: NewPlayer) => api.createPlayer({ fields: nameFields(n.name), template: n.copyOf }),
+    onSuccess: (p) => {
+      for (const k of ['players', 'status']) void qc.invalidateQueries({ queryKey: [k] })
+      setCreating(false)
+      toast.success(t('player.created'))
+      navigate(`/players/${p.id}`, from)
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
   const sortState = {
     sort: list.sort,
     dir: list.dir,
@@ -29,9 +48,13 @@ export function PlayersPage() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-2xl font-semibold">{t('players.title')}</h1>
-          <p className="text-sm text-muted-foreground">{t('players.subtitle')}</p>
+          <p className="text-sm text-muted-foreground">{t('players.subtitleFull')}</p>
         </div>
+        <Button size="sm" onClick={() => setCreating(true)}>
+          <Plus /> {t('players.new')}
+        </Button>
       </div>
+      <NewPlayerDialog open={creating} onOpenChange={setCreating} pending={create.isPending} onCreate={(n) => create.mutate(n)} />
       <FilterBar active={list.active} onClear={list.clear}>
         <SearchInput value={list.values.q} onChange={(v) => list.update({ q: v })} placeholder={t('players.search')} />
         <FilterSelect
@@ -43,6 +66,16 @@ export function PlayersPage() {
             value: String(p.id),
             label: p.name,
           }))}
+        />
+        <FilterSelect
+          value={list.values.origin}
+          onChange={(v) => list.update({ origin: v })}
+          allLabel={t('list.originAll')}
+          className="w-44"
+          options={[
+            { value: 'project', label: t('list.originProject') },
+            { value: 'original', label: t('list.originOriginal') },
+          ]}
         />
       </FilterBar>
       <ScrollTable>
@@ -66,7 +99,8 @@ export function PlayersPage() {
                 <Photo id={p.id} size={64} available={p.has_photo} className="size-8" />
               </TableCell>
               <TableCell data-grow>
-                <span className="font-medium text-foreground">{p.name}</span> <OriginalBadge edited={p.edited} />
+                <span className="font-medium text-foreground">{p.name}</span> <OriginalBadge edited={p.edited} isNew={p.is_new} />
+                {p.hidden && <OutOfPatchBadge />}
               </TableCell>
               <TableCell>{p.position_name ?? '—'}</TableCell>
               <TableCell>
