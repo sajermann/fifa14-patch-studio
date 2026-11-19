@@ -308,7 +308,8 @@ def _renumber_links(links) -> None:
 def write_visibility(db: Database, project: Project) -> dict:
     """Countries, leagues and teams hidden in the game, and leagues shown in several countries (tests OC1/OC2/LC1):
     - a league is listed under its country: one `leagues` row per country, all with the league's id (the team links
-      stay once); a league hidden in the game, or whose countries are all hidden, gets one row with country 0;
+      stay once), none for a country where the user hid it (`hidden_in_countries`); a league hidden in the game, or
+      whose countries are all hidden, gets one row with country 0;
     - a team hidden in the game keeps only its links to hidden leagues (or gets one to HIDDEN_LEAGUE);
     - a league the user changed or created that is left without any team is hidden too (the game would fill an empty
       list with a random team)."""
@@ -317,7 +318,7 @@ def write_visibility(db: Database, project: Project) -> dict:
     hidden_teams = project.hidden_in_game('team')
     league_fields = project.all_fields('league')
     if not (hidden_countries or hidden_leagues or hidden_teams
-            or any(f.get('extra_countries') for f in league_fields.values())) and not project.all_members():
+            or any(f.get('extra_countries') or f.get('hidden_in_countries') for f in league_fields.values()))             and not project.all_members():
         return {}
     leagues = db.table('leagues')
     rows: dict[int, list] = {}
@@ -326,7 +327,10 @@ def write_visibility(db: Database, project: Project) -> dict:
     countries = {lid: list(dict.fromkeys(
         [leagues.get(rs[0], 'countryid'), *league_fields.get(lid, {}).get('extra_countries', [])]))
         for lid, rs in rows.items()}
-    shown = {lid: [c for c in cs if c != fifa14.HIDDEN_COUNTRY and c not in hidden_countries]
+    # a league hidden in one of its countries (hidden_in_countries) is not listed there; hidden in all of them, it is
+    # hidden in the game
+    shown = {lid: [c for c in cs if c != fifa14.HIDDEN_COUNTRY and c not in hidden_countries
+                   and c not in league_fields.get(lid, {}).get('hidden_in_countries', [])]
              for lid, cs in countries.items()}
     out_leagues = {lid for lid, cs in shown.items() if lid in hidden_leagues or not cs}
     # teams hidden in the game: only their links to hidden leagues stay

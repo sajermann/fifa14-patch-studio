@@ -377,35 +377,48 @@ def save_country(cid: int, body: EntityBody):
 
 class LeaguesBody(BaseModel):
     league_ids: list[int]
+    # leagues of league_ids left out of the patch in this country only (League.hidden_in_countries); None = unchanged
+    hidden_league_ids: Optional[list[int]] = None
 
 
 @app.put('/api/countries/{cid}/leagues')
 def save_country_leagues(cid: int, body: LeaguesBody):
     """The whole list of leagues shown in a country. A league added gets the country as its own (when it has none)
-    or as one more country; a league removed loses it (its next country becomes its own, or it is left without)."""
+    or as one more country; a league removed loses it (its next country becomes its own, or it is left without).
+    `hidden_league_ids`: the leagues left out of the patch in this country only (they stay in it in the app)."""
     wanted = list(dict.fromkeys(body.league_ids))
     with db() as con:
         if queries.country(con, lang(), cid) is None:
             raise ApiError(404, 'not_found')
         now = {r[0] for r in con.execute(
             f"SELECT l.id FROM v_leagues l WHERE {queries._in_country('l', '?')}", (cid, cid))}  # noqa: SLF001
+        hidden_now = {r[0] for r in con.execute(
+            "SELECT f.id FROM p.fields f, json_each(f.value) j WHERE f.kind = 'league' "
+            "AND f.field = 'hidden_in_countries' AND j.value = ?", (cid,))}
+        hidden_wanted = hidden_now if body.hidden_league_ids is None else set(body.hidden_league_ids)
+        hidden_wanted &= set(wanted)
         changes: dict[int, dict] = {}
-        for lid in set(wanted) ^ now:
+        for lid in (set(wanted) ^ now) | (hidden_wanted ^ (hidden_now & set(wanted))):
             detail = queries.league(con, lang(), lid)
             if detail is None:
                 raise ApiError(400, 'unknown_league', str(lid))
             values = {**detail['values'], **detail['saved']}
             own, extra = values.get('countryid') or 0, list(values.get('extra_countries') or [])
-            if lid in now:  # removed
+            hidden = [c for c in values.get('hidden_in_countries') or [] if c != cid]
+            if lid not in wanted:  # removed
                 if own == cid:
                     own, extra = (extra[0], extra[1:]) if extra else (0, extra)
                 else:
                     extra = [c for c in extra if c != cid]
+            elif lid in now:
+                pass  # stays: only shown or hidden here
             elif not own:
                 own = cid
             else:
                 extra.append(cid)
-            form = {**detail['saved'], 'countryid': own, 'extra_countries': extra}
+            if lid in hidden_wanted:
+                hidden.append(cid)
+            form = {**detail['saved'], 'countryid': own, 'extra_countries': extra, 'hidden_in_countries': hidden}
             changes[lid] = _clean_fields(con, 'league', lid, form, detail)
     for lid, kept in changes.items():
         project().save('league', lid, project().names('league', lid), kept)

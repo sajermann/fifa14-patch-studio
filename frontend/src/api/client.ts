@@ -89,7 +89,8 @@ export const api = {
   setLeagueHidden: (id: number, hidden: boolean) => request<LeagueDetail>('PUT', `/api/leagues/${id}/hidden`, { hidden }),
   setCountryHidden: (id: number, hidden: boolean) => request<CountryDetail>('PUT', `/api/countries/${id}/hidden`, { hidden }),
   /** The whole list of leagues shown in a country. */
-  saveCountryLeagues: (id: number, leagueIds: number[]) => request<CountryDetail>('PUT', `/api/countries/${id}/leagues`, { league_ids: leagueIds }),
+  saveCountryLeagues: (id: number, leagueIds: number[], hiddenLeagueIds: number[]) =>
+    request<CountryDetail>('PUT', `/api/countries/${id}/leagues`, { league_ids: leagueIds, hidden_league_ids: hiddenLeagueIds }),
   setTeamHidden: (id: number, hidden: boolean) => request<TeamDetail>('PUT', `/api/teams/${id}/hidden`, { hidden }),
   countries: (p: ListParams) => get<Page<CountryRow>>(`/api/countries${query(p)}`),
   country: (id: number) => get<CountryDetail>(`/api/countries/${id}`),

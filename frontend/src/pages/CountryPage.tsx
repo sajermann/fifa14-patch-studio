@@ -12,7 +12,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api } from '@/api/client'
@@ -34,6 +36,7 @@ const TABS = ['data', 'leagues'] as const
 type PendingFlag = { data: string; url: string } | 'remove' | null
 
 const sameList = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => v === b[i])
+const sameSet = (a: number[], b: number[]) => a.length === b.length && a.every((v) => b.includes(v))
 
 /** Dialog: every league not in the country (project and game), with a search; the league keeps its other countries
  * and also shows in this one (the same dialog as the Street Studio's Add team). */
@@ -90,15 +93,19 @@ export function CountryPage() {
   const [pendingFlag, setPendingFlag] = useState<PendingFlag>(null)
   // the league list being edited (null = the saved one); Save sends it with the rest of the form
   const [pendingLeagues, setPendingLeagues] = useState<number[] | null>(null)
+  // leagues left out of the patch in this country only (League.hidden_in_countries; null = the saved ones)
+  const [pendingHidden, setPendingHidden] = useState<number[] | null>(null)
   const hide = usePendingHide(data?.hidden)
   const pendingUrl = pendingFlag && pendingFlag !== 'remove' ? pendingFlag.url : null
   useEffect(() => () => void (pendingUrl && URL.revokeObjectURL(pendingUrl)), [pendingUrl])
   const clearPending = () => {
     setPendingFlag(null)
     setPendingLeagues(null)
+    setPendingHidden(null)
     hide.clear()
   }
   const savedLeagues = data?.leagues.map((l) => l.id) ?? []
+  const savedHidden = data?.leagues.filter((l) => l.hidden_in_countries.includes(id)).map((l) => l.id) ?? []
   const entity = useEntityForm({
     data,
     queryKey,
@@ -107,7 +114,8 @@ export function CountryPage() {
       let saved = await api.saveCountry(id, f.names, f.fields)
       if (pendingFlag === 'remove') saved = await api.removeCountryFlag(id)
       else if (pendingFlag) saved = await api.uploadCountryFlag(id, pendingFlag.data)
-      if (pendingLeagues) saved = await api.saveCountryLeagues(id, pendingLeagues)
+      if (pendingLeagues || pendingHidden)
+        saved = await api.saveCountryLeagues(id, pendingLeagues ?? savedLeagues, pendingHidden ?? savedHidden)
       if (hide.pending !== null) saved = await api.setCountryHidden(id, hide.pending)
       clearPending()
       return saved
@@ -116,13 +124,21 @@ export function CountryPage() {
       clearPending()
       return api.resetCountry(id)
     },
-    extraDirty: pendingFlag !== null || pendingLeagues !== null || hide.pending !== null,
+    extraDirty: pendingFlag !== null || pendingLeagues !== null || pendingHidden !== null || hide.pending !== null,
     onDiscard: clearPending,
     // a created country has no name of the game: its "All" name is required (an original one keeps the game's)
     invalid: (f) => !!data?.is_new && !f.names.full?.[ALL]?.trim(),
   })
   const leagueIds = pendingLeagues ?? savedLeagues
-  const setLeagues = (ids: number[]) => setPendingLeagues(sameList(ids, savedLeagues) ? null : ids)
+  const hiddenIds = pendingHidden ?? savedHidden
+  const setHidden = (ids: number[]) => setPendingHidden(sameSet(ids, savedHidden) ? null : ids)
+  const setLeagues = (ids: number[]) => {
+    setPendingLeagues(sameList(ids, savedLeagues) ? null : ids)
+    if (hiddenIds.some((x) => !ids.includes(x))) setHidden(hiddenIds.filter((x) => ids.includes(x))) // a league removed
+  }
+  /** The league shown or left out of the patch in this country only (it stays in the country in the app). */
+  const setShownHere = (lid: number, shown: boolean) =>
+    setHidden(shown ? hiddenIds.filter((x) => x !== lid) : [...hiddenIds, lid])
   const leagueRows = useQuery({
     queryKey: ['leagues', token, lang, 'ids', leagueIds.join(',')],
     queryFn: () => api.leagues({ ids: leagueIds.join(','), size: 100, sort: 'name' }),
@@ -259,7 +275,7 @@ export function CountryPage() {
               </Button>
             }
           >
-            {pendingLeagues && <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">{t('country.leaguesPending')}</p>}
+            {(pendingLeagues || pendingHidden) && <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">{t('country.leaguesPending')}</p>}
             <FillScroll>
               <Table>
                 <TableHeader className="sticky top-0 z-10 shadow-[0_1px_0_var(--border)] [&_th]:bg-card">
@@ -269,25 +285,42 @@ export function CountryPage() {
                     <TableHead>{t('col.level')}</TableHead>
                     <TableHead>{t('col.teams')}</TableHead>
                     <TableHead>{t('col.id')}</TableHead>
+                    <TableHead className="w-14" />
                     <TableHead className="w-12" />
                   </TableRow>
                 </TableHeader>
                 <TableBody className={leagueRows.isFetching ? 'opacity-70' : undefined}>
                   {leagueIds.map((lid) => {
                     const l = rowsById.get(lid)
+                    const leagueOut = !!l?.hidden || !!l?.game_hidden // out of the patch (or the game) everywhere
+                    const hiddenHere = hiddenIds.includes(lid)
                     return (
                       <TableRow key={lid} className={cn('cursor-pointer', !l?.is_new && 'text-muted-foreground')} onClick={() => navigate(`/leagues/${lid}`, from)}>
                         <TableCell>
                           <LeagueImage id={lid} size={64} version={l?.own_logo} available={!!l?.has_logo} className="size-8" />
                         </TableCell>
                         <TableCell>
-                          <span className="font-medium text-foreground">{l?.name ?? `#${lid}`}</span> {l && <OriginalBadge edited={l.edited} isNew={l.is_new} />}
+                          <span className={cn('font-medium', leagueOut || hiddenHere ? 'text-muted-foreground' : 'text-foreground')}>{l?.name ?? `#${lid}`}</span> {l && <OriginalBadge edited={l.edited} isNew={l.is_new} />}
                           {l?.game_hidden && <GameHiddenBadge />}
                           {l?.hidden && (l.is_new ? <OutOfPatchBadge /> : <HiddenByProjectBadge label={t('leagues.hiddenByProject')} />)}
+                          {!leagueOut && hiddenHere && (
+                            <Badge variant="outline" className="font-normal">
+                              {t('country.outOfPatchHere')}
+                            </Badge>
+                          )}
                         </TableCell>
                         <TableCell className="tabular-nums">{l?.level ?? '—'}</TableCell>
                         <TableCell className="tabular-nums">{l?.team_count ?? '—'}</TableCell>
                         <TableCell className="tabular-nums">{lid}</TableCell>
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          <Switch
+                            checked={!leagueOut && !hiddenHere}
+                            disabled={leagueOut}
+                            title={leagueOut ? t('country.leagueOutOfPatch') : hiddenHere ? t('country.showInCountry') : t('country.hideInCountry')}
+                            aria-label={hiddenHere ? t('country.showInCountry') : t('country.hideInCountry')}
+                            onCheckedChange={(v) => setShownHere(lid, v)}
+                          />
+                        </TableCell>
                         <TableCell>
                           <Button
                             variant="ghost"
@@ -307,7 +340,7 @@ export function CountryPage() {
                   })}
                   {leagueIds.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                      <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
                         {t('country.noLeagues')}
                       </TableCell>
                     </TableRow>

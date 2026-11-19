@@ -276,6 +276,28 @@ def test_hide_and_league_in_several_countries(client):
     assert client.put('/api/teams/1/hidden', json={'hidden': True}).status_code == 404
 
 
+def test_league_hidden_in_one_country(client):
+    """The switch on the country's league list: out of the patch in this country only, kept in it."""
+    lid = fakegame.LEAGUE  # country 54
+    for cid in (52, 54):  # shown (an earlier test hides them)
+        client.put(f'/api/countries/{cid}/hidden', json={'hidden': False})
+    r = client.put('/api/countries/52/leagues', json={'league_ids': [fakegame.PLAIN_LEAGUE, lid],
+                                                      'hidden_league_ids': [lid]})
+    row = next(x for x in r.json()['leagues'] if x['id'] == lid)
+    assert row['hidden_in_countries'] == [52]  # still listed in the country
+    assert client.get(f'/api/leagues/{lid}').json()['saved']['extra_countries'] == [52]
+    # without hidden_league_ids the hidden ones stay as they are
+    r = client.put('/api/countries/52/leagues', json={'league_ids': [fakegame.PLAIN_LEAGUE, lid]})
+    assert next(x for x in r.json()['leagues'] if x['id'] == lid)['hidden_in_countries'] == [52]
+    assert not client.get(f'/api/leagues/{lid}').json()['hidden_by_countries']  # still in the patch in 54
+    client.put('/api/countries/54/leagues', json={'league_ids': [lid], 'hidden_league_ids': [lid]})
+    assert client.get(f'/api/leagues/{lid}').json()['hidden_by_countries']  # out in every country of it
+    client.put('/api/countries/54/leagues', json={'league_ids': [lid], 'hidden_league_ids': []})
+    # removed from the country: the hidden mark there goes too
+    client.put('/api/countries/52/leagues', json={'league_ids': [fakegame.PLAIN_LEAGUE]})
+    assert 'hidden_in_countries' not in client.get(f'/api/leagues/{lid}').json()['saved']
+
+
 def test_country_leagues_list(client):
     """Add league / remove in the country's page: the league's own country or one more country."""
     lid = fakegame.LEAGUE  # country 54

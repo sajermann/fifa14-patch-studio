@@ -221,6 +221,22 @@ def test_league_in_several_countries_is_one_row_per_country(installed, tmp_path)
     assert summary['database']['visibility']['extra_country_rows'] == 2
 
 
+def test_league_hidden_in_one_country(installed, tmp_path):
+    """hidden_in_countries: the league stays in the country in the project but gets no row there in the patch;
+    hidden in all its countries, it is hidden in the game (country 0)."""
+    from f14mod import fields
+    original = {'countryid': 54, 'extra_countries': []}
+    assert fields.clean('league', {'extra_countries': [52], 'hidden_in_countries': [52, 77, 52]}, original) ==         {'extra_countries': [52], 'hidden_in_countries': [52]}  # 77 is not a country of the league
+    assert fields.clean('league', {'hidden_in_countries': [77]}, original) == {}
+    project = Project(str(tmp_path / 'p.sqlite'))
+    project.save('league', fakegame.LEAGUE, None, {'extra_countries': [52, 60], 'hidden_in_countries': [52]})
+    _summary, leagues, _links = _built_tables(installed, tmp_path, project)
+    assert leagues == sorted([(fakegame.LEAGUE, 54), (fakegame.LEAGUE, 60), (fakegame.PLAIN_LEAGUE, 52)])
+    project.save('league', fakegame.LEAGUE, None, {'hidden_in_countries': [54]})  # its only country
+    _summary, leagues, _links = _built_tables(installed, tmp_path, project)
+    assert leagues == sorted([(fakegame.LEAGUE, 0), (fakegame.PLAIN_LEAGUE, 52)])
+
+
 def test_hidden_original_country_league_and_team(installed, tmp_path):
     project = Project(str(tmp_path / 'p.sqlite'))
     project.save('league', fakegame.LEAGUE, None, {'extra_countries': [60]})

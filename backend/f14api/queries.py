@@ -155,6 +155,8 @@ def leagues(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAUL
                  COALESCE((SELECT g.country_id FROM leagues g WHERE g.id = l.id) IN (0, {', '.join(map(str, fifa14.UNLISTED_NATIONS))}), 0) AS game_hidden,
                  (SELECT value FROM p.fields WHERE kind = 'league' AND id = l.id AND field = 'extra_countries')
                      AS extra_countries,
+                 (SELECT value FROM p.fields WHERE kind = 'league' AND id = l.id AND field = 'hidden_in_countries')
+                     AS hidden_in_countries,
                  (SELECT updated_at FROM p.pictures WHERE kind = 'league' AND id = l.id AND slot = 'logo') AS own_logo
                  FROM v_leagues l"""
     where = []
@@ -176,6 +178,7 @@ def leagues(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAUL
         r['hidden'] = bool(r['hidden'])
         r['game_hidden'] = bool(r['game_hidden'])  # the game itself never lists it
         r['extra_countries'] = json.loads(r['extra_countries']) if r['extra_countries'] else []
+        r['hidden_in_countries'] = json.loads(r['hidden_in_countries']) if r['hidden_in_countries'] else []
         r['has_logo'] = bool(r['has_logo'] or r['own_logo'])
     return out
 
@@ -328,12 +331,16 @@ def league(con, lang: str, lid: int) -> dict | None:
                         (lid,)).fetchone()
     shown_in = [c for c in dict.fromkeys([head['country_id'], *(json.loads(extra[0]) if extra else [])]) if c]
     countries_hidden = {r[0] for r in con.execute("SELECT id FROM p.hidden WHERE kind = 'country'")}
+    hidden_here = con.execute("SELECT value FROM p.fields WHERE kind = 'league' AND id = ? "
+                              "AND field = 'hidden_in_countries'", (lid,)).fetchone()
+    countries_hidden |= set(json.loads(hidden_here[0])) if hidden_here else set()  # left out of the patch there
     game_country = con.execute('SELECT country_id FROM leagues WHERE id = ?', (lid,)).fetchone()
     return {**dict(head), 'db_name': row['db_name'], 'is_new': bool(head['is_new']),
             'has_logo': bool(row['has_logo']) or own_logo is not None, 'game_has_logo': bool(row['has_logo']),
             'own_logo': own_logo[0] if own_logo else None, 'hidden': hidden, 'game_team_ids': game_team_ids,
             'game_hidden': game_country is not None and game_country[0] in (0, *fifa14.UNLISTED_NATIONS),
-            # every country the league shows in is hidden in the game: the league is hidden too
+            # every country the league shows in is hidden in the game (or the league is hidden in it): the league is
+            # hidden too
             'hidden_by_countries': bool(shown_in) and all(c in countries_hidden for c in shown_in),
             'names': original, 'original_names': original, 'saved_names': _project_names(con, 'league', lid),
             'name_keys': LEAGUE_NAME_KEYS, 'languages': languages(con), 'team_ids': team_ids,

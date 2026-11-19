@@ -4,8 +4,9 @@ A field is a database column of the entity's row, with these exceptions:
   - `name.first`, `name.last`, `name.common`, `name.jersey`: the player's names (texts of the name table);
   - `teamcolorN`: the three columns teamcolorNr/g/b as one [r, g, b] value;
   - `birthdate`: an ISO date (the database keeps days since 1582-10-14);
-  - the league's `extra_countries` (list of nation ids) and the country's `flag_from`: no column, the builder uses
-    them (one more `leagues` row per extra country; the flag files copied).
+  - the league's `extra_countries` (list of nation ids), its `hidden_in_countries` (countries of the league where it
+    is left out of the patch: it stays in that country in the app) and the country's `flag_from`: no column, the
+    builder uses them (one more `leagues` row per extra country, none for a hidden one; the flag files copied).
 Values are kept as the screen shows them; `to_columns` turns them into database values.
 The overall ratings are not here: the game computes them from the attributes (player) and the players (team).
 """
@@ -91,8 +92,10 @@ LEAGUE = [
     FieldSpec('level', 'info', 'int', 1, 8),
     FieldSpec('countryid', 'info', 'nation', 0, 255, optional=True),
     FieldSpec('extra_countries', 'info', 'nations', 1, 255),  # the league shows in these countries too
+    # countries of the league (own or extra) where it is left out of the patch; edited on the country's screen only
+    FieldSpec('hidden_in_countries', 'countries', 'nations', 1, 255),
 ]
-NO_COLUMN = {'extra_countries', 'flag_from'}  # fields the builder uses itself (not written as columns)
+NO_COLUMN = {'extra_countries', 'hidden_in_countries', 'flag_from'}  # fields the builder uses itself (not written as columns)
 
 COUNTRY = [
     FieldSpec('flag_from', 'info', 'nation', 1, fifa14.MAX_NATION_ID, optional=True),  # whose flag is copied
@@ -144,7 +147,19 @@ def clean(kind: str, values: dict, original: dict) -> dict:
         if value is None or value == original.get(name):
             continue
         out[name] = value
+    if kind == 'league' and 'hidden_in_countries' in out:
+        countries = league_countries({**original, **out})
+        kept = [c for c in out['hidden_in_countries'] if c in countries]  # a country the league left is dropped
+        if kept:
+            out['hidden_in_countries'] = kept
+        else:
+            del out['hidden_in_countries']
     return out
+
+
+def league_countries(values: dict) -> list[int]:
+    """Every country a league shows in (its own first, then the extra ones), from its screen values."""
+    return [c for c in dict.fromkeys([values.get('countryid') or 0, *(values.get('extra_countries') or [])]) if c]
 
 
 def _int(spec: FieldSpec, value) -> int:

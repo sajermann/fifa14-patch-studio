@@ -81,6 +81,8 @@ export interface LeagueRow {
   game_hidden: boolean
   /** Other countries the league shows in. */
   extra_countries: number[]
+  /** Countries of the league where it is left out of the patch (it stays in them in the app). */
+  hidden_in_countries: number[]
   own_logo: number | null
 }
 
