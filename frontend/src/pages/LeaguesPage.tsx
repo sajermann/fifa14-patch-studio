@@ -11,6 +11,7 @@ import { api } from '@/api/client'
 import { OriginalBadge } from '@/components/common/detail'
 import { GameHiddenBadge, HiddenByProjectBadge, HideButton, OutOfPatchBadge, useHide } from '@/components/common/HideButton'
 import { LeagueImage } from '@/components/common/pictures'
+import { BulkActions, RowCheckbox, SelectAllCheckbox, SelectAllDialog, useListSelection } from '@/components/common/selection'
 import { useI18n } from '@/i18n'
 import { FilterBar, LIST_PAGE, Pager, ScrollTable, SearchInput, SortHead, useListState } from '@/lib/list'
 import { useList } from '@/state/queries'
@@ -23,6 +24,9 @@ export function LeaguesPage() {
   const from = useFrom({ key: 'nav.leagues' })
   const list = useListState(FILTERS)
   const { data, isFetching } = useList('leagues', list.request, api.leagues)
+  // the project's items (created, or edited ones of the game) can be picked and deleted in bulk, like in the Street Studio
+  const own = (r: { is_new: boolean; edited?: boolean }) => r.is_new || !!r.edited
+  const selection = useListSelection((data?.items ?? []).filter(own).map((r) => r.id), data?.own_ids ?? [])
   const hide = useHide('league', ['leagues', 'league', 'country'])
   const qc = useQueryClient()
   const [creating, setCreating] = useState(false)
@@ -56,10 +60,14 @@ export function LeaguesPage() {
       </div>
       <FilterBar active={list.active} onClear={list.clear}>
         <SearchInput value={list.values.q} onChange={(v) => list.update({ q: v })} placeholder={t('leagues.search')} />
+        <BulkActions kind="league" selection={selection} invalidate={['leagues', 'league', 'country', 'countries', 'teams']} />
       </FilterBar>
       <ScrollTable>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-8">
+              <SelectAllCheckbox selection={selection} />
+            </TableHead>
             <TableHead className="w-12" />
             <SortHead field="name" label={t('col.name')} state={sortState} />
             <SortHead field="country" label={t('col.country')} state={sortState} />
@@ -72,6 +80,7 @@ export function LeaguesPage() {
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
           {data?.items.map((l) => (
             <TableRow key={l.id} className={l.is_new ? 'cursor-pointer' : 'cursor-pointer text-muted-foreground'} onClick={() => navigate(`/leagues/${l.id}`, from)}>
+              <TableCell onClick={(e) => e.stopPropagation()}>{own(l) && <RowCheckbox selection={selection} value={l.id} />}</TableCell>
               <TableCell>
                 <LeagueImage id={l.id} size={64} available={!!l.has_logo} className="size-8" />
               </TableCell>
@@ -102,7 +111,7 @@ export function LeaguesPage() {
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>
@@ -128,6 +137,7 @@ export function LeaguesPage() {
           onPage={(page, size) => list.update({ page, ...(size ? { size } : {}) }, false)}
         />
       )}
+      <SelectAllDialog selection={selection} />
     </div>
   )
 }

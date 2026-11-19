@@ -61,7 +61,12 @@ export interface Page<T> {
   pages: number
   sort: string
   dir: 'asc' | 'desc'
+  /** every page's items of the project (created or edited) that match the filters: what the checkboxes can pick */
+  own_ids?: number[]
 }
+
+/** what the lists' bulk delete takes */
+export type BulkKind = 'country' | 'league' | 'team' | 'player'
 
 export interface Ref {
   id: number

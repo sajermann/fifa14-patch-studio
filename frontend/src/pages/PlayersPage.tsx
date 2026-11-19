@@ -11,6 +11,7 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/compon
 import { api } from '@/api/client'
 import { OriginalBadge, OverallBadge } from '@/components/common/detail'
 import { Photo } from '@/components/common/pictures'
+import { BulkActions, RowCheckbox, SelectAllCheckbox, SelectAllDialog, useListSelection } from '@/components/common/selection'
 import { useI18n } from '@/i18n'
 import { FilterBar, FilterSelect, LIST_PAGE, Pager, ScrollTable, SearchInput, SortHead, useListState } from '@/lib/list'
 import { useList, useOptions } from '@/state/queries'
@@ -23,6 +24,9 @@ export function PlayersPage() {
   const from = useFrom({ key: 'nav.players' })
   const list = useListState(FILTERS)
   const { data, isFetching } = useList('players', list.request, api.players)
+  // the project's items (created, or edited ones of the game) can be picked and deleted in bulk, like in the Street Studio
+  const own = (r: { is_new: boolean; edited?: boolean }) => r.is_new || !!r.edited
+  const selection = useListSelection((data?.items ?? []).filter(own).map((r) => r.id), data?.own_ids ?? [])
   const options = useOptions().data
   const qc = useQueryClient()
   const [creating, setCreating] = useState(false)
@@ -77,10 +81,14 @@ export function PlayersPage() {
             { value: 'original', label: t('list.originOriginal') },
           ]}
         />
+        <BulkActions kind="player" selection={selection} invalidate={['players', 'player', 'teams', 'team']} />
       </FilterBar>
       <ScrollTable>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-8">
+              <SelectAllCheckbox selection={selection} />
+            </TableHead>
             <TableHead className="w-12" />
             <SortHead field="name" label={t('col.name')} state={sortState} />
             <SortHead field="position" label={t('col.position')} state={sortState} />
@@ -95,6 +103,7 @@ export function PlayersPage() {
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
           {data?.items.map((p) => (
             <TableRow key={p.id} className="cursor-pointer text-muted-foreground" onClick={() => navigate(`/players/${p.id}`, from)}>
+              <TableCell onClick={(e) => e.stopPropagation()}>{own(p) && <RowCheckbox selection={selection} value={p.id} />}</TableCell>
               <TableCell>
                 <Photo id={p.id} size={64} available={p.has_photo} className="size-8" />
               </TableCell>
@@ -117,7 +126,7 @@ export function PlayersPage() {
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={10} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>
@@ -133,6 +142,7 @@ export function PlayersPage() {
           onPage={(page, size) => list.update({ page, ...(size ? { size } : {}) }, false)}
         />
       )}
+      <SelectAllDialog selection={selection} />
     </div>
   )
 }

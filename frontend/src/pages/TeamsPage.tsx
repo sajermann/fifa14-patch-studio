@@ -12,6 +12,7 @@ import { OriginalBadge, OverallBadge } from '@/components/common/detail'
 import { HiddenByProjectBadge, OutOfPatchBadge } from '@/components/common/HideButton'
 import { cn } from '@/lib/utils'
 import { ColorDot, Crest } from '@/components/common/pictures'
+import { BulkActions, RowCheckbox, SelectAllCheckbox, SelectAllDialog, useListSelection } from '@/components/common/selection'
 import { useI18n } from '@/i18n'
 import { FilterBar, FilterSelect, LIST_PAGE, Pager, ScrollTable, SearchInput, SortHead, useListState } from '@/lib/list'
 import { useList, useOptions } from '@/state/queries'
@@ -24,6 +25,9 @@ export function TeamsPage() {
   const from = useFrom({ key: 'nav.teams' })
   const list = useListState(FILTERS)
   const { data, isFetching } = useList('teams', list.request, api.teams)
+  // the project's items (created, or edited ones of the game) can be picked and deleted in bulk, like in the Street Studio
+  const own = (r: { is_new: boolean; edited?: boolean }) => r.is_new || !!r.edited
+  const selection = useListSelection((data?.items ?? []).filter(own).map((r) => r.id), data?.own_ids ?? [])
   const options = useOptions().data
   const qc = useQueryClient()
   const [creating, setCreating] = useState(false)
@@ -85,10 +89,14 @@ export function TeamsPage() {
             { value: 'no', label: t('filter.editedNo') },
           ]}
         />
+        <BulkActions kind="team" selection={selection} invalidate={['teams', 'team', 'leagues', 'league', 'players']} />
       </FilterBar>
       <ScrollTable>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-8">
+              <SelectAllCheckbox selection={selection} />
+            </TableHead>
             <TableHead className="w-12" />
             <SortHead field="name" label={t('col.name')} state={sortState} />
             <SortHead field="league" label={t('col.league')} state={sortState} />
@@ -101,6 +109,7 @@ export function TeamsPage() {
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
           {data?.items.map((tm) => (
             <TableRow key={tm.id} className={cn('cursor-pointer', !tm.edited && !tm.is_new && 'text-muted-foreground')} onClick={() => navigate(`/teams/${tm.id}`, from)}>
+              <TableCell onClick={(e) => e.stopPropagation()}>{own(tm) && <RowCheckbox selection={selection} value={tm.id} />}</TableCell>
               <TableCell>
                 <Crest id={tm.id} size={64} available={tm.has_crest} version={tm.own_crest} className="size-8" />
               </TableCell>
@@ -126,7 +135,7 @@ export function TeamsPage() {
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>
@@ -142,6 +151,7 @@ export function TeamsPage() {
           onPage={(page, size) => list.update({ page, ...(size ? { size } : {}) }, false)}
         />
       )}
+      <SelectAllDialog selection={selection} />
     </div>
   )
 }

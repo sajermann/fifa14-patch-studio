@@ -134,17 +134,30 @@ GENERATED_LOOK = ('headtypecode', 'hairtypecode', 'haircolorcode', 'facialhairty
                   'eyebrowcode', 'sideburnscode', 'eyecolorcode', 'skintypecode', 'skintonecode')
 
 
+LAST_POSITION = 27  # LW: 28 (SUB) and 29 (RES) are places in a squad, not positions
+
+
 class GeneratePlayersBody(BaseModel):
-    count: int
+    count: int = 0
     goalkeepers: int = 0  # how many of them are goalkeepers (the rest are strikers)
+    positions: list[int] | None = None  # the position of each one, in order (replaces count and goalkeepers)
 
 
 @app.post('/api/teams/{tid}/generate-players')
 def generate_players(tid: int, body: GeneratePlayersBody):
     """New random players for a team: strikers (and goalkeepers) with every rating at the middle, named Player 01, Player 02... (the
-    first names no created player has), a generic head and the rest drawn; `goalkeepers` of them play in goal. They are created in the project, not put in
-    the squad: the screen adds them to the squad it is editing (Save keeps them there)."""
-    if not 1 <= body.count <= MAX_GENERATED or not 0 <= body.goalkeepers <= body.count:
+    first names no created player has), a generic head and the rest drawn; `goalkeepers` of them play in goal, or each one plays in its
+    place of `positions`. They are created in the project, not put in the squad: the screen adds them to the squad it is editing (Save keeps them
+    there)."""
+    if body.positions is not None:
+        if not all(0 <= code <= LAST_POSITION for code in body.positions):
+            raise ApiError(400, 'bad_request', 'positions')
+        positions = body.positions
+    else:
+        if not 0 <= body.goalkeepers <= body.count:
+            raise ApiError(400, 'bad_request', 'count')
+        positions = [GOALKEEPER] * body.goalkeepers + [GENERATED_POSITION] * (body.count - body.goalkeepers)
+    if not 1 <= len(positions) <= MAX_GENERATED:
         raise ApiError(400, 'bad_request', 'count')
     with db() as con:
         if queries.team(con, lang(), tid) is None:
@@ -157,13 +170,13 @@ def generate_players(tid: int, body: GeneratePlayersBody):
     middle = {spec.name: (spec.min + spec.max) // 2 for spec in fields.PLAYER
               if spec.group in ('physical', 'mental', 'skill', 'goalkeeper')}
     out, index = [], 0
-    for n in range(body.count):
+    for position in positions:
         index += 1
         while f'{index:02d}' in taken:
             index += 1
         height = random.randint(165, 195)
         values = {'name.first': 'Player', 'name.last': f'{index:02d}', 'name.jersey': f'PLAYER {index:02d}',
-                  'preferredposition1': GOALKEEPER if n < body.goalkeepers else GENERATED_POSITION, 'height': height, 'weight': random.randint(60, 90),
+                  'preferredposition1': position, 'height': height, 'weight': random.randint(60, 90),
                   'birthdate': datetime.date.fromordinal(random.randint(first_day, last_day)).isoformat(),
                   'preferredfoot': random.choice((1, 2)), **middle,
                   **{c: random.choice(codes[c]) for c in GENERATED_LOOK if codes.get(c)}}

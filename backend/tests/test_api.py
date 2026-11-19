@@ -400,7 +400,11 @@ def test_generate_players_creates_random_strikers(client):
     again = client.post(f'/api/teams/{fakegame.TEAM}/generate-players', json={'count': 1}).json()
     assert again[0]['name'] == 'Player 07'  # the names already taken are skipped
     assert client.post(f'/api/teams/{fakegame.TEAM}/generate-players', json={'count': 0}).status_code == 400
-    for p in [*made, *keepers, *again]:  # the project is shared by the tests: leave it as it was
+    placed = client.post(f'/api/teams/{fakegame.TEAM}/generate-players', json={'positions': [0, 3, 7, 14]}).json()
+    assert [p['position'] for p in placed] == [0, 3, 7, 14]
+    assert client.post(f'/api/teams/{fakegame.TEAM}/generate-players', json={'positions': [28]}).status_code == 400
+    assert client.post(f'/api/teams/{fakegame.TEAM}/generate-players', json={'positions': []}).status_code == 400
+    for p in [*made, *keepers, *again, *placed]:  # the project is shared by the tests: leave it as it was
         assert client.delete(f"/api/players/{p['id']}").status_code == 200
 
 
@@ -451,3 +455,15 @@ def test_player_position_in_a_team_from_his_screen(client):
     assert bad.status_code == 400
     client.delete(f'/api/teams/{tid}/edits')
     client.delete(f'/api/players/{pid}/edits')
+
+
+def test_bulk_delete_takes_created_and_resets_edited(client):
+    a = client.post('/api/leagues', json={'names': {'full': {'*': 'Bulk A'}}}).json()['id']
+    b = client.post('/api/leagues', json={'names': {'full': {'*': 'Bulk B'}}}).json()['id']
+    listed = client.get('/api/leagues', params={'q': 'Bulk'}).json()
+    assert {a, b} <= set(listed['own_ids'])
+    r = client.post('/api/bulk-delete', json={'kind': 'league', 'ids': [a, b, a]})
+    assert r.status_code == 200, r.text
+    assert sorted(r.json()['deleted']) == sorted([a, b]) and r.json()['skipped'] == []
+    assert client.get('/api/leagues', params={'q': 'Bulk'}).json()['own_ids'] == []
+    assert client.post('/api/bulk-delete', json={'kind': 'nope', 'ids': [1]}).status_code == 400

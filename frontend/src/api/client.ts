@@ -1,5 +1,5 @@
 import { hasMessage, translate } from '@/i18n'
-import type { Config, CountryDetail, CountryRow, FaceChoice, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, Status, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook } from './types'
+import type { BulkKind, Config, CountryDetail, CountryRow, FaceChoice, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, Status, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook } from './types'
 
 /** Error of the backend; `message` is in the interface language when the app knows its code. */
 export class ApiError extends Error {
@@ -128,13 +128,17 @@ export const api = {
   flagPreview: async (data: string, size: number) => (await send('POST', `/api/flag-preview?size=${size}`, { data })).blob(),
   resetCountry: (id: number) => request<CountryDetail>('DELETE', `/api/countries/${id}/edits`),
   deleteCountry: (id: number) => request<{ deleted: number }>('DELETE', `/api/countries/${id}`),
+  /** Deletes the picked items of a list: a created one leaves the project, an edited one goes back to the game's. */
+  bulkDelete: (kind: BulkKind, ids: number[]) =>
+    post<{ deleted: number[]; reset: number[]; skipped: { id: number; code: string }[] }>('/api/bulk-delete', { kind, ids }),
   limits: () => get<Limits>('/api/limits'),
   player: (id: number) => get<PlayerDetail>(`/api/players/${id}`),
   /** The whole form of a player: fields (face included) and, when given, his teams. */
   savePlayer: (id: number, fields: Fields, teams?: PlayerTeamBody[]) => request<PlayerDetail>('PUT', `/api/players/${id}`, { fields, teams }),
   resetPlayer: (id: number) => request<PlayerDetail>('DELETE', `/api/players/${id}/edits`),
   /** A new player: from scratch (template null) or a copy of a player; optionally straight into a team. */
-  generatePlayers: (team: number, count: number, goalkeepers = 0) => post<PlayerDetail[]>(`/api/teams/${team}/generate-players`, { count, goalkeepers }),
+  /** New random players for a team, one per position code given (in that order). */
+  generatePlayers: (team: number, positions: number[]) => post<PlayerDetail[]>(`/api/teams/${team}/generate-players`, { positions }),
   createPlayer: (body: { fields: Fields; template?: number | null; team?: number | null }) => post<PlayerDetail>('/api/players', body),
   deletePlayer: (id: number) => request<{ deleted: number }>('DELETE', `/api/players/${id}`),
   setPlayerHidden: (id: number, hidden: boolean) => request<PlayerDetail>('PUT', `/api/players/${id}/hidden`, { hidden }),

@@ -183,7 +183,8 @@ def _search(column: str, q: str, params: dict) -> str:
 def _page(con, select: str, where: list[str], params: dict, sorts: dict[str, str], sort: str | None,
           direction: str | None, default: tuple[str, str], page_no: int, size: int, new_first: bool = False) -> dict:
     """One page of `select`. With `new_first` (the select has an `is_new` column) the user's created items come
-    before the game's, whatever the sort."""
+    before the game's, whatever the sort, and `own_ids` lists, across every page, the ones of the project (created, or
+    edited when the select has an `edited` column): what the list's checkboxes can pick."""
     key, default_dir = default
     if sort in sorts:
         key = sort
@@ -199,8 +200,13 @@ def _page(con, select: str, where: list[str], params: dict, sorts: dict[str, str
     rows = con.execute(
         f'SELECT * FROM ({select} {clause}) ORDER BY {first}({order}) IS NULL, {order} {"DESC" if desc else "ASC"}, id '
         f'LIMIT :limit OFFSET :offset', {**params, 'limit': size, 'offset': (page_no - 1) * size}).fetchall()
-    return {'items': [dict(r) for r in rows], 'total': total, 'page': page_no, 'size': size, 'pages': pages,
-            'sort': key, 'dir': 'desc' if desc else 'asc'}
+    out = {'items': [dict(r) for r in rows], 'total': total, 'page': page_no, 'size': size, 'pages': pages,
+           'sort': key, 'dir': 'desc' if desc else 'asc'}
+    if new_first:
+        mine = 'is_new OR edited' if ' AS edited' in select else 'is_new'
+        out['own_ids'] = [r[0] for r in con.execute(
+            f'SELECT id FROM ({select} {clause}) WHERE {mine} ORDER BY {order} {"DESC" if desc else "ASC"}, id', params)]
+    return out
 
 
 # ---- lists ----------------------------------------------------------------------------------------------------------

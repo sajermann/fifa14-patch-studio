@@ -9,6 +9,7 @@ import { CreateDialog } from '@/components/common/create'
 import { OriginalBadge } from '@/components/common/detail'
 import { GameHiddenBadge, HiddenByProjectBadge, OutOfPatchBadge } from '@/components/common/HideButton'
 import { CountryFlag } from '@/components/common/pictures'
+import { BulkActions, RowCheckbox, SelectAllCheckbox, SelectAllDialog, useListSelection } from '@/components/common/selection'
 import { useI18n } from '@/i18n'
 import { useFrom } from '@/lib/back'
 import { FilterBar, FilterSelect, LIST_PAGE, Pager, ScrollTable, SearchInput, SortHead, useListState } from '@/lib/list'
@@ -25,6 +26,9 @@ export function CountriesPage() {
   const from = useFrom({ key: 'nav.countries' })
   const list = useListState(FILTERS)
   const { data, isFetching } = useList('countries', list.request, api.countries)
+  // the project's items (created, or edited ones of the game) can be picked and deleted in bulk, like in the Street Studio
+  const own = (r: { is_new: boolean; edited?: boolean }) => r.is_new || !!r.edited
+  const selection = useListSelection((data?.items ?? []).filter(own).map((r) => r.id), data?.own_ids ?? [])
   const [creating, setCreating] = useState(false)
   const create = useMutation({
     mutationFn: (name: string) => api.createCountry({ full: { '*': name } }),
@@ -70,10 +74,14 @@ export function CountriesPage() {
             { value: 'hidden', label: t('list.statusHidden') },
           ]}
         />
+        <BulkActions kind="country" selection={selection} invalidate={['countries', 'country', 'leagues']} />
       </FilterBar>
       <ScrollTable>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-8">
+              <SelectAllCheckbox selection={selection} />
+            </TableHead>
             <TableHead className="w-14" />
             <SortHead field="name" label={t('col.name')} state={sortState} />
             <SortHead field="league_count" label={t('col.leagues')} state={sortState} />
@@ -83,6 +91,7 @@ export function CountriesPage() {
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
           {data?.items.map((c) => (
             <TableRow key={c.id} className={cn('cursor-pointer', !c.is_new && 'text-muted-foreground')} onClick={() => navigate(`/countries/${c.id}`, from)}>
+              <TableCell onClick={(e) => e.stopPropagation()}>{own(c) && <RowCheckbox selection={selection} value={c.id} />}</TableCell>
               <TableCell>
                 <CountryFlag id={c.flag_id} size={64} version={c.own_flag} available={c.has_flag || c.is_new || c.flag_id !== c.id || !!c.own_flag} className="h-6 w-9" />
               </TableCell>
@@ -97,7 +106,7 @@ export function CountriesPage() {
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={4} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>
@@ -117,6 +126,7 @@ export function CountriesPage() {
         pending={create.isPending}
         onCreate={(name) => create.mutate(name)}
       />
+      <SelectAllDialog selection={selection} />
     </div>
   )
 }

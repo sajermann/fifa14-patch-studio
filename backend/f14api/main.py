@@ -1212,6 +1212,35 @@ def job_status():
 from . import player_routes  # noqa: E402,F401 - the player routes (before the interface's catch-all)
 
 
+# ---- bulk delete (the lists' checkboxes) ----------------------------------------------------------------------------
+
+class BulkDeleteBody(BaseModel):
+    kind: str
+    ids: list[int]
+
+
+@app.post('/api/bulk-delete')
+def bulk_delete(body: BulkDeleteBody):
+    """Delete what a list picked, like the Street Studio: a created item leaves the project, an edited one of the game
+    goes back to the game's. One that cannot go (a country that still has leagues) is skipped with its error code."""
+    deletes = {'country': delete_country, 'league': delete_league, 'team': delete_team,
+               'player': player_routes.delete_player}
+    resets = {'country': reset_country, 'league': reset_league, 'team': reset_team,
+              'player': player_routes.reset_player}
+    if body.kind not in deletes:
+        raise ApiError(400, 'bad_request', 'kind')
+    deleted, reset, skipped = [], [], []
+    for oid in dict.fromkeys(body.ids):
+        created = project().is_created(body.kind, oid)
+        try:
+            (deletes if created else resets)[body.kind](oid)
+        except HTTPException as e:
+            skipped.append({'id': oid, 'code': (e.detail or {}).get('code', 'error') if isinstance(e.detail, dict) else 'error'})
+            continue
+        (deleted if created else reset).append(oid)
+    return {'deleted': deleted, 'reset': reset, 'skipped': skipped}
+
+
 # ---- errors and the interface ---------------------------------------------------------------------------------------
 
 @app.exception_handler(ApiError)

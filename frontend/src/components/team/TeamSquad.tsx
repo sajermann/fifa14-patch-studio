@@ -27,6 +27,7 @@ import { useI18n, type MessageKey } from '@/i18n'
 import { toast } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 import { useOptions, useToken } from '@/state/queries'
+import { GENERATED_SQUAD, generatePlan } from './generatePlan'
 import { BENCH, RESERVE } from './pending'
 
 interface PlayerInfo {
@@ -50,7 +51,6 @@ const infoOf = (p: PlayerInfo): PlayerInfo => ({
 })
 
 const SCROLL_RESERVE = 330 // height kept under the table for the captain and takers card
-const GOALKEEPERS = 3 // goalkeepers a generated squad ends up with (the existing ones count)
 
 // captain and set-piece takers: one column of the table and one select of the card below (a database column each)
 const ROLES: { column: string; label: MessageKey; icon: LucideIcon }[] = [
@@ -179,15 +179,15 @@ export function TeamSquad({
   }
   const [confirmingGenerate, setConfirmingGenerate] = useState(false)
   const [generating, setGenerating] = useState(false)
-  const missing = Math.max(team.max_squad - kept.length, 0)
-  // a squad needs goalkeepers: the generated players include as many as it takes to have GOALKEEPERS in the patch
-  const haveKeepers = kept.filter((r) => info[r.player]?.position === 0).length
-  const newKeepers = Math.min(Math.max(GOALKEEPERS - haveKeepers, 0), missing)
+  // the positions the squad lacks, line by line, up to GENERATED_SQUAD players (the ones in the patch count)
+  const plan = generatePlan(kept.map((r) => info[r.player]?.position), team.max_squad)
+  const missing = plan.length
+  const squadOf = Math.min(GENERATED_SQUAD, team.max_squad)
   // new random players for the free places: created in the project, put in the squad being edited (Save keeps them)
   const generatePlayers = async () => {
     setGenerating(true)
     try {
-      const made = await api.generatePlayers(team.id, missing, newKeepers)
+      const made = await api.generatePlayers(team.id, plan)
       const used = new Set(numbers)
       const free = Array.from({ length: 99 }, (_, i) => i + 1).filter((n) => !used.has(n))
       const next = [...rows]
@@ -361,9 +361,8 @@ export function TeamSquad({
               <AlertDialogTitle>{t('roster.generateTitle')}</AlertDialogTitle>
               <AlertDialogDescription>
                 {missing === 1
-                  ? t('roster.generateDescriptionOne', { max: team.max_squad })
-                  : t('roster.generateDescription', { count: missing, max: team.max_squad })}{' '}
-                {newKeepers > 0 && t('roster.generateKeepers', { count: newKeepers })}
+                  ? t('roster.generateDescriptionOne', { max: squadOf, position: posName(plan[0]) })
+                  : t('roster.generateDescription', { count: missing, max: squadOf, positions: plan.map(posName).join(', ') })}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
