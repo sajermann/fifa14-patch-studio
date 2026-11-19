@@ -110,6 +110,20 @@ def _kits():
     return rows
 
 
+def _formations():
+    """Two of the game's formations (team -1: 13 = 4-2-2-2, 8 = 4-3-3) and TEAM's own (a copy of 13)."""
+    def row(team, fid, rel, name, positions):
+        return {'teamid': team, 'formationid': fid, 'relativeformationid': rel, 'formationname': name,
+                **{f'position{i}': p for i, p in enumerate(positions)}}
+    p4222 = [0, 3, 4, 6, 7, 9, 11, 17, 19, 24, 26]
+    p433 = [0, 3, 4, 6, 7, 13, 14, 15, 23, 25, 27]
+    return [row(-1, 1, 13, '4-2-2-2', p4222), row(-1, 2, 8, '4-3-3', p433), row(TEAM, 3, 13, '4-2-2-2', p4222)]
+
+
+MASK_KITS = (7500, 7600)  # the game's generic mask kits (red = color 1, green = color 2)
+GENERIC_KEEPER = 5000
+
+
 # ---- T3DB writer (the layout extractor.fifa_db reads) ------------------------------------------------------------
 
 STRING_SHORT, STRING_LONG, INT = 13, 14, 3  # field types: Huffman string (1 / 2-byte length), integer
@@ -294,6 +308,13 @@ def build(root):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'wb') as f:
             f.write(chunkzip(kit_rx3(color)) if kind == 1 else kit_rx3(color))  # the away kit compressed
+    for mask in MASK_KITS:  # half red, half green
+        with open(os.path.join(data, 'sceneassets', 'kit', f'kit_{mask}_0_0.rx3'), 'wb') as f:
+            f.write(kit_rx3((255, 0, 0)))
+    with open(os.path.join(data, 'sceneassets', 'kit', f'kit_{GENERIC_KEEPER}_2_0.rx3'), 'wb') as f:
+        f.write(kit_rx3((0, 200, 0)))
+    for kind in (0, 1, 2):
+        _dds(os.path.join(img, 'kits', f'j{kind}_{TEAM}_0.dds'), (32, 32), (200, 10, 20, 255))
     # SMALL_TEAM: files that cannot be read (an empty kit, a crest that is not a DDS): left out, never a crash
     with open(os.path.join(data, 'sceneassets', 'kit', f'kit_{SMALL_TEAM}_0_0.rx3'), 'wb') as f:
         pass
@@ -333,7 +354,7 @@ def _tables():
             # a name edited in the database wins over the name table
             'editedplayernames': [{'playerid': KEEPER, 'firstname': 'Edited', 'surname': 'Keeper',
                                    'commonname': '', 'playerjerseyname': 'EDITED'}],
-            'teamstadiumlinks': [{'teamid': TEAM, 'stadiumid': 3}]}
+            'teamstadiumlinks': [{'teamid': TEAM, 'stadiumid': 3}], 'formations': _formations()}
 
 
 def number_font_rx3(color):

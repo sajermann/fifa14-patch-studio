@@ -85,6 +85,9 @@ TEAM = [
     FieldSpec('ccpositioning', 'tactics', 'select', options=(1, 2)),
     *(FieldSpec(c, 'tactics', 'int', 1, 99) for c in ('defmentality', 'defaggression', 'defteamwidth')),
     FieldSpec('defdefenderline', 'tactics', 'select', options=(1, 2)),
+    # one of the game's 33 formations (formations rows of team -1, relativeformationid): the team's own formation row
+    # takes its positions (test TN1); shown on the Squad tab, not with the other fields
+    FieldSpec('formation', 'lineup', 'select', options=tuple(range(1, 34))),
 ]
 
 LEAGUE = [
@@ -95,7 +98,7 @@ LEAGUE = [
     # countries of the league (own or extra) where it is left out of the patch; edited on the country's screen only
     FieldSpec('hidden_in_countries', 'countries', 'nations', 1, 255),
 ]
-NO_COLUMN = {'extra_countries', 'hidden_in_countries', 'flag_from'}  # fields the builder uses itself (not written as columns)
+NO_COLUMN = {'extra_countries', 'hidden_in_countries', 'flag_from', 'formation'}  # fields the builder uses itself (not written as columns)
 
 COUNTRY = [
     FieldSpec('flag_from', 'info', 'nation', 1, fifa14.MAX_NATION_ID, optional=True),  # whose flag is copied

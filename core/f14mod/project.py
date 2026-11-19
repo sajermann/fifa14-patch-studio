@@ -18,12 +18,18 @@ Schema 4 (17/11/2026) adds `hidden` (the Hide button, same rule as the Street St
 hidden is left out of the patch (kept in the project, nothing of it is built); an original one is hidden in the game by
 the project (Kick-off and tournament lists; see builder.write_visibility). `visible()` is the project the builder
 sees: without the hidden created entities, and with `hidden_in_game` = the hidden originals.
+Schema 5 (19/11/2026) adds the team's own things (test TN1): `team_sources` (a created team: the game team it starts
+from and whether its crest and kits are copied), `team_rosters` (the whole squad of a team whose squad was changed,
+`team_rosters_set`: player, order, jersey number and lineup slot: a position code 0-27 for the 11 starters, 28 bench,
+29 out of the squad) and `team_kits` (each kit of a team the user changed: where it comes from, as JSON; its pictures
+live in `pictures`, slots `kit<type>_jersey`/`_shorts`/`_mini`). A team's crest picture is slot `crest`. Older files
+open as they are.
 """
 import json
 import sqlite3
 import time
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 DEFAULT_LANG = '*'
 KINDS = ('team', 'league', 'player', 'country')
 NAME_TABLES = {'team': ('team_names', 'team_id'), 'league': ('league_names', 'league_id'),
@@ -46,7 +52,13 @@ CREATE TABLE IF NOT EXISTS league_members (league_id INTEGER, team_id INTEGER, o
 CREATE TABLE IF NOT EXISTS pictures (kind TEXT, id INTEGER, slot TEXT, data BLOB, updated_at INTEGER,
                                      PRIMARY KEY (kind, id, slot));
 CREATE TABLE IF NOT EXISTS hidden (kind TEXT, id INTEGER, PRIMARY KEY (kind, id));
+CREATE TABLE IF NOT EXISTS team_sources (team_id INTEGER PRIMARY KEY, template INTEGER, copy INTEGER);
+CREATE TABLE IF NOT EXISTS team_rosters_set (team_id INTEGER PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS team_rosters (team_id INTEGER, player_id INTEGER, ord INTEGER, jersey INTEGER,
+                                         slot INTEGER, PRIMARY KEY (team_id, player_id));
+CREATE TABLE IF NOT EXISTS team_kits (team_id INTEGER, kind INTEGER, config TEXT, PRIMARY KEY (team_id, kind));
 """
+BENCH, RESERVE = 28, 29  # team_rosters.slot of a substitute and of a player out of the squad
 
 Names = dict[str, dict[str, str]]  # {name key: {language or '*': text}}
 
@@ -118,7 +130,10 @@ class Project:
                 con.executemany(f'INSERT INTO {table} VALUES (?,?,?,?)', name_rows)
             con.execute('DELETE FROM fields WHERE kind = ? AND id = ?', (kind, oid))
             con.executemany('INSERT INTO fields VALUES (?,?,?,?)', field_rows)
-            if name_rows or field_rows:
+            own = kind == 'team' and con.execute(  # a team's squad, kits or pictures keep it edited
+                'SELECT 1 FROM team_rosters_set WHERE team_id = ? UNION SELECT 1 FROM team_kits WHERE team_id = ? '
+                "UNION SELECT 1 FROM pictures WHERE kind = 'team' AND id = ?", (oid, oid, oid)).fetchone()
+            if name_rows or field_rows or own:
                 con.execute('INSERT OR REPLACE INTO edited VALUES (?, ?, ?)', (kind, oid, int(time.time())))
             else:
                 con.execute('DELETE FROM edited WHERE kind = ? AND id = ?', (kind, oid))
@@ -127,13 +142,16 @@ class Project:
             con.close()
 
     def reset(self, kind: str, oid: int) -> None:
-        self.save(kind, oid)
         con = self.connect()
         try:
             con.execute('DELETE FROM pictures WHERE kind = ? AND id = ?', (kind, oid))
+            if kind == 'team':
+                for table in ('team_rosters', 'team_rosters_set', 'team_kits'):
+                    con.execute(f'DELETE FROM {table} WHERE team_id = ?', (oid,))
             con.commit()
         finally:
             con.close()
+        self.save(kind, oid)
 
     # ---- pictures -------------------------------------------------------------------------------------------
 
@@ -249,6 +267,8 @@ class Project:
                 con.execute('DELETE FROM league_members_set WHERE league_id = ?', (oid,))
             if kind == 'team':
                 con.execute('DELETE FROM league_members WHERE team_id = ?', (oid,))
+                for table in ('team_sources', 'team_rosters', 'team_rosters_set', 'team_kits'):
+                    con.execute(f'DELETE FROM {table} WHERE team_id = ?', (oid,))
             con.commit()
         finally:
             con.close()
@@ -314,6 +334,93 @@ class Project:
             out: dict[int, list[int]] = {r[0]: [] for r in con.execute('SELECT league_id FROM league_members_set')}
             for r in con.execute('SELECT league_id, team_id FROM league_members ORDER BY league_id, ord'):
                 out.setdefault(r[0], []).append(r[1])
+            return out
+        finally:
+            con.close()
+
+    # ---- teams: source, squad, kits ---------------------------------------------------------------------------
+
+    def set_team_source(self, team_id: int, template: int, copy: bool) -> None:
+        con = self.connect()
+        try:
+            con.execute('INSERT OR REPLACE INTO team_sources VALUES (?, ?, ?)', (team_id, template, int(copy)))
+            con.commit()
+        finally:
+            con.close()
+
+    def team_source(self, team_id: int) -> tuple[int, bool] | None:
+        """(template team, crest and kits copied) of a created team."""
+        con = self.connect()
+        try:
+            r = con.execute('SELECT template, copy FROM team_sources WHERE team_id = ?', (team_id,)).fetchone()
+            return (r[0], bool(r[1])) if r else None
+        finally:
+            con.close()
+
+    def set_roster(self, team_id: int, rows: list[dict] | None) -> None:
+        """The whole squad of a team, in order: [{'player', 'jersey', 'slot'}]; None = the game's squad again."""
+        con = self.connect()
+        try:
+            con.execute('DELETE FROM team_rosters WHERE team_id = ?', (team_id,))
+            con.execute('DELETE FROM team_rosters_set WHERE team_id = ?', (team_id,))
+            if rows is not None:
+                con.execute('INSERT INTO team_rosters_set VALUES (?)', (team_id,))
+                con.executemany('INSERT OR IGNORE INTO team_rosters VALUES (?, ?, ?, ?, ?)',
+                                [(team_id, r['player'], i, r.get('jersey'), r.get('slot', RESERVE))
+                                 for i, r in enumerate(rows)])
+                con.execute('INSERT OR REPLACE INTO edited VALUES (?, ?, ?)', ('team', team_id, int(time.time())))
+            con.commit()
+        finally:
+            con.close()
+
+    def roster(self, team_id: int) -> list[dict] | None:
+        con = self.connect()
+        try:
+            if not con.execute('SELECT 1 FROM team_rosters_set WHERE team_id = ?', (team_id,)).fetchone():
+                return None
+            return [{'player': r[0], 'jersey': r[1], 'slot': r[2]} for r in con.execute(
+                'SELECT player_id, jersey, slot FROM team_rosters WHERE team_id = ? ORDER BY ord', (team_id,))]
+        finally:
+            con.close()
+
+    def all_rosters(self) -> dict[int, list[dict]]:
+        con = self.connect()
+        try:
+            out: dict[int, list[dict]] = {r[0]: [] for r in con.execute('SELECT team_id FROM team_rosters_set')}
+            for r in con.execute('SELECT team_id, player_id, jersey, slot FROM team_rosters ORDER BY team_id, ord'):
+                out.setdefault(r[0], []).append({'player': r[1], 'jersey': r[2], 'slot': r[3]})
+            return out
+        finally:
+            con.close()
+
+    def set_kit(self, team_id: int, kind: int, config: dict | None) -> None:
+        """Where one kit of the team comes from (see f14mod.teamkits); None = the game's (or the template's)."""
+        con = self.connect()
+        try:
+            if config is None:
+                con.execute('DELETE FROM team_kits WHERE team_id = ? AND kind = ?', (team_id, kind))
+            else:
+                con.execute('INSERT OR REPLACE INTO team_kits VALUES (?, ?, ?)',
+                            (team_id, kind, json.dumps(config, ensure_ascii=False)))
+                con.execute('INSERT OR REPLACE INTO edited VALUES (?, ?, ?)', ('team', team_id, int(time.time())))
+            con.commit()
+        finally:
+            con.close()
+
+    def kits(self, team_id: int) -> dict[int, dict]:
+        con = self.connect()
+        try:
+            return {r[0]: json.loads(r[1]) for r in con.execute(
+                'SELECT kind, config FROM team_kits WHERE team_id = ? ORDER BY kind', (team_id,))}
+        finally:
+            con.close()
+
+    def all_kits(self) -> dict[int, dict[int, dict]]:
+        con = self.connect()
+        try:
+            out: dict[int, dict[int, dict]] = {}
+            for r in con.execute('SELECT team_id, kind, config FROM team_kits ORDER BY team_id, kind'):
+                out.setdefault(r[0], {})[r[1]] = json.loads(r[2])
             return out
         finally:
             con.close()

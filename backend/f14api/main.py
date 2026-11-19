@@ -1,4 +1,5 @@
 """HTTP API of the FIFA 14 Patch Studio (FastAPI). The interface is served from the same address (frontend/dist)."""
+import json
 import logging
 import os
 from contextlib import asynccontextmanager, contextmanager
@@ -11,7 +12,7 @@ from pydantic import BaseModel
 
 from . import settings  # noqa: I001 - first: it puts the core folder on the path
 
-from f14mod import builder, fields, fifa14, flags, images, install_check, installer  # noqa: E402
+from f14mod import builder, fields, fifa14, flags, images, install_check, installer, teamkits  # noqa: E402
 
 from . import dialogs, queries  # noqa: E402
 from .state import GameState, Jobs, project  # noqa: E402
@@ -178,7 +179,7 @@ def filter_options():
                 f'SELECT * FROM (SELECT n.id, {queries._country_name()} AS name, n.is_new FROM v_nations n) '  # noqa: SLF001
                 'ORDER BY fold(name)', {'lang': lang()})],
             'teams': [dict(r) for r in con.execute(
-                f"SELECT * FROM (SELECT t.id, {queries._team_name('full')} AS name FROM teams t) ORDER BY fold(name)",  # noqa: SLF001
+                f"SELECT * FROM (SELECT t.id, {queries._team_name('full')} AS name FROM v_teams t) ORDER BY fold(name)",  # noqa: SLF001
                 {'lang': lang()})],
         }
 
@@ -249,7 +250,7 @@ def _clean_fields(con, kind: str, oid: int, body: dict, detail: dict) -> dict:
             raise ApiError(400, 'field_out_of_range', name)
         if spec.kind == 'nation' and not (spec.optional and value == 0) and                 not con.execute('SELECT 1 FROM v_nations WHERE id = ?', (value,)).fetchone():
             raise ApiError(400, 'field_out_of_range', name)
-        if spec.kind == 'team' and not con.execute('SELECT 1 FROM teams WHERE id = ?', (value,)).fetchone():
+        if spec.kind == 'team' and not con.execute('SELECT 1 FROM v_teams WHERE id = ?', (value,)).fetchone():
             raise ApiError(400, 'field_out_of_range', name)
         if spec.kind == 'roster' and value not in {p['id'] for p in detail['roster']}:
             raise ApiError(400, 'field_out_of_range', name)
@@ -492,7 +493,7 @@ def save_league_teams(lid: int, body: TeamsBody):
             raise ApiError(404, 'not_found')
         if team_ids:
             marks = ','.join('?' * len(team_ids))
-            found = {r[0] for r in con.execute(f'SELECT id FROM teams WHERE id IN ({marks})', team_ids)}
+            found = {r[0] for r in con.execute(f'SELECT id FROM v_teams WHERE id IN ({marks})', team_ids)}
             missing = [t for t in team_ids if t not in found]
             if missing:
                 raise ApiError(400, 'unknown_team', str(missing[0]))
@@ -553,7 +554,23 @@ def _picture(kind: str, oid: int, path: Optional[str], size: Optional[int]):
 
 
 @app.get('/api/image/crest/{tid}')
-def crest_image(tid: int, size: Optional[int] = None):
+def crest_image(tid: int, size: Optional[int] = None, game_only: bool = False):
+    """The team's crest: the user's picture, else the game's file (a created team: the one of the team it copies, or
+    the plain crest with its short name). `game_only` skips the user's picture."""
+    own = None if game_only else project().picture('team', tid, 'crest')
+    if own:
+        return _png_response(images.fit(images.decode_png(own[0]), (256, 256)), size)
+    source = project().team_source(tid)
+    if source and project().is_created('team', tid):
+        template, copy = source
+        if copy:
+            return _picture('crest', template, fifa14.CREST.format(template), size)
+        with db() as con:
+            team = _team(con, tid)
+        names = builder.with_derived_names('team', team['saved_names'])
+        c1 = team['saved'].get('teamcolor1') or team['values'].get('teamcolor1') or [128, 128, 128]
+        c2 = team['saved'].get('teamcolor2') or team['values'].get('teamcolor2') or [255, 255, 255]
+        return _png_response(teamkits.plain_crest(builder._shown_name(names, 'abbr3'), c1, c2), size)  # noqa: SLF001
     return _picture('crest', tid, fifa14.CREST.format(tid), size)
 
 
@@ -713,6 +730,300 @@ def set_country_hidden(cid: int, body: HiddenBody):
 def set_team_hidden(tid: int, body: HiddenBody):
     """Hide: a team of the game is hidden in it (linked only to a hidden league)."""
     return _set_hidden('team', tid, body)
+
+
+# ---- teams: create, delete, squad, crest, kits (test TN1) -------------------------------------------------------
+
+class CreateTeamBody(BaseModel):
+    names: dict[str, dict[str, str]] = {}
+    fields: dict = {}  # e.g. the colors of a team made from scratch
+    template: Optional[int] = None  # the team it starts from (its values; its crest and kits too when `copy`)
+    copy: bool = False  # a copy of `template`: its crest, kits, formation (and squad with `copy_squad`)
+    copy_squad: bool = False
+    league_ids: list[int] = []
+
+
+def _team(con, tid: int) -> dict:
+    out = queries.team(con, lang(), tid)
+    if out is None:
+        raise ApiError(404, 'not_found')
+    return out
+
+
+@app.post('/api/teams')
+def create_team(body: CreateTeamBody):
+    """A new team: made from scratch (the values of a model team, a plain crest with its short name, generic kits,
+    no players) or a copy of a team of the game (its crest, kits and formation; its squad when asked)."""
+    _required_name('team', body.names)
+    template = body.template if body.template is not None else teamkits.MODEL_TEAM
+    with db() as con:
+        if not con.execute('SELECT 1 FROM teams WHERE id = ?', (template,)).fetchone():
+            raise ApiError(400, 'unknown_team', str(template))
+        for lid in body.league_ids:
+            if queries.league(con, lang(), lid) is None:
+                raise ApiError(400, 'unknown_league', str(lid))
+        tid = queries.free_team_id(con)
+        names = _clean_names('team', body.names, {}, set(queries.languages(con)))
+        values = fields.original_values('team', json.loads(
+            con.execute('SELECT raw FROM teams WHERE id = ?', (template,)).fetchone()[0]))
+        kept = _clean_fields(con, 'team', tid, body.fields, {'values': values, 'roster': []})
+        members = {lid: [r[0] for r in con.execute(
+            'SELECT team_id FROM v_league_teams WHERE league_id = ? ORDER BY ord, team_id', (lid,))]
+            for lid in body.league_ids}
+    project().create('team', tid, names, kept)
+    project().set_team_source(tid, template, body.copy)
+    if not (body.copy and body.copy_squad):
+        project().set_roster(tid, [])
+    for lid, team_ids in members.items():
+        project().set_members(lid, team_ids + [tid])
+    with db() as con:
+        return _team(con, tid)
+
+
+@app.delete('/api/teams/{tid}')
+def delete_team(tid: int):
+    if not project().is_created('team', tid):
+        raise ApiError(400, 'not_created')
+    project().delete('team', tid)
+    return {'deleted': tid}
+
+
+class RosterRow(BaseModel):
+    player: int
+    jersey: Optional[int] = None
+    slot: int = 29  # 0-27 = starter in that position, 28 = bench, 29 = out of the squad
+
+
+class RosterBody(BaseModel):
+    rows: Optional[list[RosterRow]] = None  # None = the game's squad again
+
+
+@app.put('/api/teams/{tid}/roster')
+def save_team_roster(tid: int, body: RosterBody):
+    """The whole squad of a team, in order (a player can be in several teams); more than the game shows (41) stay
+    out of the patch."""
+    rows = None
+    with db() as con:
+        _team(con, tid)
+        if body.rows is not None:
+            seen = set()
+            for r in body.rows:
+                if r.player in seen:
+                    raise ApiError(400, 'duplicate_player', str(r.player))
+                seen.add(r.player)
+                if not 0 <= r.slot <= 29 or (r.jersey is not None and not 1 <= r.jersey <= 99):
+                    raise ApiError(400, 'field_out_of_range', str(r.player))
+                if not con.execute('SELECT 1 FROM players WHERE id = ?', (r.player,)).fetchone():
+                    raise ApiError(400, 'unknown_player', str(r.player))
+            rows = [r.model_dump() for r in body.rows]
+    if rows is None and project().is_created('team', tid):
+        rows = []  # a created team has no game squad to go back to
+    project().set_roster(tid, rows)
+    with db() as con:
+        return _team(con, tid)
+
+
+def _png_of(data: str) -> bytes:
+    import base64
+    import binascii
+    try:
+        return images.normalize_picture(base64.b64decode(data, validate=True))
+    except (images.PictureError, binascii.Error) as e:
+        raise ApiError(400, 'bad_picture', str(e))
+
+
+@app.put('/api/teams/{tid}/crest')
+def upload_team_crest(tid: int, body: PictureBody):
+    """The team's crest picture: the patch draws every crest size from it."""
+    with db() as con:
+        _team(con, tid)
+    project().set_picture('team', tid, 'crest', _png_of(body.data))
+    with db() as con:
+        return _team(con, tid)
+
+
+@app.delete('/api/teams/{tid}/crest')
+def remove_team_crest(tid: int):
+    project().set_picture('team', tid, 'crest', None)
+    with db() as con:
+        return _team(con, tid)
+
+
+class KitBody(BaseModel):
+    config: Optional[dict] = None  # None = the game's kit (or the team it copies) again
+    pictures: dict[str, Optional[str]] = {}  # jersey / shorts / mini: base64 to set, null to remove, absent = kept
+
+
+KIT_PARTS = ('jersey', 'shorts', 'mini')
+
+
+def _check_kit(con, config: dict) -> dict:
+    source = config.get('source')
+    out: dict = {'source': source}
+    if source == 'game':
+        team, kind = int(config.get('team', 0)), int(config.get('kind', 0))
+        if not con.execute('SELECT 1 FROM team_kits WHERE team_id = ? AND kind = ?', (team, kind)).fetchone():
+            raise ApiError(400, 'unknown_kit', f'{team}:{kind}')
+        out.update(team=team, kind=kind)
+    elif source == 'generic':
+        model = int(config.get('model', 0))
+        if model not in queries.kit_models(con):
+            raise ApiError(400, 'unknown_kit', str(model))
+        colors = config.get('colors') or []
+        if len(colors) != 2 or any(len(c) != 3 or any(not 0 <= int(v) <= 255 for v in c) for c in colors):
+            raise ApiError(400, 'field_bad_value', 'colors')
+        out.update(model=model, colors=[[int(v) for v in c] for c in colors])
+    elif source not in ('upload', 'keep'):
+        raise ApiError(400, 'field_bad_value', 'source')
+    if config.get('collar') is not None:
+        collar = int(config['collar'])
+        if collar not in teamkits.COLLARS:
+            raise ApiError(400, 'field_out_of_range', 'collar')
+        out['collar'] = collar
+    if config.get('print'):
+        out['print'] = _check_print(con, config['print'])
+    return out
+
+
+def _check_print(con, values: dict) -> dict:
+    """Name and numbers of a kit (f14mod.teamkits.PRINT), checked against what the game has."""
+    fonts = queries.kit_fonts(con)
+    name_fonts = {f['id'] for f in fonts['name']}
+    out: dict = {}
+    for key, value in values.items():
+        if value is None:
+            continue
+        if key not in teamkits.PRINT:
+            raise ApiError(400, 'field_unknown_field', key)
+        if key in teamkits.BOOL_PRINT:
+            out[key] = bool(value)
+        elif key == 'name_color':
+            if len(value) != 3 or any(not 0 <= int(v) <= 255 for v in value):
+                raise ApiError(400, 'field_bad_value', key)
+            out[key] = [int(v) for v in value]
+        else:
+            v = int(value)
+            ok = {'number_color': 0 <= v <= 19, 'shorts_number_color': 0 <= v <= 19, 'name_layout': v in (0, 1),
+                  'name_font': v in name_fonts, 'number_font': v in fonts['number'],
+                  'shorts_number_font': v in fonts['number']}[key]
+            if not ok:
+                raise ApiError(400, 'field_out_of_range', key)
+            out[key] = v
+    return out
+
+
+@app.put('/api/teams/{tid}/kits/{kind}')
+def save_team_kit(tid: int, kind: int, body: KitBody):
+    """One kit of a team: a kit of the game, the user's pictures (FIFA 14-16 layout) or a generic kit (one of the
+    game's mask kits painted with two colors)."""
+    if kind not in queries.KIT_KINDS:
+        raise ApiError(404, 'not_found')
+    with db() as con:
+        _team(con, tid)
+        config = _check_kit(con, body.config) if body.config is not None else None
+    for part, data in body.pictures.items():
+        if part not in KIT_PARTS:
+            raise ApiError(400, 'bad_request', part)
+        project().set_picture('team', tid, f'kit{kind}_{part}', _png_of(data) if data else None)
+    if config is None:
+        for part in KIT_PARTS:
+            project().set_picture('team', tid, f'kit{kind}_{part}', None)
+    project().set_kit(tid, kind, config)
+    with db() as con:
+        return _team(con, tid)
+
+
+@app.get('/api/kit-fonts')
+def kit_fonts():
+    with db() as con:
+        return queries.kit_fonts(con)
+
+
+@app.get('/api/kit-models')
+def kit_models():
+    with db() as con:
+        return {'models': queries.kit_models(con)}
+
+
+def _hex(value: Optional[str], default) -> list[int]:
+    try:
+        return [int(value[i:i + 2], 16) for i in (0, 2, 4)] if value and len(value) == 6 else list(default)
+    except ValueError:
+        return list(default)
+
+
+def _png_response(img, size: Optional[int], cache: str = 'no-cache'):
+    if size:
+        img = images.thumbnail(img, min(max(size, 16), 1024))
+    return Response(images.png(img), media_type='image/png', headers={'Cache-Control': cache})
+
+
+@app.get('/api/image/kitmodel/{model}')
+def kit_model_image(model: int, c1: Optional[str] = None, c2: Optional[str] = None, part: str = 'mini',
+                    size: Optional[int] = None):
+    """A generic mask kit painted with two colors (hex RRGGBB): its minikit, or the jersey texture."""
+    if game.state != 'ready':
+        raise ApiError(409, 'game_not_ready')
+    files = game.files()
+    config = {'source': 'generic', 'model': model, 'colors': [_hex(c1, (255, 255, 255)), _hex(c2, (30, 30, 30))]}
+    if part == 'jersey':
+        data = files.read(teamkits.KIT_FILE.format(model, 0))
+        if data is None:
+            raise ApiError(404, 'not_found')
+        img = teamkits.paint_mask(teamkits.textures(data)['jersey'], *config['colors'])
+    else:
+        img = images.decode_dds(teamkits.minikit(files, config, 0, teamkits.MODEL_TEAM, None))
+    return _png_response(img, size, IMAGE_HEADERS['Cache-Control'])
+
+
+@app.get('/api/image/kit/{tid}/{kind}')
+def team_kit_image(tid: int, kind: int, part: str = 'mini', size: Optional[int] = None):
+    """A kit of a team as the patch makes it: the minikit (`part=mini`) or the jersey/shorts texture."""
+    if game.state != 'ready':
+        raise ApiError(409, 'game_not_ready')
+    with db() as con:
+        team = _team(con, tid)
+    kit = next((k for k in team['kits'] if k['kind'] == kind), None)
+    if kit is None:
+        raise ApiError(404, 'not_found')
+    files, p = game.files(), project()
+    template = team['template'] or tid
+    config = kit['config']
+    if config is None and kit['default'] == 'generic':
+        color = lambda n, default: team['saved'].get(f'teamcolor{n}') or team['values'].get(f'teamcolor{n}') or default  # noqa: E731
+        c1, c2 = color(1, [200, 200, 200]), color(2, [255, 255, 255])
+        defaults = {0: {'source': 'generic', 'model': teamkits.DEFAULT_MASKS[0], 'colors': [c1, c2]},
+                    1: {'source': 'generic', 'model': teamkits.DEFAULT_MASKS[1], 'colors': [c2, c1]},
+                    2: {'source': 'game', 'team': teamkits.GENERIC_GOALKEEPER, 'kind': 2}}
+        config = defaults[kind]
+    elif config is None and kit['default'] == 'game':
+        config = {'source': 'game', 'team': template if team['copied'] else tid, 'kind': kind}
+    if config is None:
+        raise ApiError(404, 'not_found')
+    pics = {}
+    for name in KIT_PARTS:
+        found = p.picture('team', tid, f'kit{kind}_{name}')
+        if found:
+            pics[name] = images.decode_png(found[0])
+    try:
+        if part == 'mini':
+            tint = config if config.get('colors') or 'jersey' not in pics else \
+                {**config, 'colors': [list(pics['jersey'].convert('RGB').resize((1, 1)).getpixel((0, 0)))]}
+            img = images.decode_dds(teamkits.minikit(files, tint, kind, template, pics.get('mini')))
+        elif config['source'] == 'upload':
+            img = pics.get(part if part in ('jersey', 'shorts') else 'jersey')
+            if img is None:
+                raise ApiError(404, 'not_found')
+        elif config['source'] == 'generic':
+            data = files.read(teamkits.KIT_FILE.format(config['model'], 0))
+            img = teamkits.paint_mask(teamkits.textures(data)['jersey' if part != 'shorts' else 'shorts'],
+                                      *config['colors'])
+        else:
+            data = files.read(teamkits.KIT_FILE.format(config['team'], config.get('kind', kind)))
+            img = teamkits.textures(data)['jersey' if part != 'shorts' else 'shorts']
+    except (FileNotFoundError, KeyError, TypeError, images.UNREADABLE) as e:
+        raise ApiError(404, 'not_found', str(e))
+    return _png_response(img, size)
 
 
 # ---- patch: build, install, uninstall -------------------------------------------------------------------------------

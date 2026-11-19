@@ -1,5 +1,5 @@
 import { hasMessage, translate } from '@/i18n'
-import type { Config, CountryDetail, CountryRow, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, NameTable, Options, Page, PlayerDetail, PlayerRow, Status, TeamDetail, TeamRow } from './types'
+import type { Config, CountryDetail, CountryRow, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, NameTable, Options, Page, PlayerDetail, PlayerRow, Status, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart } from './types'
 
 /** Error of the backend; `message` is in the interface language when the app knows its code. */
 export class ApiError extends Error {
@@ -75,6 +75,16 @@ export const api = {
   team: (id: number) => get<TeamDetail>(`/api/teams/${id}`),
   saveTeam: (id: number, names: NameTable, fields: Fields) => request<TeamDetail>('PUT', `/api/teams/${id}`, { names, fields }),
   resetTeam: (id: number) => request<TeamDetail>('DELETE', `/api/teams/${id}/edits`),
+  createTeam: (body: { names: NameTable; fields?: Fields; template?: number; copy?: boolean; copy_squad?: boolean }) =>
+    post<TeamDetail>('/api/teams', body),
+  deleteTeam: (id: number) => request<{ deleted: number }>('DELETE', `/api/teams/${id}`),
+  saveTeamRoster: (id: number, rows: SquadRow[] | null) => request<TeamDetail>('PUT', `/api/teams/${id}/roster`, { rows }),
+  uploadTeamCrest: (id: number, data: string) => request<TeamDetail>('PUT', `/api/teams/${id}/crest`, { data }),
+  removeTeamCrest: (id: number) => request<TeamDetail>('DELETE', `/api/teams/${id}/crest`),
+  saveTeamKit: (id: number, kind: number, config: KitConfig | null, pictures: Partial<Record<KitPart, string | null>>) =>
+    request<TeamDetail>('PUT', `/api/teams/${id}/kits/${kind}`, { config, pictures }),
+  kitModels: () => get<{ models: number[] }>('/api/kit-models'),
+  kitFonts: () => get<KitFonts>('/api/kit-fonts'),
   saveLeague: (id: number, names: NameTable, fields: Fields) => request<LeagueDetail>('PUT', `/api/leagues/${id}`, { names, fields }),
   resetLeague: (id: number) => request<LeagueDetail>('DELETE', `/api/leagues/${id}/edits`),
   createLeague: (names: NameTable, fields: Fields) => post<LeagueDetail>('/api/leagues', { names, fields }),

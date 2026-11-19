@@ -37,6 +37,9 @@ export interface Job {
   done: number
   result: Record<string, unknown> | null
   error: string | null
+  /** A limit of the game the build hit (buildError.<code> in the dictionaries). */
+  code?: string | null
+  detail?: string | null
 }
 
 export interface Status {
@@ -138,6 +141,10 @@ export interface TeamRow {
   edited: boolean
   /** Hidden by the project (Hide button). */
   hidden: boolean
+  /** Created in the project. */
+  is_new: boolean
+  /** When the user's crest picture was saved (null = none). */
+  own_crest: number | null
 }
 
 export interface PlayerRow {
@@ -195,6 +202,68 @@ export interface RosterRow {
   has_photo: boolean
 }
 
+/** One row of a squad being edited: lineup slot = a position code (starter), 28 = bench, 29 = out of the squad. */
+export interface SquadRow {
+  player: number
+  jersey: number | null
+  slot: number
+}
+
+/** One of the game's 33 formations: the position code of each of the 11 slots. */
+export interface Formation {
+  id: number
+  name: string
+  positions: number[]
+}
+
+/** Where a kit comes from: a kit of the game, the user's pictures, or one of the game's mask kits painted. */
+/** Name and numbers of a kit (teamkits columns; a value left out keeps the kit's own). */
+export interface KitPrint {
+  name_color?: number[]
+  number_color?: number
+  shorts_number_color?: number
+  front_number?: boolean
+  shorts_number?: boolean
+  show_name?: boolean
+  name_layout?: number
+  name_font?: number
+  number_font?: number
+  shorts_number_font?: number
+  collar?: number
+}
+
+interface KitExtras {
+  collar?: number
+  print?: KitPrint
+}
+
+export type KitConfig =
+  | ({ source: 'keep' } & KitExtras)
+  | ({ source: 'game'; team: number; kind: number } & KitExtras)
+  | ({ source: 'upload' } & KitExtras)
+  | ({ source: 'generic'; model: number; colors: number[][] } & KitExtras)
+
+/** The game's kit fonts: name fonts, number fonts with the colors each has, and the color each number color shows. */
+export interface KitFonts {
+  name: { id: number; name: string | null }[]
+  number: Record<string, number[]>
+  colors: { id: number; rgb: number[] }[]
+}
+
+export type KitPart = 'jersey' | 'shorts' | 'mini'
+
+export interface TeamKit {
+  kind: number
+  /** The user's choice; null = `default`. */
+  config: KitConfig | null
+  /** When each of the user's pictures was saved. */
+  pictures: Record<KitPart, number | null>
+  /** Without a choice: 'game' (the team's own, or the team it copies), 'generic' (a team made from scratch), null = none. */
+  default: 'game' | 'generic' | null
+  /** The name and numbers the kit has now (its teamkits row; collar included). */
+  print: KitPrint
+}
+
 export interface TeamDetail extends TeamRow, EditForm {
   db_name: string | null
   name_keys: string[]
@@ -202,7 +271,15 @@ export interface TeamDetail extends TeamRow, EditForm {
   original_names: NameTable
   saved_names: NameTable
   roster: RosterRow[]
+  roster_changed: boolean
   leagues: Ref[]
+  /** A created team: the game team it starts from. */
+  template: number | null
+  /** The crest and kits come from the game (the team's own, or the team a created one copies). */
+  copied: boolean
+  formations: Formation[]
+  kits: TeamKit[]
+  max_squad: number
   raw: Raw
 }
 

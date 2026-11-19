@@ -9,7 +9,11 @@ The patch never holds the big archives themselves.
 import os
 import shutil
 
-from . import bh, fields, fifa14, flags, images, t3db
+import re
+
+from PIL import Image
+
+from . import bh, fields, fifa14, flags, images, t3db, teamkits
 from .big import BigArchive, normalize, rebuild
 from .dbedit import Database, LanguageStrings, Table
 from .gamefs import DATABASE, GameFiles
@@ -90,6 +94,8 @@ DERIVED_NAMES = {
     'league': {'abbr15': lambda t: t[:15].strip(), 'abbr': lambda t: _initials(t, 4), 'trophy': lambda t: t,
                'trophy_abbr15': lambda t: t[:15].strip()},
     'country': {'abbr3': lambda t: _initials(t, 3) if len(t.split()) > 2 else t[:3].upper()},
+    'team': {'abbr15': lambda t: t[:15].strip(), 'abbr10': lambda t: t[:10].strip(), 'abbr7': lambda t: t[:7].strip(),
+             'abbr3': lambda t: _initials(t, 3) if len(t.split()) > 1 else t[:3].upper(), 'commentary': lambda t: t},
 }
 
 
@@ -427,20 +433,274 @@ def created_pictures(files: GameFiles, project: Project, builder: 'PatchBuilder'
     return count
 
 
+# ---- teams (test TN1) ----------------------------------------------------------------------------------------------
+
+TEAM_COPIED_FILES = re.compile(r'data/sceneassets/(?:warmup|warmup/tra|adboard|banner|flag)/')  # copied from the model
+TEAM_LOOKS = re.compile(r'data/(?:sceneassets/kit/|ui/imgassets/(?:crest|crest16x16|crest32x32|crest50x50|kits)/)')
+STARTERS = 11
+BENCH, RESERVE = 28, 29  # teamplayerlinks.position of a substitute and of a player out of the squad
+
+
+def _team_source(project: Project, tid: int) -> tuple[int, bool]:
+    return project.team_source(tid) or (teamkits.MODEL_TEAM, False)
+
+
+def _next(table, column: str) -> int:
+    if not _has(table, column):
+        return 0
+    return max((table.get(r, column) for r in table.records), default=0) + 1
+
+
+def _clone(table, row, **values) -> list:
+    new = list(row)
+    for column, value in values.items():
+        if _has(table, column):
+            table.set(new, column, value)
+    table.records.append(new)
+    return new
+
+
+def add_created_teams(db: Database, project: Project) -> int:
+    """Rows of the teams the user created: a copy of the model team's rows (team, stadium, Rest of World link,
+    formation, kits of year 0) under the new id; the squad comes from write_rosters (or the model's, when copied)."""
+    created = project.created('team')
+    if not created:
+        return 0
+    teams, kits, formations = db.table('teams'), db.table('teamkits'), db.table('formations')
+    stadiums, row_links = _table(db, 'teamstadiumlinks'), _table(db, 'rowteamnationlinks')
+    links = db.table('teamplayerlinks')
+    for tid in created:
+        if teams.find(teamid=tid):
+            raise BuildError('team_id_taken', str(tid))
+        template, copy = _team_source(project, tid)
+        if not copy and not project.roster(tid):
+            raise BuildError('team_too_few_players', str(tid))
+        rows = teams.find(teamid=template) or teams.find(teamid=teamkits.MODEL_TEAM)
+        name = _shown_name(project.names('team', tid)) or f'Team {tid}'
+        _clone(teams, rows[0], teamid=tid, assetid=tid, teamname=name[:30])
+        for table in (stadiums, row_links):
+            if table is not None and table.find(teamid=template):
+                _clone(table, table.find(teamid=template)[0], teamid=tid)
+        own = formations.find(teamid=template)
+        if own:
+            _clone(formations, own[0], teamid=tid, formationid=_next(formations, 'formationid'))
+        for r in [r for r in kits.records if kits.get(r, 'teamtechid') == template and kits.get(r, 'year') == 0]:
+            _clone(kits, r, teamtechid=tid, teamkitid=_next(kits, 'teamkitid'))
+        if copy and project.roster(tid) is None:  # the copied team's squad (the players are in both teams)
+            key = _next(links, 'artificialkey')
+            for r in [r for r in links.records if links.get(r, 'teamid') == template]:
+                _clone(links, r, teamid=tid, artificialkey=key)
+                key += 1
+    return len(created)
+
+
+def write_formations(db: Database, project: Project) -> int:
+    """The formation each team got (field `formation` = one of the game's 33): its own row takes the positions."""
+    formations, teams = db.table('formations'), db.table('teams')
+    generic = {formations.get(r, 'relativeformationid'): r for r in formations.records
+               if formations.get(r, 'teamid') == -1}
+    count = 0
+    for tid, values in project.all_fields('team').items():
+        chosen = generic.get(values.get('formation'))
+        if chosen is None or not teams.find(teamid=tid):
+            continue
+        own = formations.find(teamid=tid)
+        if own:
+            for f in formations.fields:
+                if f.name not in ('teamid', 'formationid'):
+                    formations.set(own[0], f.name, formations.get(chosen, f.name))
+        else:
+            _clone(formations, chosen, teamid=tid, formationid=_next(formations, 'formationid'))
+        count += 1
+    return count
+
+
+def lineup(rows: list[dict], positions: list[int]) -> list[dict]:
+    """The squad (at most MAX_SQUAD: the rest stays out of the patch) with one starter in each slot of the
+    formation: a starter whose slot the formation has keeps it; the other starters take the free slots in order;
+    with fewer than 11 starters the next players step up. A starter left without a slot goes to the bench."""
+    rows = [dict(r, slot=r.get('slot', RESERVE)) for r in rows][:fifa14.MAX_SQUAD]
+    free = list(positions)
+    placed = set()
+    for i, r in enumerate(rows):
+        if r['slot'] < BENCH and r['slot'] in free:
+            free.remove(r['slot'])
+            placed.add(i)
+    for wanted in (lambda r: r['slot'] < BENCH, lambda r: True):  # other starters first, then anyone
+        for i, r in enumerate(rows):
+            if free and i not in placed and wanted(r):
+                r['slot'] = free.pop(0)
+                placed.add(i)
+    for i, r in enumerate(rows):
+        if i not in placed and r['slot'] < BENCH:
+            r['slot'] = BENCH
+    return rows
+
+
+def write_rosters(db: Database, project: Project) -> int:
+    """The squad of every team whose squad the user changed: its teamplayerlinks rows replaced (jersey number and
+    lineup slot); a captain or taker outside the new squad becomes its last starter."""
+    rosters = project.all_rosters()
+    if not rosters:
+        return 0
+    teams, links, formations = db.table('teams'), db.table('teamplayerlinks'), db.table('formations')
+    count = 0
+    for tid, rows in rosters.items():
+        team_rows = teams.find(teamid=tid)
+        if not team_rows:
+            continue
+        own = formations.find(teamid=tid)
+        positions = [formations.get(own[0], f'position{i}') for i in range(STARTERS)] if own else list(range(STARTERS))
+        rows = lineup(rows, positions)
+        if len(rows) < STARTERS:
+            raise BuildError('team_too_few_players', str(tid))
+        model = next((r for r in links.records if links.get(r, 'teamid') == tid), links.records[0])
+        keep = [i for i, r in enumerate(links.records) if links.get(r, 'teamid') != tid]
+        raws = links.raw_records + [bytes(links.rec_size)] * (len(links.records) - len(links.raw_records))
+        links.records, links.raw_records = [links.records[i] for i in keep], [raws[i] for i in keep]
+        key = _next(links, 'artificialkey')
+        for r in rows:
+            new = list(model)
+            for f in links.fields:  # the counters of a new link start at zero
+                if f.type == 3 and f.name not in ('teamid', 'playerid', 'artificialkey', 'position', 'jerseynumber'):
+                    links.set(new, f.name, max(0, f.rangelow))
+            for column, value in (('teamid', tid), ('playerid', r['player']), ('artificialkey', key),
+                                  ('position', r['slot']), ('jerseynumber', r.get('jersey') or 0),
+                                  ('form', 3), ('prevform', 3)):
+                if _has(links, column):
+                    links.set(new, column, value)
+            links.records.append(new)
+            links.raw_records.append(bytes(links.rec_size))
+            key += 1
+        squad = {r['player'] for r in rows}
+        starters = [r['player'] for r in rows if r['slot'] < BENCH]
+        for column in ('captainid', *fifa14.TAKERS.values()):
+            if _has(teams, column) and teams.get(team_rows[0], column) not in squad:
+                teams.set(team_rows[0], column, starters[-1])
+        count += 1
+    return count
+
+
+def _picture(project: Project, kind: str, oid: int, slot: str) -> Image.Image | None:
+    found = project.picture(kind, oid, slot)
+    return images.decode_png(found[0]) if found else None
+
+
+def _team_color(db: Database, project: Project, tid: int, n: int) -> list[int]:
+    saved = project.fields('team', tid).get(f'teamcolor{n}')
+    if saved:
+        return list(saved)
+    teams = db.table('teams')
+    rows = teams.find(teamid=tid)
+    return [teams.get(rows[0], f'teamcolor{n}{c}') for c in 'rgb'] if rows else [128, 128, 128]
+
+
+def _renamed(name: str, old: int, new: int) -> str | None:
+    """The file name of team `old` with the id of team `new`; None when the name is not one of `old`'s."""
+    if not re.search(rf'(?:^|_|^l){old}(?=[_.])', name):
+        return None
+    return re.sub(rf'(?<!\d){old}(?!\d)', str(new), name, count=1)
+
+
+def team_files(files: GameFiles, db: Database, project: Project, builder: 'PatchBuilder') -> dict:
+    """Crest, kit and minikit files of the teams the user changed or created, and the model's other files (warm-up,
+    banners, flags, adboards) for a created team; kit colors and collar go into its teamkits rows."""
+    created = set(project.created('team'))
+    all_kits = project.all_kits()
+    teams = created | set(project.with_picture('team', 'crest')) | set(all_kits)
+    teams = {t for t in teams if db.table('teams').find(teamid=t)}
+    if not teams:
+        return {}
+    kits_table = db.table('teamkits')
+    listed = [p for p in files.list('data/') if TEAM_COPIED_FILES.match(p) or TEAM_LOOKS.match(p)] if created else []
+    counts = {'crests': 0, 'kits': 0, 'copied': 0}
+    for tid in sorted(teams):
+        template, copy = _team_source(project, tid) if tid in created else (tid, True)
+        if tid in created:  # the model's files under the new id (and its crest and kits when the team is a copy)
+            for path in listed:
+                if TEAM_LOOKS.match(path) and not copy:
+                    continue
+                folder, name = path.rsplit('/', 1)
+                new_name = _renamed(name, template, tid)
+                if new_name:
+                    builder.put(f'{folder}/{new_name}', files.read(path))
+                    counts['copied'] += 1
+        crest = _picture(project, 'team', tid, 'crest')
+        if crest is None and tid in created and not copy:
+            names = with_derived_names('team', project.names('team', tid))
+            crest = teamkits.plain_crest(_shown_name(names, 'abbr3'), _team_color(db, project, tid, 1),
+                                         _team_color(db, project, tid, 2))
+        if crest is not None:
+            for path, data in teamkits.crest_files(files, crest, tid, template).items():
+                builder.put(path, data)
+            counts['crests'] += 1
+        else:
+            game_crest = files.read(teamkits.CREST_FILE.format('crest', template))
+            crest = images.decode_dds(game_crest) if game_crest is not None else None
+        configs = dict(all_kits.get(tid, {}))
+        if tid in created and not copy:  # made from scratch: generic kits until the user picks others
+            c1, c2 = _team_color(db, project, tid, 1), _team_color(db, project, tid, 2)
+            defaults = {0: {'source': 'generic', 'model': teamkits.DEFAULT_MASKS[0], 'colors': [c1, c2]},
+                        1: {'source': 'generic', 'model': teamkits.DEFAULT_MASKS[1], 'colors': [c2, c1]},
+                        2: {'source': 'game', 'team': teamkits.GENERIC_GOALKEEPER, 'kind': 2}}
+            for kind, default in defaults.items():
+                own = configs.get(kind)
+                if own is None or own.get('source') == 'keep':  # 'keep' = the default kit with the user's print
+                    configs[kind] = {**default, **{k: v for k, v in (own or {}).items() if k != 'source'}}
+        kit_rows = {kits_table.get(r, 'teamkittypetechid'): r for r in kits_table.records
+                    if kits_table.get(r, 'teamtechid') == tid and kits_table.get(r, 'year') == 0}
+        for kind, config in sorted(configs.items()):
+            pics = {name: p for name in ('jersey', 'shorts')
+                    if (p := _picture(project, 'team', tid, f'kit{kind}_{name}')) is not None}
+            keep = config.get('source') == 'keep'  # only the name and numbers change
+            if not keep:
+                builder.put(teamkits.KIT_FILE.format(tid, kind),
+                            teamkits.kit_file(files, config, kind, template, crest, pics))
+            tint = config if config.get('colors') or 'jersey' not in pics else                 {**config, 'colors': [list(pics['jersey'].convert('RGB').resize((1, 1)).getpixel((0, 0)))]}
+            if not keep:
+                builder.put(teamkits.MINIKIT.format(kind, tid),
+                            teamkits.minikit(files, tint, kind, template,
+                                             _picture(project, 'team', tid, f'kit{kind}_mini')))
+            row = kit_rows.get(kind)
+            if row is None and keep:
+                continue  # nothing to print on: the team has no such kit
+            if row is None:  # a kit type the team did not have
+                model = kit_rows.get(0) or next((r for r in kits_table.records
+                                                 if kits_table.get(r, 'teamtechid') == template), kits_table.records[0])
+                row = _clone(kits_table, model, teamtechid=tid, teamkitid=_next(kits_table, 'teamkitid'),
+                             teamkittypetechid=kind, year=0)
+            for prefix, color in zip(('teamcolorprim', 'teamcolorsec'), config.get('colors') or []):
+                for c, v in zip('rgb', color):
+                    if _has(kits_table, f'{prefix}{c}'):
+                        kits_table.set(row, f'{prefix}{c}', int(v))
+            if config.get('collar') is not None and _has(kits_table, 'jerseycollargeometrytype'):
+                kits_table.set(row, 'jerseycollargeometrytype', int(config['collar']))
+            teamkits.apply_print(kits_table, row, config.get('print') or {})
+            counts['kits'] += 1
+    return counts
+
+
 def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') -> dict | None:
     """The database with the project's fields, created entities and league teams, loose (with its meta file)."""
-    has_created = bool(project.created('country') or project.created('league'))
+    has_created = bool(project.created('country') or project.created('league') or project.created('team'))
     hiding = any(project.hidden_in_game(kind) for kind in ('country', 'league', 'team'))
+    team_work = project.all_rosters() or project.all_kits() or project.with_picture('team', 'crest')
     if not any(project.all_fields(kind) for kind in ID_COLUMNS) and not has_created and not project.all_members() \
-            and not hiding:
+            and not hiding and not team_work:
         return None
     meta_raw, raw = files.read(fifa14.META), files.read(DATABASE)
     if meta_raw is None or raw is None:
         raise ValueError('database not found')
     db = Database(raw, t3db.load_meta(meta_raw))
     created = add_created(db, project)
+    if new_teams := add_created_teams(db, project):
+        created['team'] = new_teams
     result = apply_database(db, project)
     result['created'] = created
+    for key, value in (('formations', write_formations(db, project)), ('rosters', write_rosters(db, project)),
+                       ('team_files', team_files(files, db, project, builder))):
+        if value:
+            result[key] = value
     result['league_links'] = write_members(db, project)
     visibility = write_visibility(db, project)
     if visibility:

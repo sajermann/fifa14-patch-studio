@@ -113,6 +113,8 @@ class Jobs:
             except Exception as e:  # noqa: BLE001
                 log.exception('%s failed', kind)
                 job['state'], job['error'] = 'error', f'{type(e).__name__}: {e}'
+                # a limit of the game (builder.BuildError): the interface shows its own message
+                job['code'], job['detail'] = getattr(e, 'code', None), getattr(e, 'detail', None)
         threading.Thread(target=run, daemon=True).start()
         return dict(job)
 

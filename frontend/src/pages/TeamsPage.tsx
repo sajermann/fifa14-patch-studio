@@ -1,9 +1,15 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Plus } from 'lucide-react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { Button } from '@/components/ui/button'
+import { NewTeamDialog, type NewTeam } from '@/components/team/NewTeamDialog'
 import { useFrom } from '@/lib/back'
+import { toast } from '@/lib/notify'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
 import { OriginalBadge, OverallBadge } from '@/components/common/detail'
-import { HiddenByProjectBadge } from '@/components/common/HideButton'
+import { HiddenByProjectBadge, OutOfPatchBadge } from '@/components/common/HideButton'
 import { cn } from '@/lib/utils'
 import { ColorDot, Crest } from '@/components/common/pictures'
 import { useI18n } from '@/i18n'
@@ -19,6 +25,25 @@ export function TeamsPage() {
   const list = useListState(FILTERS)
   const { data, isFetching } = useList('teams', list.request, api.teams)
   const options = useOptions().data
+  const qc = useQueryClient()
+  const [creating, setCreating] = useState(false)
+  const create = useMutation({
+    mutationFn: (n: NewTeam) =>
+      api.createTeam({
+        names: { full: { '*': n.name } },
+        fields: n.copyOf === null ? { teamcolor1: n.colors[0], teamcolor2: n.colors[1] } : {},
+        template: n.copyOf ?? undefined,
+        copy: n.copyOf !== null,
+        copy_squad: n.copySquad,
+      }),
+    onSuccess: (team) => {
+      for (const k of ['teams', 'options', 'status']) void qc.invalidateQueries({ queryKey: [k] })
+      setCreating(false)
+      toast.success(t('team.created'))
+      navigate(`/teams/${team.id}`, from)
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
   const sortState = {
     sort: list.sort,
     dir: list.dir,
@@ -33,7 +58,11 @@ export function TeamsPage() {
           <h1 className="text-2xl font-semibold">{t('teams.title')}</h1>
           <p className="text-sm text-muted-foreground">{t('teams.subtitle')}</p>
         </div>
+        <Button size="sm" onClick={() => setCreating(true)}>
+          <Plus /> {t('team.new')}
+        </Button>
       </div>
+      <NewTeamDialog open={creating} onOpenChange={setCreating} pending={create.isPending} onCreate={(n) => create.mutate(n)} />
       <FilterBar active={list.active} onClear={list.clear}>
         <SearchInput value={list.values.q} onChange={(v) => list.update({ q: v })} placeholder={t('teams.search')} />
         <FilterSelect
@@ -71,16 +100,16 @@ export function TeamsPage() {
         </TableHeader>
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
           {data?.items.map((tm) => (
-            <TableRow key={tm.id} className={cn('cursor-pointer', !tm.edited && 'text-muted-foreground')} onClick={() => navigate(`/teams/${tm.id}`, from)}>
+            <TableRow key={tm.id} className={cn('cursor-pointer', !tm.edited && !tm.is_new && 'text-muted-foreground')} onClick={() => navigate(`/teams/${tm.id}`, from)}>
               <TableCell>
-                <Crest id={tm.id} size={64} available={tm.has_crest} className="size-8" />
+                <Crest id={tm.id} size={64} available={tm.has_crest} version={tm.own_crest} className="size-8" />
               </TableCell>
               <TableCell data-grow>
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-foreground">{tm.name}</span>
                   {tm.abbr3 && <span className="text-xs text-muted-foreground">{tm.abbr3}</span>}
-                  <OriginalBadge edited={tm.edited} />
-                  {tm.hidden && <HiddenByProjectBadge label={t('teams.hiddenByProject')} />}
+                  <OriginalBadge edited={tm.edited} isNew={tm.is_new} />
+                  {tm.hidden && (tm.is_new ? <OutOfPatchBadge /> : <HiddenByProjectBadge label={t('teams.hiddenByProject')} />)}
                 </div>
                 {tm.abbr15 && tm.abbr15 !== tm.name && <div className="text-xs text-muted-foreground">{tm.abbr15}</div>}
               </TableCell>

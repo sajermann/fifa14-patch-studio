@@ -5,6 +5,7 @@ import math
 import sqlite3
 
 from f14mod import catalog, fields, fifa14
+from f14mod.teamkits import MASKS, MODEL_TEAM
 
 PAGE_SIZES = (25, 50, 100)
 DEFAULT_PAGE_SIZE = 50
@@ -35,6 +36,30 @@ VIEWS = [
         SELECT c.id, {_saved_sql('league', 'c', 'leaguename')}, {_saved_sql('league', 'c', 'countryid')},
                COALESCE({_saved_sql('league', 'c', 'level')}, 1), 0, '', '{{}}', 1
         FROM p.created c WHERE c.kind = 'league'""",
+    # a created team shows the values of the team it starts from (its row is a copy of that one in the patch)
+    f"""CREATE TEMP VIEW v_teams AS
+        SELECT id, db_name, overall, attack, midfield, defense, color, national_of, has_crest, search, raw,
+               0 AS is_new FROM teams
+        UNION ALL
+        SELECT c.id, COALESCE(
+                   (SELECT text FROM p.team_names WHERE team_id = c.id AND key = 'full' AND lang = '*'),
+                   (SELECT text FROM p.team_names WHERE team_id = c.id AND key = 'full' ORDER BY lang LIMIT 1),
+                   'Team ' || c.id),
+               t.overall, t.attack, t.midfield, t.defense,
+               COALESCE({_saved_sql('team', 'c', 'teamcolor1')}, t.color), NULL, 1, '', t.raw, 1
+        FROM p.created c LEFT JOIN p.team_sources s ON s.team_id = c.id
+             LEFT JOIN teams t ON t.id = COALESCE(s.template, {MODEL_TEAM})
+        WHERE c.kind = 'team'""",
+    # squads: the game's, a squad the user set (whole), and the model's squad of a created copy not changed yet
+    """CREATE TEMP VIEW v_team_players AS
+        SELECT team_id, player_id, jersey, position, 0 AS ord FROM team_players
+        WHERE team_id NOT IN (SELECT team_id FROM p.team_rosters_set)
+        UNION ALL
+        SELECT team_id, player_id, jersey, slot, ord FROM p.team_rosters
+        UNION ALL
+        SELECT s.team_id, tp.player_id, tp.jersey, tp.position, 0 FROM p.team_sources s
+            JOIN team_players tp ON tp.team_id = s.template
+        WHERE s.copy = 1 AND s.team_id NOT IN (SELECT team_id FROM p.team_rosters_set)""",
     """CREATE TEMP VIEW v_league_teams AS
         SELECT league_id, team_id, 0 AS ord FROM league_teams
         WHERE league_id NOT IN (SELECT league_id FROM p.league_members_set)
@@ -42,7 +67,11 @@ VIEWS = [
         SELECT league_id, team_id, ord FROM p.league_members""",
 ]
 
-TEAM_NAME_KEYS = list(fifa14.TEAM_NAME_STRINGS)  # full, abbr15, abbr10, abbr7, abbr3, commentary
+TEAM_NAME_KEYS = list(fifa14.TEAM_NAME_STRINGS)
+# 0 home, 1 away, 2 goalkeeper, 3 third; 4, 5, 7, 8 = more outfield kits, named "Alternate" in the kit selection
+# (tests GK1/GK2); type 6 shows "undefined" (the game has no name for it), 9 and 10 were not tested
+KIT_KINDS = (0, 1, 2, 3, 4, 5, 7, 8)
+MAIN_KITS = (0, 1, 2, 3)  # always listed; the others only when the team has them  # full, abbr15, abbr10, abbr7, abbr3, commentary
 LEAGUE_NAME_KEYS = list(fifa14.LEAGUE_NAME_STRINGS)
 
 
@@ -190,11 +219,12 @@ def teams(con, lang: str, q='', league: int | None = None, edited: bool | None =
                  {_team_name('abbr3')} AS abbr3, t.overall, t.attack, t.midfield, t.defense, t.color, t.has_crest,
                  t.national_of, {_first_league()} AS league_id,
                  (SELECT {_league_name('l')} FROM v_leagues l WHERE l.id = {_first_league()}) AS league,
-                 (SELECT COUNT(*) FROM team_players WHERE team_id = t.id) AS player_count,
+                 (SELECT COUNT(*) FROM v_team_players WHERE team_id = t.id) AS player_count,
                  {_edited('team', 't')} AS edited,
-                 {_flag('hidden', 'team', 't')} AS hidden,
+                 {_flag('hidden', 'team', 't')} AS hidden, t.is_new,
+                 (SELECT updated_at FROM p.pictures WHERE kind = 'team' AND id = t.id AND slot = 'crest') AS own_crest,
                  t.search AS search
-                 FROM teams t"""
+                 FROM v_teams t"""
     where = []
     if only is not None:
         params['only'] = only
@@ -211,31 +241,32 @@ def teams(con, lang: str, q='', league: int | None = None, edited: bool | None =
         where.append(_search("fold(name) || ' ' || fold(abbr15) || ' ' || search", q, params))
     sorts = {'name': 'fold(name)', 'id': 'id', 'overall': 'overall', 'league': 'fold(league)',
              'player_count': 'player_count'}
-    out = _page(con, select, where, params, sorts, sort, direction, ('name', 'asc'), page, size)
+    out = _page(con, select, where, params, sorts, sort, direction, ('name', 'asc'), page, size, new_first=True)
     for r in out['items']:
         r.pop('search', None)
         r['color'] = json.loads(r['color']) if r['color'] else None
         r['has_crest'] = bool(r['has_crest'])
         r['edited'] = bool(r['edited'])
         r['hidden'] = bool(r['hidden'])
+        r['is_new'] = bool(r['is_new'])
     return out
 
 
 def players(con, lang: str, q='', team: int | None = None, position: int | None = None, sort=None, direction=None,
             page=1, size=DEFAULT_PAGE_SIZE) -> dict:
     params: dict = {'lang': lang}
-    club = '(SELECT MIN(tp.team_id) FROM team_players tp JOIN teams x ON x.id = tp.team_id ' \
+    club = '(SELECT MIN(tp.team_id) FROM v_team_players tp JOIN v_teams x ON x.id = tp.team_id ' \
            'WHERE tp.player_id = pl.id AND x.national_of IS NULL)'
     select = f"""SELECT pl.id, {_player_name()} AS name, pl.overall, pl.potential, pl.position, pl.birthdate, pl.height,
                  pl.nationality, (SELECT {_country_name()} FROM v_nations n WHERE n.id = pl.nationality) AS nationality_name,
                  pl.has_photo, {club} AS team_id,
-                 (SELECT {_team_name('abbr15')} FROM teams t WHERE t.id = {club}) AS team,
+                 (SELECT {_team_name('abbr15')} FROM v_teams t WHERE t.id = {club}) AS team,
                  {_edited('player', 'pl')} AS edited, pl.search || ' ' || fold({_player_name()}) AS search_all
                  FROM players pl"""
     where = []
     if team is not None:
         params['team'] = team
-        where.append('id IN (SELECT player_id FROM team_players WHERE team_id = :team)')
+        where.append('id IN (SELECT player_id FROM v_team_players WHERE team_id = :team)')
     if position is not None:
         params['position'] = position
         where.append('position = :position')
@@ -288,16 +319,17 @@ def _form(con, kind: str, oid: int, raw: dict, names: dict | None = None) -> dic
 
 
 def team(con, lang: str, tid: int) -> dict | None:
-    row = con.execute('SELECT * FROM teams WHERE id = ?', (tid,)).fetchone()
+    row = con.execute('SELECT * FROM v_teams WHERE id = ?', (tid,)).fetchone()
     if not row:
         return None
     head = teams(con, lang, only=tid)['items'][0]
     saved = _project_names(con, 'team', tid)
-    raw = json.loads(row['raw'])
+    raw = json.loads(row['raw'] or '{}')
     roster = [dict(r) for r in con.execute(
-        f"""SELECT pl.id, {_player_name()} AS name, pl.overall, pl.position, tp.jersey, tp.position AS link_position, pl.has_photo
-           FROM team_players tp JOIN players pl ON pl.id = tp.player_id WHERE tp.team_id = ?
-           ORDER BY tp.position, pl.overall DESC""", (tid,))]
+        f"""SELECT pl.id, {_player_name()} AS name, pl.overall, pl.position, tp.jersey, tp.position AS link_position,
+                  pl.has_photo, tp.ord
+           FROM v_team_players tp JOIN players pl ON pl.id = tp.player_id WHERE tp.team_id = ?
+           ORDER BY tp.ord, tp.position, pl.overall DESC""", (tid,))]
     for r in roster:
         r['position_name'] = fifa14.position_name(r['position'])
         r['link_position_name'] = fifa14.position_name(r['link_position'])
@@ -305,9 +337,86 @@ def team(con, lang: str, tid: int) -> dict | None:
     leagues_of = [dict(r) for r in con.execute(
         f'SELECT l.id, {_league_name()} AS name, l.is_new FROM v_leagues l WHERE l.id IN '
         '(SELECT league_id FROM v_league_teams WHERE team_id = :tid)', {'lang': lang, 'tid': tid})]
+    source = con.execute('SELECT template, copy FROM p.team_sources WHERE team_id = ?', (tid,)).fetchone()
+    template = source['template'] if source else (MODEL_TEAM if head['is_new'] else tid)
+    copied = bool(source['copy']) if source else not head['is_new']
+    look_from = template if copied else None  # where the crest and kits come from when the user set none
+    form = _form(con, 'team', tid, raw)
+    own = con.execute('SELECT base FROM formations WHERE team_id = ? AND generic = 0', (template,)).fetchone()
+    form['values']['formation'] = own['base'] if own else None
     return {**head, 'db_name': row['db_name'], 'name_keys': TEAM_NAME_KEYS, 'languages': languages(con),
-            'original_names': _names(con, 'team', tid), 'saved_names': saved, 'roster': roster,
-            'leagues': leagues_of, **_form(con, 'team', tid, raw), 'raw': raw}
+            'original_names': {} if head['is_new'] else _names(con, 'team', tid), 'saved_names': saved,
+            'roster': roster, 'roster_changed': con.execute(
+                'SELECT 1 FROM p.team_rosters_set WHERE team_id = ?', (tid,)).fetchone() is not None,
+            'leagues': leagues_of, 'template': template if head['is_new'] else None, 'copied': copied,
+            'formations': formations(con), 'kits': team_kits(con, tid, look_from, bool(head['is_new'])),
+            'max_squad': fifa14.MAX_SQUAD, **form, 'raw': raw}
+
+
+def formations(con) -> list[dict]:
+    """The game's 33 formations: {id, name, positions (11 position codes)}."""
+    return [{'id': r['formation_id'], 'name': r['name'], 'positions': json.loads(r['positions'])}
+            for r in con.execute('SELECT * FROM formations WHERE generic = 1 ORDER BY name, formation_id')]
+
+
+def team_kits(con, tid: int, look_from: int | None, is_new: bool) -> list[dict]:
+    """Each kit type of a team: the user's choice (`config`, with which pictures it has) or where it comes from
+    without one: the game's file of the team (or of the team it copies), or, for a team made from scratch, the
+    default generic kit."""
+    saved = {r['kind']: json.loads(r['config']) for r in con.execute(
+        'SELECT kind, config FROM p.team_kits WHERE team_id = ?', (tid,))}
+    pictures = {r['slot']: r['updated_at'] for r in con.execute(
+        "SELECT slot, updated_at FROM p.pictures WHERE kind = 'team' AND id = ? AND slot LIKE 'kit%'", (tid,))}
+    game_kinds = {r[0] for r in con.execute('SELECT kind FROM team_kits WHERE team_id = ?', (look_from or tid,))} \
+        if look_from or not is_new else set()
+    # the name and numbers the kit has now: its teamkits row (a created team's are its model's; a kit type the team
+    # lacks starts from its home kit's)
+    source = con.execute('SELECT template FROM p.team_sources WHERE team_id = ?', (tid,)).fetchone()
+    row_of = tid if not is_new else (source[0] if source else MODEL_TEAM)
+    prints = {r['kind']: json.loads(r['print']) for r in con.execute(
+        'SELECT kind, print FROM kit_print WHERE team_id = ?', (row_of,))}
+    out = []
+    for kind in KIT_KINDS:
+        own = {part: pictures.get(f'kit{kind}_{part}') for part in ('jersey', 'shorts', 'mini')}
+        current = prints.get(kind) or prints.get(0) or {}
+        if kind in saved:
+            out.append({'kind': kind, 'config': saved[kind], 'pictures': own, 'default': None, 'print': current})
+        elif kind in game_kinds:
+            out.append({'kind': kind, 'config': None, 'pictures': own, 'default': 'game', 'print': current})
+        elif is_new and not look_from and kind in (0, 1, 2):
+            out.append({'kind': kind, 'config': None, 'pictures': own, 'default': 'generic', 'print': current})
+        elif kind in MAIN_KITS:
+            out.append({'kind': kind, 'config': None, 'pictures': own, 'default': None, 'print': current})
+    return out
+
+
+def kit_fonts(con) -> dict:
+    """The game's name fonts ({id, name}), number fonts ({font: [colors]}) and the color each number color shows."""
+    out: dict = {'name': [], 'number': {}, 'colors': []}
+    for r in con.execute('SELECT * FROM kit_fonts ORDER BY kind, font, color'):
+        if r['kind'] == 'name':
+            out['name'].append({'id': r['font'], 'name': r['name']})
+        else:
+            out['number'].setdefault(r['font'], []).append(r['color'])
+            if r['font'] == 1 and r['ink']:
+                out['colors'].append({'id': r['color'], 'rgb': json.loads(r['ink'])})
+    return out
+
+
+def kit_models(con) -> list[int]:
+    """The game's generic mask kits (red = color 1, green = color 2)."""
+    return [r[0] for r in con.execute('SELECT team_id FROM team_kits WHERE kind = 0 AND team_id BETWEEN ? AND ? '
+                                      'ORDER BY team_id', (MASKS.start, MASKS.stop - 1))]
+
+
+def free_team_id(con, first: int = 131001) -> int:
+    """The first team id the game and the project do not use (nor any file named after it)."""
+    used = {r[0] for r in con.execute('SELECT id FROM v_teams')} | {r[0] for r in con.execute(
+        'SELECT team_id FROM team_kits WHERE team_id >= ?', (first,))}
+    tid = first
+    while tid in used:
+        tid += 1
+    return tid
 
 
 def league(con, lang: str, lid: int) -> dict | None:
@@ -356,7 +465,7 @@ def player(con, lang: str, pid: int) -> dict | None:
     names = {k: row[k] for k in ('first', 'last', 'common', 'jersey_name') if row[k]}
     links = [dict(r) for r in con.execute(
         f"""SELECT t.id, {_team_name('abbr15')} AS name, tp.jersey, tp.position, t.national_of
-            FROM team_players tp JOIN teams t ON t.id = tp.team_id WHERE tp.player_id = :pid""",
+            FROM v_team_players tp JOIN v_teams t ON t.id = tp.team_id WHERE tp.player_id = :pid""",
         {'lang': lang, 'pid': pid})]
     for r in links:
         r['position_name'] = fifa14.position_name(r['position'])

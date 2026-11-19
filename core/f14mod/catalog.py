@@ -7,14 +7,15 @@ when the game's database or language archive changes.
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import time
 import unicodedata
 
-from . import fifa14, installer, t3db
+from . import fifa14, installer, kitfonts, t3db, teamkits
 from .gamefs import DATABASE, GameFiles
 
-SCHEMA_VERSION = 2  # 2: country names and flags
+SCHEMA_VERSION = 4  # 2: country names and flags; 3: formations and the kit files of each team; 4: kit print, fonts
 LOCALE = 'data/loc/locale.big'
 
 SCHEMA = """
@@ -32,6 +33,11 @@ CREATE TABLE players (id INTEGER PRIMARY KEY, name TEXT, first TEXT, last TEXT, 
                       height INTEGER, has_photo INTEGER, search TEXT, raw TEXT);
 CREATE TABLE team_players (team_id INTEGER, player_id INTEGER, jersey INTEGER, position INTEGER,
                            PRIMARY KEY (team_id, player_id));
+CREATE TABLE formations (team_id INTEGER, formation_id INTEGER, generic INTEGER, base INTEGER, name TEXT,
+                         positions TEXT, PRIMARY KEY (team_id, formation_id));
+CREATE TABLE team_kits (team_id INTEGER, kind INTEGER, PRIMARY KEY (team_id, kind));
+CREATE TABLE kit_print (team_id INTEGER, kind INTEGER, print TEXT, PRIMARY KEY (team_id, kind));
+CREATE TABLE kit_fonts (kind TEXT, font INTEGER, color INTEGER, name TEXT, ink TEXT, PRIMARY KEY (kind, font, color));
 CREATE INDEX names_lookup ON names (kind, key, lang, id);
 CREATE INDEX team_players_player ON team_players (player_id);
 CREATE INDEX league_teams_team ON league_teams (team_id);
@@ -158,6 +164,34 @@ def build(game_dir: str, path: str, progress=None) -> str:
     con.executemany('INSERT OR IGNORE INTO team_players VALUES (?,?,?,?)', [
         (ln['teamid'], ln['playerid'], ln.get('jerseynumber'), ln.get('position'))
         for links in src.team_links.values() for ln in links])
+    # formations: the 33 generic ones (teamid -1, `relativeformationid` 1-33) and each team's own (a copy of one)
+    # base = which of the 33 generic ones the row is (or was copied from)
+    con.executemany('INSERT OR IGNORE INTO formations VALUES (?,?,?,?,?,?)', [
+        (r['teamid'], r['relativeformationid'] if r['teamid'] == -1 else r['formationid'], int(r['teamid'] == -1),
+         r.get('relativeformationid'), r.get('formationname'), json.dumps([r.get(f'position{i}') for i in range(11)]))
+        for r in src.rows('formations')])
+    kit_rows = set()
+    for kit_path in files.list('data/sceneassets/kit/kit_'):
+        m = re.match(r'data/sceneassets/kit/kit_(\d+)_(\d+)_0\.rx3$', kit_path)
+        if m:
+            kit_rows.add((int(m.group(1)), int(m.group(2))))
+    con.executemany('INSERT INTO team_kits VALUES (?,?)', sorted(kit_rows))
+    # name and numbers of each current kit (year 0), and the fonts the game has: a name font per .ttf (its family
+    # name), a number font per (font, color) file (the color the digits really show)
+    con.executemany('INSERT OR IGNORE INTO kit_print VALUES (?,?,?)', [
+        (r['teamtechid'], r['teamkittypetechid'], json.dumps(teamkits.print_of(r)))
+        for r in src.rows('teamkits') if r.get('year', 0) == 0])
+    fonts = []
+    for font_path in files.list('data/sceneassets/jerseyfonts/'):
+        m = re.search(r'font_(\d+)\.ttf$', font_path)
+        if m:
+            fonts.append(('name', int(m.group(1)), 0, kitfonts.family_name(files.read(font_path) or b''), None))
+    for font_path in files.list('data/sceneassets/kitnumbers/'):
+        m = re.search(r'kitnumbers_(\d+)_(\d+)\.rx3$', font_path)
+        if m:
+            ink = kitfonts.ink_color(files.read(font_path) or b'') if m.group(1) == '1' else None
+            fonts.append(('number', int(m.group(1)), int(m.group(2)), None, json.dumps(ink) if ink else None))
+    con.executemany('INSERT OR IGNORE INTO kit_fonts VALUES (?,?,?,?,?)', fonts)
     con.executemany('INSERT INTO meta VALUES (?,?)', [
         ('fingerprint', key), ('schema', str(SCHEMA_VERSION)), ('built_at', str(int(time.time()))),
         ('game_dir', files.root), ('database_from', src.database_source or '')])

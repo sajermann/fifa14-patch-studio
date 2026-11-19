@@ -1,53 +1,122 @@
-import { useQuery } from '@tanstack/react-query'
-import { Link, useParams } from 'react-router-dom'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Loader2, Trash2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api } from '@/api/client'
+import type { KitPart, SquadRow, TeamDetail } from '@/api/types'
 import { Facts, OriginalBadge, OverallBadge, RawTable, Section } from '@/components/common/detail'
 import { EditActions, FieldsEditor, NamesEditor, useEntityForm } from '@/components/common/edit'
 import { HideButton, OutOfPatchBadge, usePendingHide } from '@/components/common/HideButton'
-import { ColorDot, Crest, Photo } from '@/components/common/pictures'
+import { Crest } from '@/components/common/pictures'
+import { TeamCrest } from '@/components/team/TeamCrest'
+import { TeamKits } from '@/components/team/TeamKits'
+import { TeamSquad } from '@/components/team/TeamSquad'
+import { RESERVE, type PendingKit, type PendingPicture } from '@/components/team/pending'
 import { LoadingBlock } from '@/components/layout/LoadingBlock'
 import { useI18n } from '@/i18n'
 import { BackButton, useBack, useFrom, useTabParam } from '@/lib/back'
+import { toast } from '@/lib/notify'
 import { useToken } from '@/state/queries'
 
-const TABS = ['names', 'data', 'roster', 'raw'] as const
+const TABS = ['names', 'data', 'crest', 'kits', 'roster', 'raw'] as const
+
+const savedSquad = (team: TeamDetail | undefined): SquadRow[] =>
+  (team?.roster ?? []).map((p) => ({ player: p.id, jersey: p.jersey, slot: p.link_position ?? RESERVE }))
+
+const sameSquad = (a: SquadRow[], b: SquadRow[]) =>
+  a.length === b.length && a.every((r, i) => r.player === b[i].player && r.jersey === b[i].jersey && r.slot === b[i].slot)
 
 export function TeamPage() {
   const { t } = useI18n()
   const id = Number(useParams().id)
   const token = useToken()
+  const navigate = useNavigate()
+  const qc = useQueryClient()
   const queryKey = ['team', token, id]
   const { data: team, isLoading } = useQuery({ queryKey, queryFn: () => api.team(id), enabled: !!token })
   const tabs = useTabParam(TABS[0])
   const from = useFrom(team?.name ?? { key: 'nav.teams' })
   const back = useBack({ to: '/teams', label: { key: 'nav.teams' } })
   const hide = usePendingHide(team?.hidden)
+  const [deleting, setDeleting] = useState(false)
+  // not saved yet: Save sends them with the names and fields
+  const [pendingCrest, setPendingCrest] = useState<PendingPicture>(null)
+  const [pendingKits, setPendingKits] = useState<Record<number, PendingKit>>({})
+  const [pendingSquad, setPendingSquad] = useState<SquadRow[] | null>(null)
+  const crestUrl = pendingCrest && pendingCrest !== 'remove' ? pendingCrest.url : null
+  useEffect(() => () => void (crestUrl && URL.revokeObjectURL(crestUrl)), [crestUrl])
+  const clearPending = () => {
+    setPendingCrest(null)
+    setPendingKits({})
+    setPendingSquad(null)
+    hide.clear()
+  }
   const entity = useEntityForm({
     data: team,
     queryKey,
-    invalidate: ['teams', 'league', 'leagues'],
+    invalidate: ['teams', 'league', 'leagues', 'options'],
     save: async (f) => {
       let saved = await api.saveTeam(id, f.names, f.fields)
+      if (pendingCrest === 'remove') saved = await api.removeTeamCrest(id)
+      else if (pendingCrest) saved = await api.uploadTeamCrest(id, pendingCrest.data)
+      for (const [kind, kit] of Object.entries(pendingKits)) {
+        const pictures: Partial<Record<KitPart, string | null>> = {}
+        for (const [part, p] of Object.entries(kit.pictures)) if (p) pictures[part as KitPart] = p === 'remove' ? null : p.data
+        saved = await api.saveTeamKit(id, Number(kind), kit.config, pictures)
+      }
+      if (pendingSquad) saved = await api.saveTeamRoster(id, pendingSquad)
       if (hide.pending !== null) saved = await api.setTeamHidden(id, hide.pending)
-      hide.clear()
+      clearPending()
       return saved
     },
     reset: () => {
-      hide.clear()
+      clearPending()
       return api.resetTeam(id)
     },
-    extraDirty: hide.pending !== null,
-    onDiscard: hide.clear,
+    extraDirty: pendingCrest !== null || Object.keys(pendingKits).length > 0 || pendingSquad !== null || hide.pending !== null,
+    onDiscard: clearPending,
+    // a created team has no name of the game: its "All" name is required
+    invalid: (f) => !!team?.is_new && !f.names.full?.['*']?.trim(),
+  })
+  const remove = useMutation({
+    mutationFn: () => api.deleteTeam(id),
+    onSuccess: () => {
+      for (const k of ['teams', 'options', 'status', 'leagues', 'league']) void qc.invalidateQueries({ queryKey: [k] })
+      toast.success(t('team.deleted'))
+      navigate(back.to, { state: back.state })
+    },
+    onError: (e: Error) => {
+      setDeleting(false)
+      toast.error(e.message)
+    },
   })
   if (isLoading || !team) return <LoadingBlock />
+  const squad = pendingSquad ?? savedSquad(team)
+  const setSquad = (rows: SquadRow[]) => setPendingSquad(sameSquad(rows, savedSquad(team)) ? null : rows)
+  const formationValue = entity.form.fields.formation ?? team.values.formation
+  const formation = typeof formationValue === 'number' ? formationValue : null
   return (
     <div className="space-y-4">
       <BackButton back={back} />
       <div className="flex flex-wrap justify-between gap-x-4 gap-y-3">
         <div className="flex min-w-0 items-center gap-3">
-          <Crest id={team.id} size={96} available={team.has_crest} className="size-12" />
+          {crestUrl ? (
+            <img src={crestUrl} alt="" className="size-12 object-contain" />
+          ) : (
+            <Crest id={team.id} size={96} available={team.has_crest || team.is_new} version={team.own_crest} className="size-12" />
+          )}
           <div className="min-w-0">
             <h1 className="text-2xl font-semibold break-words">{team.name}</h1>
             <p className="text-sm text-muted-foreground">
@@ -59,30 +128,38 @@ export function TeamPage() {
                   </Link>
                 </span>
               ))}{' '}
-              · ID {team.id}
+              {team.leagues.length > 0 && '· '}ID {team.id}
             </p>
           </div>
-          <OriginalBadge edited={team.edited} />
-          {hide.hidden && <OutOfPatchBadge alert label={t('teams.hiddenByProject')} />}
+          <OriginalBadge edited={team.edited} isNew={team.is_new} />
+          {hide.hidden && <OutOfPatchBadge alert label={team.is_new ? undefined : t('teams.hiddenByProject')} />}
         </div>
         <div className="flex flex-wrap items-start gap-2">
-          <EditActions edited={team.edited} entity={entity} />
+          <EditActions edited={team.edited && !team.is_new} entity={entity} />
           <HideButton
             variant="outline"
             hidden={hide.hidden}
             onToggle={hide.toggle}
-            hideHint={t('teams.originalHideHint')}
-            showHint={t('teams.originalShowHint')}
+            hideHint={t(team.is_new ? 'teams.hideHint' : 'teams.originalHideHint')}
+            showHint={t(team.is_new ? 'teams.showHint' : 'teams.originalShowHint')}
           />
+          {team.is_new && (
+            <Button variant="outline" size="sm" onClick={() => setDeleting(true)}>
+              <Trash2 /> {t('common.delete')}
+            </Button>
+          )}
         </div>
       </div>
+      {team.is_new && team.leagues.length === 0 && <p className="text-sm text-amber-600 dark:text-amber-400">{t('team.noLeague')}</p>}
 
       <Tabs {...tabs}>
         <TabsList>
           <TabsTrigger value="names">{t('team.tab.names')}</TabsTrigger>
           <TabsTrigger value="data">{t('team.tab.data')}</TabsTrigger>
+          <TabsTrigger value="crest">{t('team.tab.crest')}</TabsTrigger>
+          <TabsTrigger value="kits">{t('team.tab.kits')}</TabsTrigger>
           <TabsTrigger value="roster">
-            {t('team.tab.roster')} ({team.roster.length})
+            {t('team.tab.roster')} ({squad.length})
           </TabsTrigger>
           <TabsTrigger value="raw">{t('tab.raw')}</TabsTrigger>
         </TabsList>
@@ -102,50 +179,26 @@ export function TeamPage() {
           </Section>
           <FieldsEditor form={team} groups={['colors', 'club', 'takers', 'tactics']} fields={entity.form.fields} setField={entity.setField} roster={team.roster} />
         </TabsContent>
+        <TabsContent value="crest" className="mt-4">
+          <TeamCrest team={team} pending={pendingCrest} setPending={setPendingCrest} />
+        </TabsContent>
+        <TabsContent value="kits" className="mt-4">
+          <TeamKits
+            team={team}
+            pending={pendingKits}
+            setPending={(kind, p) =>
+              setPendingKits((all) => {
+                const next = { ...all }
+                if (p) next[kind] = p
+                else delete next[kind]
+                return next
+              })
+            }
+          />
+        </TabsContent>
         <TabsContent value="roster" className="mt-4 space-y-4">
-          <Section title={t('team.ratings')}>
-            <Facts
-              items={[
-                [t('col.overall'), <OverallBadge key="o" value={team.overall} />],
-                [t('team.attack'), team.attack],
-                [t('team.midfield'), team.midfield],
-                [t('team.defense'), team.defense],
-                [t('col.colors'), <ColorDot key="c" rgb={team.color} />],
-              ]}
-            />
-          </Section>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-10" />
-                <TableHead>{t('col.number')}</TableHead>
-                <TableHead>{t('col.name')}</TableHead>
-                <TableHead>{t('col.role')}</TableHead>
-                <TableHead>{t('col.position')}</TableHead>
-                <TableHead>{t('col.overall')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {team.roster.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell>
-                    <Photo id={p.id} size={64} available={p.has_photo} className="size-8" />
-                  </TableCell>
-                  <TableCell className="tabular-nums">{p.jersey}</TableCell>
-                  <TableCell>
-                    <Link to={`/players/${p.id}`} state={from.state} className="font-medium hover:underline">
-                      {p.name}
-                    </Link>
-                  </TableCell>
-                  <TableCell>{p.link_position_name}</TableCell>
-                  <TableCell>{p.position_name}</TableCell>
-                  <TableCell>
-                    <OverallBadge value={p.overall} />
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          {pendingSquad && <p className="text-xs text-amber-600 dark:text-amber-400">{t('squad.pending')}</p>}
+          <TeamSquad team={team} rows={squad} setRows={setSquad} formation={formation} setFormation={(f) => entity.setField('formation', f)} />
         </TabsContent>
         <TabsContent value="raw" className="mt-4">
           <Section title={t('tab.raw')}>
@@ -153,6 +206,20 @@ export function TeamPage() {
           </Section>
         </TabsContent>
       </Tabs>
+      <AlertDialog open={deleting} onOpenChange={(o) => !remove.isPending && setDeleting(o)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('team.deleteTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('team.deleteText')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={remove.isPending}>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" disabled={remove.isPending} onClick={(e) => (e.preventDefault(), remove.mutate())}>
+              {remove.isPending ? <Loader2 className="animate-spin" /> : <Trash2 />} {t('common.delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

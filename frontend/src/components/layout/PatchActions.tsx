@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { api } from '@/api/client'
 import type { Job } from '@/api/types'
-import { useI18n, type MessageKey } from '@/i18n'
+import { hasMessage, useI18n, type MessageKey } from '@/i18n'
 import { toast } from '@/lib/notify'
 import { useStatus } from '@/state/queries'
 
@@ -35,6 +35,7 @@ export function JobWatcher() {
     last.current = key
     if (job.state === 'running' || first) return // still running, or ended before the app opened
     if (job.state === 'done') toast.success(t(`patch.done.${job.kind}` as MessageKey))
+    else if (job.code && hasMessage(`buildError.${job.code}`)) toast.error(t(`buildError.${job.code}` as MessageKey, { detail: job.detail ?? '' }))
     else toast.error(job.error ?? t('patch.failed'))
     void qc.invalidateQueries()
   }, [job, qc, t])

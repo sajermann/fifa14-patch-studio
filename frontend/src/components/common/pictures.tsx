@@ -12,10 +12,11 @@ function GameImage({ url, alt, className, fallback, available = true }: { url: s
   return <img src={src} alt={alt} loading="lazy" className={cn('object-contain', className)} onError={() => setFailed(src)} />
 }
 
-export function Crest({ id, size = 64, className, available }: { id: number; size?: number; className?: string; available?: boolean }) {
+/** A team's crest (`version` = when the user's picture was saved, so a new one is fetched). */
+export function Crest({ id, size = 64, className, available, version }: { id: number; size?: number; className?: string; available?: boolean; version?: number | null }) {
   return (
     <GameImage
-      url={`/api/image/crest/${id}?size=${size}`}
+      url={`/api/image/crest/${id}?size=${size}${version ? `&own=${version}` : ''}`}
       alt=""
       className={className}
       available={available}
