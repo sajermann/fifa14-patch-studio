@@ -17,6 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api, type PlayerTeamBody } from '@/api/client'
 import type { PlayerDetail } from '@/api/types'
 import { OriginalBadge, OverallBadge, RawTable, Section } from '@/components/common/detail'
+import { computeOverall } from '@/lib/overall'
 import { EditActions, FieldsEditor, useEntityForm, useFieldLabel } from '@/components/common/edit'
 import { HideButton, OutOfPatchBadge, usePendingHide } from '@/components/common/HideButton'
 import { Photo } from '@/components/common/pictures'
@@ -143,7 +144,12 @@ export function PlayerPage() {
   const teams = pendingTeams ?? savedTeams(data)
   const setTeams = (rows: PlayerTeamBody[]) => setPendingTeams(sameTeams(rows, savedTeams(data)) ? null : rows)
   const fields = entity.form.fields
-  const editor = (groups: string[], columns?: string) => <FieldsEditor form={data} groups={groups} fields={fields} setField={entity.setField} columns={columns} />
+  // the overall follows the bars as they move (the game works it out the same way)
+  const liveOverall = computeOverall((col) => {
+    const edited = fields[col]
+    return typeof edited === 'number' ? edited : (data.values[col] as number | undefined)
+  })
+  const editor = (groups: string[], columns?: string, bars?: boolean) => <FieldsEditor form={data} groups={groups} fields={fields} setField={entity.setField} columns={columns} bars={bars} />
   return (
     <div className="space-y-4">
       <BackButton back={back} />
@@ -197,10 +203,10 @@ export function PlayerPage() {
         </TabsContent>
         <TabsContent value="ratings" className="mt-4 space-y-4">
           <div className="flex items-center gap-2 text-sm">
-            {t('col.overall')} <OverallBadge value={data.overall} />
+            {t('col.overall')} <OverallBadge value={liveOverall ?? data.overall} />
             <span className="text-xs text-muted-foreground">{t('player.overallHint')}</span>
           </div>
-          {editor(['physical', 'mental', 'skill', 'goalkeeper'], 'md:grid-cols-2 xl:grid-cols-4')}
+          {editor(['physical', 'mental', 'skill', 'goalkeeper'], 'md:grid-cols-2 xl:grid-cols-4', true)}
         </TabsContent>
         <TabsContent value="traits" className="mt-4">
           <PlayerTraits all={options?.traits ?? []} value={fields.traits} original={data.values.traits} onChange={(v) => entity.setField('traits', v)} />

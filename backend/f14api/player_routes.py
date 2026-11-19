@@ -3,9 +3,11 @@ look codes and the 3D preview of a player with the screen's values. Registered b
 interface's catch-all route)."""
 import base64
 import binascii
+import datetime
 import hashlib
 import json
 import os
+import random
 import re
 from typing import Optional
 from urllib.parse import quote
@@ -119,6 +121,56 @@ def create_player(body: CreatePlayerBody):
             _join_team(con, pid, body.team)
     with db() as con:
         return _detail(con, pid)
+
+
+# ---- generated players -------------------------------------------------------------------------------------------------
+
+MAX_GENERATED = 60
+GENERATED_POSITION = 25  # ST
+GOALKEEPER = 0
+GENERATED_BIRTHDATES = (datetime.date(1980, 1, 1), datetime.date(1994, 12, 31))
+# the look codes drawn for a generic head (the body type stays the model player's)
+GENERATED_LOOK = ('headtypecode', 'hairtypecode', 'haircolorcode', 'facialhairtypecode', 'facialhaircolorcode',
+                  'eyebrowcode', 'sideburnscode', 'eyecolorcode', 'skintypecode', 'skintonecode')
+
+
+class GeneratePlayersBody(BaseModel):
+    count: int
+    goalkeepers: int = 0  # how many of them are goalkeepers (the rest are strikers)
+
+
+@app.post('/api/teams/{tid}/generate-players')
+def generate_players(tid: int, body: GeneratePlayersBody):
+    """New random players for a team: strikers (and goalkeepers) with every rating at the middle, named Player 01, Player 02... (the
+    first names no created player has), a generic head and the rest drawn; `goalkeepers` of them play in goal. They are created in the project, not put in
+    the squad: the screen adds them to the squad it is editing (Save keeps them there)."""
+    if not 1 <= body.count <= MAX_GENERATED or not 0 <= body.goalkeepers <= body.count:
+        raise ApiError(400, 'bad_request', 'count')
+    with db() as con:
+        if queries.team(con, lang(), tid) is None:
+            raise ApiError(400, 'unknown_team', str(tid))
+        nations = [r[0] for r in con.execute('SELECT id FROM nations WHERE has_flag = 1 AND id BETWEEN 1 AND 4095')]
+        taken = {r[0] for r in con.execute("SELECT json_extract(value, '$') FROM p.fields WHERE kind = 'player' "
+                                           "AND field = 'name.last'")}
+    codes = player_options()['codes']
+    first_day, last_day = (d.toordinal() for d in GENERATED_BIRTHDATES)
+    middle = {spec.name: (spec.min + spec.max) // 2 for spec in fields.PLAYER
+              if spec.group in ('physical', 'mental', 'skill', 'goalkeeper')}
+    out, index = [], 0
+    for n in range(body.count):
+        index += 1
+        while f'{index:02d}' in taken:
+            index += 1
+        height = random.randint(165, 195)
+        values = {'name.first': 'Player', 'name.last': f'{index:02d}', 'name.jersey': f'PLAYER {index:02d}',
+                  'preferredposition1': GOALKEEPER if n < body.goalkeepers else GENERATED_POSITION, 'height': height, 'weight': random.randint(60, 90),
+                  'birthdate': datetime.date.fromordinal(random.randint(first_day, last_day)).isoformat(),
+                  'preferredfoot': random.choice((1, 2)), **middle,
+                  **{c: random.choice(codes[c]) for c in GENERATED_LOOK if codes.get(c)}}
+        if nations:
+            values['nationality'] = random.choice(nations)
+        out.append(create_player(CreatePlayerBody(fields=values)))
+    return out
 
 
 @app.delete('/api/players/{pid}')

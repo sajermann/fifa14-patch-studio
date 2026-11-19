@@ -129,6 +129,7 @@ export const api = {
   savePlayer: (id: number, fields: Fields, teams?: PlayerTeamBody[]) => request<PlayerDetail>('PUT', `/api/players/${id}`, { fields, teams }),
   resetPlayer: (id: number) => request<PlayerDetail>('DELETE', `/api/players/${id}/edits`),
   /** A new player: from scratch (template null) or a copy of a player; optionally straight into a team. */
+  generatePlayers: (team: number, count: number, goalkeepers = 0) => post<PlayerDetail[]>(`/api/teams/${team}/generate-players`, { count, goalkeepers }),
   createPlayer: (body: { fields: Fields; template?: number | null; team?: number | null }) => post<PlayerDetail>('/api/players', body),
   deletePlayer: (id: number) => request<{ deleted: number }>('DELETE', `/api/players/${id}`),
   setPlayerHidden: (id: number, hidden: boolean) => request<PlayerDetail>('PUT', `/api/players/${id}/hidden`, { hidden }),

@@ -176,7 +176,7 @@ export function TeamPage() {
               ]}
             />
           </Section>
-          <FieldsEditor form={team} groups={['colors', 'club', 'takers', 'tactics']} fields={entity.form.fields} setField={entity.setField} roster={team.roster} />
+          <FieldsEditor form={team} groups={['colors', 'club', 'tactics']} fields={entity.form.fields} setField={entity.setField} roster={team.roster} />
         </TabsContent>
         <TabsContent value="crest" className="mt-4">
           <TeamCrest team={team} pending={pendingCrest} setPending={setPendingCrest} />
@@ -198,7 +198,16 @@ export function TeamPage() {
         </TabsContent>
         <TabsContent value="roster" className="mt-4 space-y-4">
           {pendingSquad && <p className="text-xs text-amber-600 dark:text-amber-400">{t('squad.pending')}</p>}
-          <TeamSquad team={team} rows={squad} setRows={setSquad} formation={formation} setFormation={(f) => entity.setField('formation', f)} />
+          <TeamSquad
+            team={team}
+            rows={squad}
+            setRows={setSquad}
+            formation={formation}
+            setFormation={(f) => entity.setField('formation', f)}
+            fields={entity.form.fields}
+            setField={entity.setField}
+            linkState={from.state}
+          />
         </TabsContent>
         <TabsContent value="raw" className="mt-4">
           <Section title={t('tab.raw')}>

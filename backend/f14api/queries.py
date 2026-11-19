@@ -5,6 +5,7 @@ import math
 import sqlite3
 
 from f14mod import catalog, fields, fifa14
+from f14mod.overall import compute_overall
 from f14mod.teamkits import MASKS, MODEL_TEAM
 
 PAGE_SIZES = (25, 50, 100)
@@ -15,6 +16,13 @@ FALLBACK_LANG = 'eng_us'
 def _saved_sql(kind: str, alias: str, field: str) -> str:
     return (f"(SELECT json_extract(value, '$') FROM p.fields WHERE kind = '{kind}' AND id = {alias}.id "
             f"AND field = '{field}')")
+
+
+def _overall_sql(alias: str, raw: str, stored: str) -> str:
+    """The player's overall: the game's own value, or (a player with saved edits) the one the attributes give."""
+    saved = f"FROM p.fields WHERE kind = 'player' AND id = {alias}.id"
+    return (f"(CASE WHEN EXISTS (SELECT 1 {saved}) THEN overall_of({raw}, (SELECT json_group_object(field, "
+            f"json_extract(value, '$')) {saved}), {stored}) ELSE {stored} END)")
 
 
 # the originals and what the project created, as one table each (temporary views of this connection)
@@ -63,12 +71,13 @@ VIEWS = [
         WHERE s.copy = 1 AND s.team_id NOT IN (SELECT team_id FROM p.team_rosters_set)""",
     # a created player shows the values of the player it starts from (its row is a copy of that one in the patch)
     f"""CREATE TEMP VIEW v_players AS
-        SELECT id, name, first, last, common, jersey_name, overall, potential, position, nationality, birthdate,
+        SELECT id, name, first, last, common, jersey_name,
+               {_overall_sql('players', 'raw', 'overall')} AS overall, potential, position, nationality, birthdate,
                height, has_photo OR EXISTS (SELECT 1 FROM p.pictures WHERE kind = 'player' AND id = players.id
                                             AND slot = 'photo') AS has_photo, search, raw, 0 AS is_new
         FROM players
         UNION ALL
-        SELECT c.id, 'Player ' || c.id, NULL, NULL, NULL, NULL, t.overall, t.potential,
+        SELECT c.id, 'Player ' || c.id, NULL, NULL, NULL, NULL, {_overall_sql('c', 't.raw', 't.overall')}, t.potential,
                COALESCE({_saved_sql('player', 'c', 'preferredposition1')}, t.position),
                COALESCE({_saved_sql('player', 'c', 'nationality')}, t.nationality), t.birthdate,
                COALESCE({_saved_sql('player', 'c', 'height')}, t.height),
@@ -90,10 +99,18 @@ MAIN_KITS = (0, 1, 2, 3)  # always listed; the others only when the team has the
 LEAGUE_NAME_KEYS = list(fifa14.LEAGUE_NAME_STRINGS)
 
 
+def _overall_of(raw, saved, stored):
+    """SQL function: the overall of a player row with the project's edited values over it."""
+    row = json.loads(raw or '{}')
+    row.update({k: v for k, v in json.loads(saved or '{}').items() if isinstance(v, (int, float))})
+    return compute_overall(row) or stored
+
+
 def connect(catalog_path: str, project_path: str) -> sqlite3.Connection:
     con = sqlite3.connect(f'file:{catalog_path}?mode=ro', uri=True, check_same_thread=False)
     con.row_factory = sqlite3.Row
     con.create_function('fold', 1, catalog.fold, deterministic=True)
+    con.create_function('overall_of', 3, _overall_of, deterministic=True)
     con.execute('ATTACH DATABASE ? AS p', (project_path,))
     for view in VIEWS:
         con.execute(view)
@@ -355,13 +372,15 @@ def team(con, lang: str, tid: int) -> dict | None:
         f"""SELECT pl.id, {_player_name()} AS name, pl.overall, pl.position, tp.jersey, tp.position AS link_position,
                   COALESCE({_saved('player', 'pl', 'name.jersey')}, pl.jersey_name, {_saved('player', 'pl', 'name.last')},
                            pl.last, pl.name) AS back_name,
-                  pl.has_photo, tp.ord, tp.hidden
+                  pl.has_photo, pl.is_new, {_edited('player', 'pl')} AS edited, tp.ord, tp.hidden
            FROM v_team_players tp JOIN v_players pl ON pl.id = tp.player_id WHERE tp.team_id = ?
            ORDER BY tp.ord, tp.position, pl.overall DESC""", (tid,))]
     for r in roster:
         r['position_name'] = fifa14.position_name(r['position'])
         r['link_position_name'] = fifa14.position_name(r['link_position'])
         r['has_photo'] = bool(r['has_photo'])
+        r['is_new'] = bool(r['is_new'])
+        r['edited'] = bool(r['edited'])
         r['hidden'] = bool(r['hidden'])
     leagues_of = [dict(r) for r in con.execute(
         f'SELECT l.id, {_league_name()} AS name, l.is_new FROM v_leagues l WHERE l.id IN '

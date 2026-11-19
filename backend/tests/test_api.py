@@ -124,6 +124,10 @@ def test_player_fields_crud(client):
     assert r.json()['name'] == 'Renamed' and r.json()['edited']
     listed = client.get('/api/players', params={'q': 'renamed'}).json()['items']
     assert [p['id'] for p in listed] == [pid] and listed[0]['edited']
+    # the overall follows the saved attributes everywhere (detail, list, squad of a team)
+    assert r.json()['overall'] != player['overall'] and listed[0]['overall'] == r.json()['overall']
+    squad = client.get(f'/api/teams/{fakegame.TEAM}').json()['roster']
+    assert all(row['overall'] == r.json()['overall'] for row in squad if row['id'] == pid)
     for body, code in (({'height': 300}, 'field_out_of_range'), ({'nationality': 999}, 'field_out_of_range'),
                        ({'bogus': 1}, 'field_unknown_field'), ({'birthdate': 'x'}, 'field_bad_value')):
         bad = client.put(f'/api/players/{pid}', json={'fields': body})
@@ -382,3 +386,19 @@ def test_country_leagues_list(client):
     assert client.put('/api/countries/54/leagues', json={'league_ids': [999]}).json()['detail']['code'] ==         'unknown_league'
     rows = client.get('/api/leagues', params={'ids': f'{lid}'}).json()['items']
     assert [x['id'] for x in rows] == [lid]
+
+
+def test_generate_players_creates_random_strikers(client):
+    r = client.post(f'/api/teams/{fakegame.TEAM}/generate-players', json={'count': 3})
+    assert r.status_code == 200, r.text
+    made = r.json()
+    assert [p['name'] for p in made] == ['Player 01', 'Player 02', 'Player 03']
+    assert all(p['is_new'] and p['position'] == 25 and p['saved']['finishing'] == 50 for p in made)
+    assert all(p['saved']['face']['source'] == 'generic' for p in made)
+    keepers = client.post(f'/api/teams/{fakegame.TEAM}/generate-players', json={'count': 3, 'goalkeepers': 2}).json()
+    assert [p['position'] for p in keepers] == [0, 0, 25]
+    again = client.post(f'/api/teams/{fakegame.TEAM}/generate-players', json={'count': 1}).json()
+    assert again[0]['name'] == 'Player 07'  # the names already taken are skipped
+    assert client.post(f'/api/teams/{fakegame.TEAM}/generate-players', json={'count': 0}).status_code == 400
+    for p in [*made, *keepers, *again]:  # the project is shared by the tests: leave it as it was
+        assert client.delete(f"/api/players/{p['id']}").status_code == 200

@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Slider } from '@/components/ui/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { EditForm, FieldSpec, FieldValue, NameTable, Ref, RosterRow } from '@/api/types'
@@ -581,7 +582,7 @@ function LeagueCountriesInput({ form, fields, setField }: { form: EditForm; fiel
 }
 
 /** One input for one field; the shown value is the edited one, else the game's. */
-function FieldInput({ spec, value, original, onChange, roster }: { spec: FieldSpec; value: FieldValue | undefined; original: FieldValue | undefined; onChange: (v: FieldValue) => void; roster?: RosterRow[] }) {
+function FieldInput({ spec, value, original, onChange, roster, bar }: { spec: FieldSpec; value: FieldValue | undefined; original: FieldValue | undefined; onChange: (v: FieldValue) => void; roster?: RosterRow[]; bar?: boolean }) {
   const { t } = useI18n()
   const { label, option } = useFieldLabel()
   const options = useOptions().data
@@ -640,6 +641,16 @@ function FieldInput({ spec, value, original, onChange, roster }: { spec: FieldSp
     case 'roster':
       return select((roster ?? []).map((p) => ({ id: p.id, name: p.jersey !== null ? `${p.jersey} · ${p.name}` : p.name })))
     default:
+      if (bar && spec.min !== null && spec.max !== null) {
+        // a bar like the FS4 skills tab: the slider and its value
+        const shown = typeof current === 'number' ? current : Math.round((spec.min + spec.max) / 2)
+        return (
+          <div className="flex items-center gap-3">
+            <Slider min={spec.min} max={spec.max} step={1} value={[shown]} onValueChange={([v]) => onChange(v)} />
+            <span className={cn('w-8 shrink-0 text-right text-sm tabular-nums', changed && 'font-medium text-primary')}>{typeof current === 'number' ? current : '—'}</span>
+          </div>
+        )
+      }
       return (
         <Input
           className={cn('tabular-nums', ring)}
@@ -663,12 +674,15 @@ export function FieldsEditor({
   columns = 'md:grid-cols-2',
   title,
   extra,
+  bars = false,
 }: {
   form: EditForm
   groups: string[]
   fields: Fields
   setField: (name: string, value: FieldValue) => void
   roster?: RosterRow[]
+  /** Numeric fields as sliders (the attributes). */
+  bars?: boolean
   columns?: string
   title?: (group: string) => ReactNode
   extra?: Record<string, ReactNode>
@@ -699,7 +713,7 @@ export function FieldsEditor({
                     {countries ? (
                       <LeagueCountriesInput form={form} fields={fields} setField={setField} />
                     ) : (
-                      <FieldInput spec={spec} value={fields[spec.name]} original={form.values[spec.name]} onChange={(v) => setField(spec.name, v)} roster={roster} />
+                      <FieldInput spec={spec} value={fields[spec.name]} original={form.values[spec.name]} onChange={(v) => setField(spec.name, v)} roster={roster} bar={bars} />
                     )}
                   </div>
                 )

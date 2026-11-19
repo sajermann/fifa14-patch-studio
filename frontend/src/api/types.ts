@@ -213,6 +213,8 @@ export interface RosterRow {
   /** the name printed on the back of the jersey (jersey name, else last name) */
   back_name: string | null
   has_photo: boolean
+  is_new: boolean
+  edited: boolean
   /** out of the patch in this team only */
   hidden: boolean
 }

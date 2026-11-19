@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils'
 
 /** Max height for a scroll box so that, with the page scrolled to the top, it ends at the bottom of the visible area
  * (the scrolling <main>): the box scrolls instead of the page. Follows window resizes and the content above it. */
-export function useFillHeight<E extends HTMLElement>(min = 120) {
+export function useFillHeight<E extends HTMLElement>(min = 120, reserve = 0) {
   const ref = useRef<E>(null)
   const [height, setHeight] = useState<number>()
   useLayoutEffect(() => {
@@ -21,21 +21,22 @@ export function useFillHeight<E extends HTMLElement>(min = 120) {
       const top = box.top - scroller.getBoundingClientRect().top + scroller.scrollTop
       const below = card.getBoundingClientRect().bottom - box.bottom // the card's padding under the box
       const padding = parseFloat(getComputedStyle(scroller).paddingBottom) || 0
-      setHeight(Math.max(min, Math.floor(scroller.clientHeight - top - below - padding)))
+      setHeight(Math.max(min, Math.floor(scroller.clientHeight - top - below - padding - reserve)))
     }
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(scroller)
     if (scroller.firstElementChild) observer.observe(scroller.firstElementChild)
     return () => observer.disconnect()
-  }, [min])
+  }, [min, reserve])
   return { ref, style: height ? { maxHeight: height } : undefined }
 }
 
 /** A box that scrolls on its own and is as tall as what is left of the screen, so the page itself does not scroll.
- * A table inside keeps its header sticky (the table's own container stops being a scroll box). */
-export function FillScroll({ children, className }: { children: ReactNode; className?: string }) {
-  const fill = useFillHeight<HTMLDivElement>()
+ * A table inside keeps its header sticky (the table's own container stops being a scroll box). `reserve`: height left
+ * free under the box for something that must stay in view (the box is then at least 240 tall). */
+export function FillScroll({ children, className, reserve }: { children: ReactNode; className?: string; reserve?: number }) {
+  const fill = useFillHeight<HTMLDivElement>(reserve ? 240 : 120, reserve)
   return (
     <div ref={fill.ref} style={fill.style} className={cn('overflow-auto [&>[data-slot=table-container]]:overflow-visible', className)}>
       {children}
