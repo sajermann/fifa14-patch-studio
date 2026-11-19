@@ -168,14 +168,17 @@ def filter_options():
     """Small lists for the filter selects and the language fields."""
     with db() as con:
         return {
+            # sorted outside: inside the select, fold(name) would sort by the table's own name column
             'leagues': [dict(r) for r in con.execute(
-                f'SELECT l.id, {queries._league_name()} AS name FROM v_leagues l ORDER BY fold(name)',  # noqa: SLF001
-                {'lang': lang()})],
+                f'SELECT * FROM (SELECT l.id, {queries._league_name()} AS name FROM v_leagues l) '  # noqa: SLF001
+                'ORDER BY fold(name)', {'lang': lang()})],
             'positions': [{'id': i, 'name': n} for i, n in enumerate(fifa14.POSITIONS[:28])],
             'languages': queries.languages(con),
-            'nations': [dict(r) for r in con.execute('SELECT id, name, is_new FROM v_nations ORDER BY fold(name)')],
+            'nations': [dict(r) for r in con.execute(
+                f'SELECT * FROM (SELECT n.id, {queries._country_name()} AS name, n.is_new FROM v_nations n) '  # noqa: SLF001
+                'ORDER BY fold(name)', {'lang': lang()})],
             'teams': [dict(r) for r in con.execute(
-                f"SELECT t.id, {queries._team_name('full')} AS name FROM teams t ORDER BY fold(name)",  # noqa: SLF001
+                f"SELECT * FROM (SELECT t.id, {queries._team_name('full')} AS name FROM teams t) ORDER BY fold(name)",  # noqa: SLF001
                 {'lang': lang()})],
         }
 

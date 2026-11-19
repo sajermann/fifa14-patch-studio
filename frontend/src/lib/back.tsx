@@ -1,15 +1,20 @@
 import { ArrowLeft } from 'lucide-react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
+import { useI18n, type MessageKey } from '@/i18n'
+
+/** The "←" label: a text (an item's name) or a message key, translated when shown (the history state keeps it, and
+ * the user may switch the language after the page was opened). */
+export type BackLabel = string | { key: MessageKey }
 
 /** Where an edit page's "←" button goes: the page the user came from (path + filters), with that page's own history
  * state, so a chain like Liga → Time → Jogador walks back step by step. */
-export type Back = { to: string; label: string; state?: unknown }
+export type Back = { to: string; label: BackLabel; state?: unknown }
 
 type BackState = { back?: Back; returning?: boolean }
 
 /** Navigation options for opening an item from the current page: the item's "←" comes back here, labeled `label`. */
-export function useFrom(label: string) {
+export function useFrom(label: BackLabel) {
   const loc = useLocation()
   return { state: { back: { to: loc.pathname + loc.search, label, state: loc.state } } satisfies BackState }
 }
@@ -42,10 +47,11 @@ export function useKeepBack() {
 }
 
 export function BackButton({ back }: { back: Back }) {
+  const { t } = useI18n()
   return (
     <Button variant="ghost" size="sm" className="self-start" asChild>
       <Link to={back.to} state={backState(back)}>
-        <ArrowLeft /> {back.label}
+        <ArrowLeft /> {typeof back.label === 'string' ? back.label : t(back.label.key)}
       </Link>
     </Button>
   )

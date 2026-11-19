@@ -20,8 +20,8 @@ export function PlayerPage() {
   const queryKey = ['player', token, lang, id]
   const { data, isLoading } = useQuery({ queryKey, queryFn: () => api.player(id), enabled: !!token })
   const tabs = useTabParam(TABS[0])
-  const back = useBack({ to: '/players', label: t('nav.players') })
-  const from = useFrom(data?.name ?? t('nav.players'))
+  const back = useBack({ to: '/players', label: { key: 'nav.players' } })
+  const from = useFrom(data?.name ?? { key: 'nav.players' })
   const entity = useEntityForm({
     data,
     queryKey,

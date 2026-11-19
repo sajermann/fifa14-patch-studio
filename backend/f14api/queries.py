@@ -148,7 +148,7 @@ def leagues(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAUL
             country: int | None = None, ids: list[int] | None = None) -> dict:
     params: dict = {'lang': lang}
     select = f"""SELECT l.id, {_league_name()} AS name, l.db_name, l.level, l.country_id,
-                 (SELECT name FROM v_nations WHERE id = l.country_id) AS country, l.has_logo, l.is_new,
+                 (SELECT {_country_name()} FROM v_nations n WHERE n.id = l.country_id) AS country, l.has_logo, l.is_new,
                  (SELECT COUNT(*) FROM v_league_teams WHERE league_id = l.id) AS team_count,
                  {_edited('league', 'l')} AS edited, l.search AS search,
                  {_flag('hidden', 'league', 'l')} AS hidden,
@@ -227,7 +227,7 @@ def players(con, lang: str, q='', team: int | None = None, position: int | None 
     club = '(SELECT MIN(tp.team_id) FROM team_players tp JOIN teams x ON x.id = tp.team_id ' \
            'WHERE tp.player_id = pl.id AND x.national_of IS NULL)'
     select = f"""SELECT pl.id, {_player_name()} AS name, pl.overall, pl.potential, pl.position, pl.birthdate, pl.height,
-                 pl.nationality, (SELECT name FROM v_nations WHERE id = pl.nationality) AS nationality_name,
+                 pl.nationality, (SELECT {_country_name()} FROM v_nations n WHERE n.id = pl.nationality) AS nationality_name,
                  pl.has_photo, {club} AS team_id,
                  (SELECT {_team_name('abbr15')} FROM teams t WHERE t.id = {club}) AS team,
                  {_edited('player', 'pl')} AS edited, pl.search || ' ' || fold({_player_name()}) AS search_all
@@ -315,7 +315,7 @@ def league(con, lang: str, lid: int) -> dict | None:
     if not row:
         return None
     head = con.execute(f"""SELECT l.id, {_league_name()} AS name, l.level, l.country_id,
-                           (SELECT name FROM v_nations WHERE id = l.country_id) AS country, l.has_logo, l.is_new
+                           (SELECT {_country_name()} FROM v_nations n WHERE n.id = l.country_id) AS country, l.has_logo, l.is_new
                            FROM v_leagues l WHERE l.id = :lid""", {'lang': lang, 'lid': lid}).fetchone()
     raw = json.loads(row['raw'])
     original = _names(con, 'league', lid)
@@ -365,8 +365,8 @@ def player(con, lang: str, pid: int) -> dict | None:
         'overall': row['overall'], 'potential': row['potential'], 'position': row['position'],
         'position_name': fifa14.position_name(row['position']), 'birthdate': row['birthdate'],
         'height': row['height'], 'weight': raw.get('weight'), 'nationality': row['nationality'],
-        'nationality_name': (con.execute('SELECT name FROM v_nations WHERE id = ?', (row['nationality'],)).fetchone()
-                             or [None])[0],
+        'nationality_name': (con.execute(f'SELECT {_country_name()} FROM v_nations n WHERE n.id = :id',
+                                         {'lang': lang, 'id': row['nationality']}).fetchone() or [None])[0],
         'has_photo': bool(row['has_photo']),
         'attributes': {name: raw[col] for col, name in fifa14.ATTRIBUTES.items() if col in raw},
         'teams': links, **_form(con, 'player', pid, raw, names), 'raw': raw,
@@ -379,6 +379,9 @@ COUNTRY_NAME_KEYS = list(fifa14.COUNTRY_NAME_STRINGS)
 
 
 def _country_name(alias: str = 'n') -> str:
+    """A country's name in the names language (`:lang`): the project's text in it, then its "All" text, then the
+    game's text in it, then the game's English one. Every place that shows a country name uses it (the screen's title,
+    the selects, the lists), so they all agree."""
     return f"""COALESCE(
         (SELECT text FROM p.country_names WHERE country_id = {alias}.id AND key = 'full' AND lang = :lang),
         (SELECT text FROM p.country_names WHERE country_id = {alias}.id AND key = 'full' AND lang = '*'),

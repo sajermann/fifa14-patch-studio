@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query'
-import { Loader2, RotateCcw, Save, Undo2, X } from 'lucide-react'
+import { ChevronDown, Loader2, Plus, RotateCcw, Save, Undo2, X } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useBlocker } from 'react-router-dom'
 import {
@@ -18,6 +18,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { EditForm, FieldSpec, FieldValue, NameTable, Ref, RosterRow } from '@/api/types'
 import { FillScroll, Section } from '@/components/common/detail'
+import { PickerDialog, type PickerItem } from '@/components/common/PickerDialog'
+import { CountryFlag, Crest } from '@/components/common/pictures'
 import { hasMessage, useI18n, type MessageKey } from '@/i18n'
 import { toast } from '@/lib/notify'
 import { cn } from '@/lib/utils'
@@ -409,43 +411,179 @@ export function useFieldLabel() {
   }
 }
 
-/** A list of countries: chips with a remove button and a select that adds one more. */
-function NationsInput({ value, onChange, className }: { value: number[]; onChange: (v: FieldValue) => void; className?: string }) {
+/** Lists long enough to need a search: chosen in the picker dialog (the app's Add dialog) instead of a select. */
+type PickKind = 'nation' | 'team'
+
+const foldText = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+
+function PickIcon({ kind, id, small }: { kind: PickKind; id: number; small?: boolean }) {
+  return kind === 'nation' ? (
+    <CountryFlag id={id} size={64} className={small ? 'h-3.5 w-5' : 'h-5 w-7'} />
+  ) : (
+    <Crest id={id} size={64} className={small ? 'size-4' : 'size-7'} />
+  )
+}
+
+/** The picker dialog over a whole list (countries or teams): search by name or ID; the user's created countries first. */
+function RefPickerDialog({
+  kind,
+  open,
+  onOpenChange,
+  exclude = [],
+  title,
+  actionLabel,
+  onPick,
+}: {
+  kind: PickKind
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  exclude?: number[]
+  title: string
+  actionLabel?: string
+  onPick: (id: number) => void
+}) {
+  const { t } = useI18n()
+  const options = useOptions().data
+  const [q, setQ] = useState('')
+  const all: Ref[] = (kind === 'nation' ? options?.nations : options?.teams) ?? []
+  const wanted = foldText(q.trim())
+  const items = all.filter((r) => !exclude.includes(r.id) && (!wanted || foldText(r.name).includes(wanted) || String(r.id) === wanted))
+  const toItem = (r: Ref): PickerItem<number> => ({ key: r.id, icon: <PickIcon kind={kind} id={r.id} />, title: r.name, subtitle: `ID ${r.id}` })
+  const groups =
+    kind === 'nation'
+      ? [
+          { label: t('field.pick.newCountries'), items: items.filter((r) => r.is_new).map(toItem) },
+          { label: t('field.pick.originalCountries'), items: items.filter((r) => !r.is_new).map(toItem) },
+        ]
+      : [{ items: items.map(toItem) }]
+  return (
+    <PickerDialog
+      open={open}
+      onOpenChange={(o) => {
+        onOpenChange(o)
+        if (!o) setQ('')
+      }}
+      title={title}
+      description={t(kind === 'nation' ? 'field.pick.countryDescription' : 'field.pick.teamDescription')}
+      placeholder={t(kind === 'nation' ? 'countries.search' : 'teams.search')}
+      query={q}
+      onQuery={setQ}
+      groups={groups}
+      empty={t('field.pick.empty')}
+      actionLabel={actionLabel}
+      onPick={onPick}
+    />
+  )
+}
+
+/** One item of a long list (a country, a team): a button with its picture and name that opens the picker dialog. */
+function RefPickerInput({
+  kind,
+  label,
+  value,
+  optional,
+  onChange,
+  className,
+}: {
+  kind: PickKind
+  label: string
+  value: number | null
+  optional: boolean
+  onChange: (id: number | null) => void
+  className?: string
+}) {
+  const { t } = useI18n()
+  const options = useOptions().data
+  const [open, setOpen] = useState(false)
+  const all: Ref[] = (kind === 'nation' ? options?.nations : options?.teams) ?? []
+  const name = value === null ? null : (all.find((r) => r.id === value)?.name ?? `#${value}`)
+  return (
+    <div className="flex min-w-0 items-center gap-1.5">
+      <Button type="button" variant="outline" className={cn('min-w-0 flex-1 justify-between font-normal', className)} onClick={() => setOpen(true)}>
+        <span className="flex min-w-0 items-center gap-2">
+          {value !== null && <PickIcon kind={kind} id={value} small />}
+          <span className={cn('truncate', value === null && 'text-muted-foreground')}>{name ?? t('field.none')}</span>
+        </span>
+        <ChevronDown className="opacity-50" />
+      </Button>
+      {optional && value !== null && (
+        <Button type="button" variant="ghost" size="icon-sm" title={t('field.pick.clear')} aria-label={t('field.pick.clear')} onClick={() => onChange(null)}>
+          <X />
+        </Button>
+      )}
+      <RefPickerDialog
+        kind={kind}
+        open={open}
+        onOpenChange={setOpen}
+        exclude={value === null ? [] : [value]}
+        title={label}
+        actionLabel={t('field.pick.choose')}
+        onPick={(id) => {
+          onChange(id)
+          setOpen(false)
+        }}
+      />
+    </div>
+  )
+}
+
+/** A list of countries: chips with a remove button and an Add button that opens the picker dialog. `firstLabel` marks
+ * the first one (a league's own country; the others are where it also shows). */
+function NationsInput({ value, onChange, title, firstLabel, className }: { value: number[]; onChange: (v: number[]) => void; title: string; firstLabel?: string; className?: string }) {
   const { t } = useI18n()
   const nations = useOptions().data?.nations ?? []
+  const [open, setOpen] = useState(false)
   const name = (id: number) => nations.find((n) => n.id === id)?.name ?? `#${id}`
   return (
     <div className={cn('flex flex-wrap items-center gap-1.5 rounded-md border p-1.5', className)}>
-      {value.map((id) => (
-        <span key={id} className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-sm">
+      {value.map((id, i) => (
+        <span key={id} className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2 py-0.5 text-sm">
+          <PickIcon kind="nation" id={id} small />
           {name(id)}
+          {i === 0 && firstLabel && <span className="text-xs text-muted-foreground">({firstLabel})</span>}
           <button type="button" className="text-muted-foreground hover:text-foreground" aria-label={t('field.nationsRemove')} title={t('field.nationsRemove')} onClick={() => onChange(value.filter((x) => x !== id))}>
             <X className="size-3.5" />
           </button>
         </span>
       ))}
-      <Select value="" onValueChange={(v) => onChange([...value, Number(v)])}>
-        <SelectTrigger size="sm" className="h-7 w-auto min-w-40 border-dashed">
-          <SelectValue placeholder={t('field.nationsAdd')} />
-        </SelectTrigger>
-        <SelectContent>
-          {nations
-            .filter((n) => !value.includes(n.id))
-            .map((n) => (
-              <SelectItem key={n.id} value={String(n.id)}>
-                {n.name}
-              </SelectItem>
-            ))}
-        </SelectContent>
-      </Select>
+      <Button type="button" variant="outline" size="sm" className="h-7 border-dashed" onClick={() => setOpen(true)}>
+        <Plus /> {t('field.nationsAdd')}
+      </Button>
+      <RefPickerDialog kind="nation" open={open} onOpenChange={setOpen} exclude={value} title={title} onPick={(id) => onChange([...value, id])} />
     </div>
+  )
+}
+
+/** A league's countries as one list, its own country first and then the ones it also shows in (the fields countryid
+ * and extra_countries, kept apart in the project). Removing the first makes the next one its own. */
+const LEAGUE_COUNTRIES = { own: 'countryid', extra: 'extra_countries' } as const
+
+function LeagueCountriesInput({ form, fields, setField }: { form: EditForm; fields: Fields; setField: (name: string, value: FieldValue) => void }) {
+  const { t } = useI18n()
+  const { label } = useFieldLabel()
+  const pick = (name: string) => (fields[name] === undefined ? form.values[name] : fields[name])
+  const own = pick(LEAGUE_COUNTRIES.own)
+  const extra = pick(LEAGUE_COUNTRIES.extra)
+  const value = [...(typeof own === 'number' && own > 0 ? [own] : []), ...(Array.isArray(extra) ? (extra as number[]) : [])]
+  const changed = [LEAGUE_COUNTRIES.own, LEAGUE_COUNTRIES.extra].some((n) => fields[n] !== undefined && !sameValue(fields[n], form.values[n]))
+  return (
+    <NationsInput
+      value={value}
+      title={label('countries')}
+      firstLabel={t('field.countries.own')}
+      className={changed ? 'border-primary' : undefined}
+      onChange={(ids) => {
+        setField(LEAGUE_COUNTRIES.own, ids[0] ?? 0)
+        setField(LEAGUE_COUNTRIES.extra, ids.slice(1))
+      }}
+    />
   )
 }
 
 /** One input for one field; the shown value is the edited one, else the game's. */
 function FieldInput({ spec, value, original, onChange, roster }: { spec: FieldSpec; value: FieldValue | undefined; original: FieldValue | undefined; onChange: (v: FieldValue) => void; roster?: RosterRow[] }) {
   const { t } = useI18n()
-  const { option } = useFieldLabel()
+  const { label, option } = useFieldLabel()
   const options = useOptions().data
   const current = value === undefined ? original : value
   const changed = value !== undefined && value !== '' && !sameValue(value, original)
@@ -486,11 +624,19 @@ function FieldInput({ spec, value, original, onChange, roster }: { spec: FieldSp
     case 'position':
       return select(options?.positions ?? [])
     case 'nation':
-      return select(options?.nations ?? [])
-    case 'nations':
-      return <NationsInput value={Array.isArray(current) ? current : []} onChange={onChange} className={ring} />
     case 'team':
-      return select(options?.teams ?? [])
+      return (
+        <RefPickerInput
+          kind={spec.kind}
+          label={label(spec.name)}
+          value={isNone || typeof current !== 'number' ? null : current}
+          optional={spec.optional}
+          onChange={(id) => onChange(id ?? none)}
+          className={ring}
+        />
+      )
+    case 'nations':
+      return <NationsInput value={Array.isArray(current) ? current : []} onChange={onChange} title={label(spec.name)} className={ring} />
     case 'roster':
       return select((roster ?? []).map((p) => ({ id: p.id, name: p.jersey !== null ? `${p.jersey} · ${p.name}` : p.name })))
     default:
@@ -539,15 +685,25 @@ export function FieldsEditor({
           <Section key={group} title={title?.(group) ?? (hasMessage(groupKey) ? t(groupKey as MessageKey) : group)}>
             <div className="grid gap-3">
               {extra?.[group]}
-              {specs.map((spec) => (
-                <div key={spec.name} className="grid items-center gap-1 sm:grid-cols-[minmax(9rem,40%)_1fr] sm:gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm">{label(spec.name)}</p>
-                    {hint(spec.name) && <p className="text-xs text-muted-foreground">{hint(spec.name)}</p>}
+              {specs.map((spec) => {
+                const both = specs.some((s) => s.name === LEAGUE_COUNTRIES.extra)
+                if (both && spec.name === LEAGUE_COUNTRIES.extra) return null // shown with countryid
+                const countries = both && spec.name === LEAGUE_COUNTRIES.own
+                const name = countries ? 'countries' : spec.name
+                return (
+                  <div key={spec.name} className="grid items-center gap-1 sm:grid-cols-[minmax(9rem,40%)_1fr] sm:gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm">{label(name)}</p>
+                      {hint(name) && <p className="text-xs text-muted-foreground">{hint(name)}</p>}
+                    </div>
+                    {countries ? (
+                      <LeagueCountriesInput form={form} fields={fields} setField={setField} />
+                    ) : (
+                      <FieldInput spec={spec} value={fields[spec.name]} original={form.values[spec.name]} onChange={(v) => setField(spec.name, v)} roster={roster} />
+                    )}
                   </div>
-                  <FieldInput spec={spec} value={fields[spec.name]} original={form.values[spec.name]} onChange={(v) => setField(spec.name, v)} roster={roster} />
-                </div>
-              ))}
+                )
+              })}
             </div>
           </Section>
         )

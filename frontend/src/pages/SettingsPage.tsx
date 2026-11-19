@@ -29,10 +29,7 @@ export function SettingsPage() {
             <p className="text-sm font-medium">{t('settings.language')}</p>
             <Select
               value={lang}
-              onValueChange={(v) => {
-                setLang(v as Lang)
-                save.mutate({ language: v as Lang })
-              }}
+              onValueChange={(v) => setLang(v as Lang)} // saved in the backend by LanguageSync
             >
               <SelectTrigger className="w-full">
                 <SelectValue />

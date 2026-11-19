@@ -21,8 +21,8 @@ export function TeamPage() {
   const queryKey = ['team', token, id]
   const { data: team, isLoading } = useQuery({ queryKey, queryFn: () => api.team(id), enabled: !!token })
   const tabs = useTabParam(TABS[0])
-  const from = useFrom(team?.name ?? t('nav.teams'))
-  const back = useBack({ to: '/teams', label: t('nav.teams') })
+  const from = useFrom(team?.name ?? { key: 'nav.teams' })
+  const back = useBack({ to: '/teams', label: { key: 'nav.teams' } })
   const hide = usePendingHide(team?.hidden)
   const entity = useEntityForm({
     data: team,

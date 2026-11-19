@@ -5,7 +5,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { api } from '@/api/client'
 import { AppShell, RequireGame } from '@/components/layout/AppShell'
-import { I18nProvider, useI18n } from '@/i18n'
+import { I18nProvider, onLanguageChange, useI18n } from '@/i18n'
 import { ThemeProvider } from '@/lib/theme'
 import { CountriesPage } from '@/pages/CountriesPage'
 import { CountryPage } from '@/pages/CountryPage'
@@ -22,7 +22,9 @@ import { useStatus } from '@/state/queries'
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } } })
 
-/** The interface language saved in the backend wins when the app opens; the first choice is saved there. */
+/** The interface language saved in the backend wins when the app opens; the first choice is saved there, and so is
+ * every switch (sidebar menu or Settings): the names shown follow it (the names language defaults to the interface's),
+ * so everything is fetched again. */
 function LanguageSync() {
   const { lang, setLang } = useI18n()
   const config = useStatus().data?.config
@@ -33,6 +35,16 @@ function LanguageSync() {
     if (config.language && config.language !== lang) setLang(config.language)
     else if (!config.language) void api.saveSettings({ language: lang }).then(() => queryClient.invalidateQueries()).catch(() => undefined)
   }, [config, lang, setLang])
+  useEffect(
+    () =>
+      onLanguageChange((next) => {
+        void api
+          .saveSettings({ language: next })
+          .then(() => queryClient.invalidateQueries())
+          .catch(() => undefined)
+      }),
+    [],
+  )
   return null
 }
 

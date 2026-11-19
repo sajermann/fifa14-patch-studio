@@ -13,7 +13,7 @@ const FILTERS = ['q', 'position'] as const
 export function PlayersPage() {
   const { t } = useI18n()
   const navigate = useNavigate()
-  const from = useFrom(t('nav.players'))
+  const from = useFrom({ key: 'nav.players' })
   const list = useListState(FILTERS)
   const { data, isFetching } = useList('players', list.request, api.players)
   const options = useOptions().data

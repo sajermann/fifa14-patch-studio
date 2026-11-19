@@ -86,8 +86,8 @@ export function CountryPage() {
   const queryKey = ['country', token, lang, id]
   const { data, isLoading } = useQuery({ queryKey, queryFn: () => api.country(id), enabled: !!token })
   const tabs = useTabParam(TABS[0])
-  const back = useBack({ to: '/countries', label: t('nav.countries') })
-  const from = useFrom(data?.name ?? t('nav.countries'))
+  const back = useBack({ to: '/countries', label: { key: 'nav.countries' } })
+  const from = useFrom(data?.name ?? { key: 'nav.countries' })
   const [adding, setAdding] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [pendingFlag, setPendingFlag] = useState<PendingFlag>(null)

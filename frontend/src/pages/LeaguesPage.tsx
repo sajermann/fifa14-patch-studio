@@ -20,7 +20,7 @@ const FILTERS = ['q'] as const
 export function LeaguesPage() {
   const { t } = useI18n()
   const navigate = useNavigate()
-  const from = useFrom(t('nav.leagues'))
+  const from = useFrom({ key: 'nav.leagues' })
   const list = useListState(FILTERS)
   const { data, isFetching } = useList('leagues', list.request, api.leagues)
   const hide = useHide('league', ['leagues', 'league', 'country'])

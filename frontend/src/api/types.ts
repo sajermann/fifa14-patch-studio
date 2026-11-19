@@ -62,6 +62,8 @@ export interface Page<T> {
 export interface Ref {
   id: number
   name: string
+  /** Created in the project (countries list of the options). */
+  is_new?: boolean
 }
 
 export interface LeagueRow {

@@ -163,6 +163,28 @@ def test_free_country_and_league_crud(client):
     assert client.get('/api/status').json()['project'] == {}
 
 
+def test_country_name_follows_names_language(client):
+    """The selects and lists show a country in the names language, like its screen's title: the project's text in
+    that language first, then its "All" text."""
+    cid = client.post('/api/countries', json={'names': {'full': {'*': 'All Land', 'eng_us': 'English Land'}}}).json()['id']
+
+    def names():
+        title = client.get(f'/api/countries/{cid}').json()['name']
+        option = next(n['name'] for n in client.get('/api/options').json()['nations'] if n['id'] == cid)
+        return title, option
+
+    try:
+        client.put('/api/settings', json={'names_language': 'eng_us'})
+        assert names() == ('English Land', 'English Land')
+        client.put('/api/settings', json={'names_language': 'por_br'})
+        assert names() == ('All Land', 'All Land')
+        shown = [n['name'] for n in client.get('/api/options').json()['nations']]
+        assert shown == sorted(shown, key=str.casefold)  # by the name shown, not the game's own
+    finally:
+        client.put('/api/settings', json={'names_language': None})
+        client.delete(f'/api/countries/{cid}')
+
+
 def test_country_limit(client, monkeypatch):
     from f14mod import fifa14
     monkeypatch.setattr(fifa14, 'MAX_NATION_ID', 0)

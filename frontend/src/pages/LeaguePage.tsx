@@ -79,8 +79,8 @@ export function LeaguePage() {
   const queryKey = ['league', token, lang, id]
   const { data, isLoading } = useQuery({ queryKey, queryFn: () => api.league(id), enabled: !!token })
   const tabs = useTabParam(TABS[0])
-  const back = useBack({ to: '/leagues', label: t('nav.leagues') })
-  const from = useFrom(data?.name ?? t('nav.leagues'))
+  const back = useBack({ to: '/leagues', label: { key: 'nav.leagues' } })
+  const from = useFrom(data?.name ?? { key: 'nav.leagues' })
   const [picking, setPicking] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [pendingLogo, setPendingLogo] = useState<PendingLogo>(null)

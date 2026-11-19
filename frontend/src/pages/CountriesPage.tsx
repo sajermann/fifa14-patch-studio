@@ -22,7 +22,7 @@ export function CountriesPage() {
   const { t } = useI18n()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const from = useFrom(t('nav.countries'))
+  const from = useFrom({ key: 'nav.countries' })
   const list = useListState(FILTERS)
   const { data, isFetching } = useList('countries', list.request, api.countries)
   const [creating, setCreating] = useState(false)

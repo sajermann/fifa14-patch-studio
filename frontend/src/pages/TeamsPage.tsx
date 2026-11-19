@@ -15,7 +15,7 @@ const FILTERS = ['q', 'league', 'edited'] as const
 export function TeamsPage() {
   const { t } = useI18n()
   const navigate = useNavigate()
-  const from = useFrom(t('nav.teams'))
+  const from = useFrom({ key: 'nav.teams' })
   const list = useListState(FILTERS)
   const { data, isFetching } = useList('teams', list.request, api.teams)
   const options = useOptions().data
