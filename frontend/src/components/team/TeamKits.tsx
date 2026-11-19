@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, Loader2, Plus, Shirt, Trash2, Upload, X } from 'lucide-react'
-import { useRef, useState, type ReactNode } from 'react'
+import { ChevronDown, Eye, Loader2, LoaderCircle, Plus, Shirt, Trash2, Upload, X } from 'lucide-react'
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '@/api/client'
-import type { KitConfig, KitFonts, KitPart, KitPrint, TeamDetail, TeamKit } from '@/api/types'
+import type { KitConfig, KitFonts, KitPart, KitPrint, KitPrintBody, TeamDetail, TeamKit } from '@/api/types'
 import { Section } from '@/components/common/detail'
 import { readPicture } from '@/components/common/pictures'
 import { Button } from '@/components/ui/button'
@@ -15,6 +15,8 @@ import { cn } from '@/lib/utils'
 import { useToken } from '@/state/queries'
 import { TeamPickerDialog } from './NewTeamDialog'
 import { EXTRA_KITS, fromHex, hex, type PendingKit, type PendingPicture } from './pending'
+
+const KitPreview = lazy(() => import('./KitPreview')) // three.js only loads when a team page shows the kits
 
 const KIND_LABELS: Record<number, MessageKey> = { 0: 'kit.home', 1: 'kit.away', 2: 'kit.goalkeeper', 3: 'kit.third' }
 const COLLARS = Array.from({ length: 16 }, (_, i) => i) // jerseycollargeometrytype values of the game (0-15)
@@ -284,8 +286,102 @@ const PRINT_FALLBACK: Required<KitPrint> = {
   collar: 0,
 }
 
+type KitImage = 'mini' | 'jersey' | 'shorts'
+
+/** Config the kit has on the page: the pending one, else the saved one. */
+const configOf = (kit: TeamKit, pending: PendingKit | undefined): KitConfig | null => (pending ? pending.config : kit.config)
+
+/** A picture of the kit as the page shows it (pending changes included): the minikit, or the jersey/shorts texture;
+ * null when the kit has none. url adds the cache token. */
+function kitImage(team: TeamDetail, kit: TeamKit, pending: PendingKit | undefined, url: (u: string) => string, part: KitImage, size: number): string | null {
+  const config = configOf(kit, pending)
+  const savedVersion = Object.values(kit.pictures).filter(Boolean).join('-')
+  if (!pending || config?.source === 'keep') return kit.config || kit.default ? url(`/api/image/kit/${team.id}/${kit.kind}?part=${part}&size=${size}&own=${savedVersion}`) : null
+  if (!config) return null
+  if (config.source === 'generic') return url(`/api/image/kitmodel/${config.model}?c1=${hex(config.colors[0])}&c2=${hex(config.colors[1])}&part=${part}&size=${size}`)
+  if (config.source === 'game') return url(`/api/image/kit/${config.team}/${config.kind}?part=${part}&size=${size}`)
+  const own = pending.pictures[part]
+  if (own && own !== 'remove') return own.url
+  if (own === 'remove') return null
+  return kit.pictures[part] ? url(`/api/image/kit/${team.id}/${kit.kind}?part=${part}&own=${kit.pictures[part]}`) : null
+}
+
+/** Name, numbers and collar the kit has on the page: the user's values over the kit's own. */
+const printOf = (kit: TeamKit, config: KitConfig | null): Required<KitPrint> => ({
+  ...PRINT_FALLBACK,
+  ...kit.print,
+  ...config?.print,
+  ...(config?.collar !== undefined ? { collar: config.collar } : {}),
+})
+
+/** The player whose name and number the preview prints: a goalkeeper for the goalkeeper kit, else the first outfield
+ * player of the squad. */
+function wearerOf(team: TeamDetail, kind: number, sampleName: string) {
+  const isKeeper = (r: TeamDetail['roster'][number]) => (r.link_position ?? r.position) === 0
+  const row = (kind === 2 ? team.roster.find(isKeeper) : team.roster.find((r) => !isKeeper(r))) ?? team.roster[0]
+  // a squad still empty (or a player without number/name): a sample, so the name and number options still show
+  return { id: row?.id ?? 0, number: row?.jersey ?? (kind === 2 ? 1 : 10), name: row?.back_name || sampleName }
+}
+
+/** The crest, name and numbers the game draws over the kit's jersey or shorts (a transparent layer, same UVs). */
+function kitPrintUrl(team: TeamDetail, kit: TeamKit, config: KitConfig | null, pending: boolean, part: 'jersey' | 'shorts', url: (u: string) => string, sampleName: string) {
+  const { collar: _collar, ...values } = printOf(kit, config)
+  const query = new URLSearchParams({ part, values: JSON.stringify(values) })
+  const wearer = wearerOf(team, kit.kind, sampleName)
+  if (wearer?.number != null) query.set('number', String(wearer.number))
+  if (wearer?.name) query.set('name', wearer.name)
+  const edited = pending && config && config.source !== 'keep' ? config : null
+  if (edited) query.set('config', JSON.stringify(edited))
+  const body: KitPrintBody = { part, values, number: wearer?.number ?? null, name: wearer?.name ?? null, config: edited }
+  return { url: url(`/api/preview/kit-print/${team.id}/${kit.kind}.png?${query}`), body }
+}
+
+/** The layer's picture: the GET URL, or with a crest chosen on the Crest tab and not saved yet, the same layer posted
+ * with that crest (a local URL of the answer; the previous one is kept while the new one loads). */
+function usePrintLayer(team: TeamDetail, kind: number, layer: { url: string; body: KitPrintBody } | null, crest: PendingPicture) {
+  const [posted, setPosted] = useState<{ key: string; url: string } | null>(null)
+  const key = layer && crest !== null ? `${layer.url}|${crest === 'remove' ? 'remove' : crest.url}` : null
+  useEffect(() => {
+    if (!key || !layer || crest === null) return
+    let alive = true
+    let made: string | undefined
+    api
+      .kitPrintPreview(team.id, kind, { ...layer.body, crest: crest === 'remove' ? 'remove' : crest.data })
+      .then((blob) => {
+        made = URL.createObjectURL(blob)
+        if (alive) setPosted({ key, url: made })
+        else URL.revokeObjectURL(made)
+      })
+      .catch(() => undefined) // keep what is on screen
+    return () => {
+      alive = false
+      // the 3D preview may still be loading it: let go a little later
+      if (made) setTimeout(() => URL.revokeObjectURL(made!), 10_000)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- key covers layer and crest
+  }, [key])
+  if (!layer) return null
+  return crest === null ? layer.url : (posted?.url ?? null)
+}
+
 /** One kit of the team: where it comes from (with a preview), its pictures when uploaded, and its name and numbers. */
-function KitCard({ team, kit, pending, setPending, fonts }: { team: TeamDetail; kit: TeamKit; pending: PendingKit | undefined; setPending: (p: PendingKit | undefined) => void; fonts: KitFonts | undefined }) {
+function KitCard({
+  team,
+  kit,
+  pending,
+  setPending,
+  fonts,
+  previewed,
+  onPreview,
+}: {
+  team: TeamDetail
+  kit: TeamKit
+  pending: PendingKit | undefined
+  setPending: (p: PendingKit | undefined) => void
+  fonts: KitFonts | undefined
+  previewed: boolean
+  onPreview: () => void
+}) {
   const { t } = useI18n()
   const kindLabel = useKindLabel()
   const url = useImageUrl()
@@ -299,27 +395,19 @@ function KitCard({ team, kit, pending, setPending, fonts }: { team: TeamDetail; 
   const update = (next: KitConfig | null, pics: Partial<Record<KitPart, PendingPicture>> = pictures) => setPending({ config: next, pictures: pics })
   const extra = kit.kind > 3
   const exists = !!config || !!kit.default // the kit is in the patch (its own, a default, or the user's)
-  const shown: Required<KitPrint> = { ...PRINT_FALLBACK, ...kit.print, ...(config?.print ?? {}), ...(config?.collar !== undefined ? { collar: config.collar } : {}) }
+  const shown = printOf(kit, config)
   const setPrint = (patch: KitPrint) => {
     const { collar, ...rest } = patch
     const base: KitConfig = config ?? { source: 'keep' }
     update({ ...base, ...(collar !== undefined ? { collar } : {}), print: { ...(base.print ?? {}), ...rest } })
   }
-  const savedVersion = Object.values(kit.pictures).filter(Boolean).join('-')
   const picture = (part: KitPart): string | null => {
     const p = pictures[part]
     if (p && p !== 'remove') return p.url
     if (p === 'remove') return null
     return kit.pictures[part] ? url(`/api/image/kit/${team.id}/${kit.kind}?part=${part}&own=${kit.pictures[part]}`) : null
   }
-  const preview = (part: 'mini' | 'jersey'): string | null => {
-    const size = part === 'mini' ? 256 : 512
-    if (!pending || config?.source === 'keep') return kit.config || kit.default ? url(`/api/image/kit/${team.id}/${kit.kind}?part=${part}&size=${size}&own=${savedVersion}`) : null
-    if (!config) return null
-    if (config.source === 'generic') return url(`/api/image/kitmodel/${config.model}?c1=${hex(config.colors[0])}&c2=${hex(config.colors[1])}&part=${part}&size=${size}`)
-    if (config.source === 'game') return url(`/api/image/kit/${config.team}/${config.kind}?part=${part}&size=${size}`)
-    return picture(part)
-  }
+  const preview = (part: 'mini' | 'jersey') => kitImage(team, kit, pending, url, part, part === 'mini' ? 256 : 512)
   const choosePicture = async (part: KitPart, file: File) => {
     try {
       const data = await readPicture(file)
@@ -347,11 +435,18 @@ function KitCard({ team, kit, pending, setPending, fonts }: { team: TeamDetail; 
           {kindLabel(kit.kind)}
           {pending && <span className="ml-2 text-xs font-normal text-amber-600 dark:text-amber-400">{t(removedExtra ? 'kit.removedPending' : 'kit.pending')}</span>}
         </p>
-        {extra && !removedExtra && (
-          <Button variant="ghost" size="sm" onClick={removeExtra}>
-            <Trash2 /> {t('kit.removeExtra')}
-          </Button>
-        )}
+        <div className="flex gap-1">
+          {exists && !removedExtra && (
+            <Button variant={previewed ? 'secondary' : 'ghost'} size="sm" onClick={onPreview} title={t('kit.previewHint')}>
+              <Eye /> {t('kit.preview')}
+            </Button>
+          )}
+          {extra && !removedExtra && (
+            <Button variant="ghost" size="sm" onClick={removeExtra}>
+              <Trash2 /> {t('kit.removeExtra')}
+            </Button>
+          )}
+        </div>
       </div>
       <div className="flex flex-wrap items-start gap-4">
         <div className="flex gap-2">
@@ -434,7 +529,18 @@ function KitCard({ team, kit, pending, setPending, fonts }: { team: TeamDetail; 
 }
 
 /** The team's kits (home, away, goalkeeper, third and the extras), two per row like the Street Studio's. */
-export function TeamKits({ team, pending, setPending }: { team: TeamDetail; pending: Record<number, PendingKit>; setPending: (kind: number, p: PendingKit | undefined) => void }) {
+export function TeamKits({
+  team,
+  pending,
+  setPending,
+  pendingCrest = null,
+}: {
+  team: TeamDetail
+  pending: Record<number, PendingKit>
+  setPending: (kind: number, p: PendingKit | undefined) => void
+  /** the crest chosen on the Crest tab and not saved yet: the preview shows it on the generic kits */
+  pendingCrest?: PendingPicture
+}) {
   const { t } = useI18n()
   const fonts = useKitFonts()
   // the team's kits + extra kits added on the page and not saved yet
@@ -442,8 +548,30 @@ export function TeamKits({ team, pending, setPending }: { team: TeamDetail; pend
   const nextExtra = EXTRA_KITS.find((k) => !kinds.includes(k))
   const color = (n: number, fallback: number[]) => ((team.saved[`teamcolor${n}`] ?? team.values[`teamcolor${n}`]) as number[] | null) ?? fallback
   const empty = (kind: number): TeamKit => ({ kind, config: null, pictures: { jersey: null, shorts: null, mini: null }, default: null, print: team.kits.find((k) => k.kind === 0)?.print ?? {} })
+  const kitOf = (kind: number) => team.kits.find((k) => k.kind === kind) ?? empty(kind)
+  const kindLabel = useKindLabel()
+  const url = useImageUrl()
+  // one preview for the page: the kit whose "Preview" button was pressed (home when the page opens)
+  const [previewKind, setPreviewKind] = useState(0)
+  const shownKind = kinds.includes(previewKind) ? previewKind : (kinds[0] ?? 0)
+  const shown = kitOf(shownKind)
+  const shownConfig = configOf(shown, pending[shownKind])
+  const hasKit = !!shownConfig || !!shown.default // nothing to print on a kit the team does not have
+  // the player who wears it in the preview: his head, face, hair, height, sleeves, socks and boots
+  const wearerId = wearerOf(team, shownKind, '').id
+  const token = useToken()
+  const wearerLook = useQuery({ queryKey: ['preview-look', token, wearerId], queryFn: () => api.previewLook(wearerId), enabled: !!token, staleTime: Infinity }).data
+  const previewKit = {
+    jersey: kitImage(team, shown, pending[shownKind], url, 'jersey', 1024),
+    shorts: kitImage(team, shown, pending[shownKind], url, 'shorts', 1024),
+    jerseyPrint: usePrintLayer(team, shownKind, hasKit ? kitPrintUrl(team, shown, shownConfig, !!pending[shownKind], 'jersey', url, t('kit.previewSampleName')) : null, pendingCrest),
+    shortsPrint: usePrintLayer(team, shownKind, hasKit ? kitPrintUrl(team, shown, shownConfig, !!pending[shownKind], 'shorts', url, t('kit.previewSampleName')) : null, pendingCrest),
+    collar: shownConfig?.collar ?? shown.print.collar ?? 0,
+    goalkeeper: shownKind === 2,
+  }
   return (
     <Section
+      className="overflow-visible" // the preview stays on screen (sticky) while the kits scroll
       title={t('kit.title')}
       description={t('kit.hint')}
       action={
@@ -458,10 +586,39 @@ export function TeamKits({ team, pending, setPending }: { team: TeamDetail; pend
         )
       }
     >
-      <div className="grid gap-4 xl:grid-cols-2">
-        {kinds.map((kind) => (
-          <KitCard key={kind} team={team} kit={team.kits.find((k) => k.kind === kind) ?? empty(kind)} pending={pending[kind]} setPending={(p) => setPending(kind, p)} fonts={fonts} />
-        ))}
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="grid gap-4 2xl:grid-cols-2">
+          {kinds.map((kind) => (
+            <KitCard
+              key={kind}
+              team={team}
+              kit={kitOf(kind)}
+              pending={pending[kind]}
+              setPending={(p) => setPending(kind, p)}
+              fonts={fonts}
+              previewed={kind === shownKind}
+              onPreview={() => setPreviewKind(kind)}
+            />
+          ))}
+        </div>
+        <div className="space-y-2 rounded-lg border bg-card p-3 lg:sticky lg:top-0">
+          <div>
+            <p className="font-medium">{t('kit.previewTitle', { kind: kindLabel(shownKind) })}</p>
+            <p className="text-xs text-muted-foreground">{t('kit.previewDescription')}</p>
+            {team.roster.length === 0 && <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">{t('kit.previewSample')}</p>}
+          </div>
+          <div className="aspect-[3/4] w-full overflow-hidden rounded-md bg-gradient-to-b from-muted to-background">
+            <Suspense
+              fallback={
+                <div className="flex size-full items-center justify-center text-muted-foreground">
+                  <LoaderCircle className="size-6 animate-spin" />
+                </div>
+              }
+            >
+              <KitPreview kit={previewKit} look={wearerLook} />
+            </Suspense>
+          </div>
+        </div>
       </div>
     </Section>
   )

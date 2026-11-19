@@ -327,6 +327,8 @@ def team(con, lang: str, tid: int) -> dict | None:
     raw = json.loads(row['raw'] or '{}')
     roster = [dict(r) for r in con.execute(
         f"""SELECT pl.id, {_player_name()} AS name, pl.overall, pl.position, tp.jersey, tp.position AS link_position,
+                  COALESCE({_saved('player', 'pl', 'name.jersey')}, pl.jersey_name, {_saved('player', 'pl', 'name.last')},
+                           pl.last, pl.name) AS back_name,
                   pl.has_photo, tp.ord
            FROM v_team_players tp JOIN players pl ON pl.id = tp.player_id WHERE tp.team_id = ?
            ORDER BY tp.ord, tp.position, pl.overall DESC""", (tid,))]

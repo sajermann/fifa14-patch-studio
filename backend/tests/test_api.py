@@ -56,6 +56,46 @@ def test_details_and_pictures(client):
     assert client.get('/api/image/crest/999').status_code == 404
 
 
+
+def test_kit_preview_files(client):
+    glb = client.get('/api/preview/mesh/shorts/0.glb')
+    assert glb.status_code == 200 and glb.content[:4] == b'glTF'
+    assert glb.headers['content-type'] == 'model/gltf-binary'
+    assert client.get('/api/preview/texture/skin/4.png').headers['content-type'] == 'image/png'
+    assert client.get('/api/preview/mesh/jersey/1.glb?collar=5').status_code == 404  # not in the game
+    assert client.get('/api/preview/texture/tattoo/1.png').status_code == 404
+    look = client.get(f'/api/preview/look/{fakegame.STAR}').json()
+    assert look['real'] is False and look['scale'] > 0  # no headclasscode in the fake rows: generic
+    assert client.get('/api/preview/look/999999').json()['head'] == 1  # not in the game: the model
+    assert client.get('/api/preview/face/0_0_0_0_0_4.png').status_code == 200
+    assert client.get('/api/preview/face/x.png').status_code == 404
+    mask = client.get('/api/kit-models').json()['models'][0]
+    assert client.get(f'/api/image/kitmodel/{mask}?part=shorts&c1=0000ff').status_code == 200
+    tid = fakegame.TEAM
+    values = '{"number_font": 1, "number_color": 1, "shorts_number": true, "shorts_number_font": 1, "shorts_number_color": 1}'
+    layer = client.get(f'/api/preview/kit-print/{tid}/0.png', params={'values': values, 'number': 9, 'name': 'X'})
+    assert layer.status_code == 200 and layer.headers['content-type'] == 'image/png'
+    generic = '{"source": "generic", "model": %d, "colors": [[0, 0, 255], [255, 255, 255]]}' % mask
+    assert client.get(f'/api/preview/kit-print/{tid}/0.png', params={'part': 'shorts', 'config': generic,
+                                                                    'values': values, 'number': 9}).status_code == 200
+    assert client.get(f'/api/preview/kit-print/{tid}/0.png', params={'config': '{"source": "upload"}'}).status_code == 200
+    assert client.get(f'/api/preview/kit-print/{tid}/0.png', params={'config': '{bad'}).status_code == 400
+    assert client.get(f'/api/preview/kit-print/{tid}/0.png', params={'part': 'mini'}).status_code == 404
+    assert client.get(f'/api/teams/{tid}').json()['roster'][0]['back_name']
+    import base64
+    import io as io_lib
+    from PIL import Image
+    buf = io_lib.BytesIO()
+    Image.new('RGBA', (32, 32), (0, 0, 255, 255)).save(buf, 'PNG')
+    body = {'config': {'source': 'generic', 'model': mask, 'colors': [[0, 0, 0], [0, 0, 0]]},
+            'crest': base64.b64encode(buf.getvalue()).decode()}
+    pending = client.post(f'/api/preview/kit-print/{tid}/0.png', json=body)
+    assert pending.status_code == 200
+    # the crest rectangle of the fake kit is u/v 0.1-0.2 of the 1024 px jersey layer
+    assert Image.open(io_lib.BytesIO(pending.content)).convert('RGBA').getpixel((150, 150)) == (0, 0, 255, 255)
+    assert client.post(f'/api/preview/kit-print/{tid}/0.png', json={**body, 'crest': 'remove'}).status_code == 200
+    assert client.post(f'/api/preview/kit-print/{tid}/0.png', json={**body, 'crest': 'nope'}).status_code == 400
+
 def test_build_install_uninstall(client, game_dir):
     client.put(f'/api/teams/{fakegame.TEAM}', json={'names': {'full': {'*': 'Installed'}}})
     for step in ('build', 'install', 'uninstall'):

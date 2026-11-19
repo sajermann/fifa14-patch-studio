@@ -275,6 +275,25 @@ def kit_rx3(color):
     return b'RX3l' + b'\0' * 8 + struct.pack('<I', len(sections)) + table + body
 
 
+def mesh_rx3(name):
+    """RX3l with one triangle (positions in cm and UVs), named like the game's '<name>_.FxRenderableSimple'."""
+    from f14mod.rx3mesh import DECL, INDICES, NAMES, VERTICES
+    decl = b'\0' * 16 + b'p0:00:00:0001:3f32 t0:0C:00:0001:2f32\0'
+    verts = [(0, 100, 0, 0, 0), (10, 100, 0, 1, 0), (0, 110, 0, 0, 1)]
+    raw = b''.join(struct.pack('<5f', *v) for v in verts)
+    vertices = struct.pack('<IIII', len(raw), len(verts), 20, 0) + raw
+    indices = struct.pack('<II', 6, 3) + bytes([2]) + bytes(7) + struct.pack('<3H', 0, 1, 2)
+    label = f'{name}_.FxRenderableSimple'.encode() + b'\0'
+    names = struct.pack('<IIII', 0, 1, 0, 0) + struct.pack('<II', 0, len(label)) + label
+    sections = [(DECL, decl), (VERTICES, vertices), (INDICES, indices), (NAMES, names)]
+    off = 16 + 16 * len(sections)
+    table, body = b'', b''
+    for kind, blob in sections:
+        table += struct.pack('<IIII', kind, off + len(body), len(blob), 0)
+        body += blob
+    return b'RX3l' + b'\0' * 8 + struct.pack('<I', len(sections)) + table + body
+
+
 def chunkzip(raw, chunk_size=0x8000):
     """EA's 'chunkzip' container (raw-deflate chunks aligned to 8 bytes), the way some patches ship kits."""
     import zlib
@@ -329,6 +348,13 @@ def build(root):
     path = os.path.join(data, 'sceneassets', 'heads', f'head_{KEEPER}_0.rx3')
     with open(path, 'wb') as f:
         f.write(b'fake head')
+    # 3D preview: one body part and the skin (the rest of the player is missing: those parts answer 404)
+    for game_path, blob in (('body/shorts_1_0.rx3', mesh_rx3('shorts')), ('body/skin_4_textures.rx3', kit_rx3((180, 120, 90))),
+                           ('faces/face_0_1_0_0_0_0_0_0_4_textures.rx3', kit_rx3((200, 150, 120)))):
+        path = os.path.join(data, 'sceneassets', *game_path.split('/'))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'wb') as f:
+            f.write(blob)
     for game_path, blob in _fonts().items():
         path = os.path.join(root, 'Game', *game_path.split('/'))
         os.makedirs(os.path.dirname(path), exist_ok=True)

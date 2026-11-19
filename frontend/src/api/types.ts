@@ -199,6 +199,8 @@ export interface RosterRow {
   jersey: number | null
   link_position: number | null
   link_position_name: string | null
+  /** the name printed on the back of the jersey (jersey name, else last name) */
+  back_name: string | null
   has_photo: boolean
 }
 
@@ -251,6 +253,16 @@ export interface KitFonts {
 }
 
 export type KitPart = 'jersey' | 'shorts' | 'mini'
+
+/** Body of POST /api/preview/kit-print: the layer with a crest not saved yet (base64 picture, or 'remove'). */
+export interface KitPrintBody {
+  part: 'jersey' | 'shorts'
+  values: Omit<KitPrint, 'collar'>
+  number: number | null
+  name: string | null
+  config: KitConfig | null
+  crest?: string
+}
 
 export interface TeamKit {
   kind: number
@@ -347,4 +359,21 @@ export interface Options {
   languages: string[]
   nations: Ref[]
   teams: Ref[]
+}
+
+/** How the player looks (GET /api/preview/look/<id>, f14mod.preview.look): real = his own face files (head, hair,
+ * eyes and face are then his id); hair 0 = bald; scale = his height over the reference model's. */
+export interface PreviewLook {
+  real: boolean
+  head: number
+  hair: number
+  hair_color: string
+  eyes: number
+  face: string
+  skin: number
+  sleeve: number
+  socks: number
+  shoe: number
+  glove: number
+  scale: number
 }

@@ -12,7 +12,8 @@ from pydantic import BaseModel
 
 from . import settings  # noqa: I001 - first: it puts the core folder on the path
 
-from f14mod import builder, fields, fifa14, flags, images, install_check, installer, teamkits  # noqa: E402
+from f14mod import (builder, fields, fifa14, flags, images, install_check, installer, kitprint, preview,  # noqa: E402
+                    teamkits)
 
 from . import dialogs, queries  # noqa: E402
 from .state import GameState, Jobs, project  # noqa: E402
@@ -961,32 +962,26 @@ def _png_response(img, size: Optional[int], cache: str = 'no-cache'):
 @app.get('/api/image/kitmodel/{model}')
 def kit_model_image(model: int, c1: Optional[str] = None, c2: Optional[str] = None, part: str = 'mini',
                     size: Optional[int] = None):
-    """A generic mask kit painted with two colors (hex RRGGBB): its minikit, or the jersey texture."""
+    """A generic mask kit painted with two colors (hex RRGGBB): its minikit, or the jersey/shorts texture."""
     if game.state != 'ready':
         raise ApiError(409, 'game_not_ready')
     files = game.files()
     config = {'source': 'generic', 'model': model, 'colors': [_hex(c1, (255, 255, 255)), _hex(c2, (30, 30, 30))]}
-    if part == 'jersey':
+    if part in ('jersey', 'shorts'):
         data = files.read(teamkits.KIT_FILE.format(model, 0))
         if data is None:
             raise ApiError(404, 'not_found')
-        img = teamkits.paint_mask(teamkits.textures(data)['jersey'], *config['colors'])
+        img = teamkits.paint_mask(teamkits.textures(data)[part], *config['colors'])
     else:
         img = images.decode_dds(teamkits.minikit(files, config, 0, teamkits.MODEL_TEAM, None))
     return _png_response(img, size, IMAGE_HEADERS['Cache-Control'])
 
 
-@app.get('/api/image/kit/{tid}/{kind}')
-def team_kit_image(tid: int, kind: int, part: str = 'mini', size: Optional[int] = None):
-    """A kit of a team as the patch makes it: the minikit (`part=mini`) or the jersey/shorts texture."""
-    if game.state != 'ready':
-        raise ApiError(409, 'game_not_ready')
-    with db() as con:
-        team = _team(con, tid)
+def _saved_kit_config(team: dict, tid: int, kind: int) -> dict:
+    """The kit as the patch makes it (the user's config, else the team's default); 404 when the team has none."""
     kit = next((k for k in team['kits'] if k['kind'] == kind), None)
     if kit is None:
         raise ApiError(404, 'not_found')
-    files, p = game.files(), project()
     template = team['template'] or tid
     config = kit['config']
     if config is None and kit['default'] == 'generic':
@@ -1000,6 +995,38 @@ def team_kit_image(tid: int, kind: int, part: str = 'mini', size: Optional[int] 
         config = {'source': 'game', 'team': template if team['copied'] else tid, 'kind': kind}
     if config is None:
         raise ApiError(404, 'not_found')
+    return config
+
+
+def _team_crest(team: dict, tid: int, pending=None):
+    """The crest the patch puts on a generic kit (same rule as the builder): the user's picture, a plain crest for a
+    team made from scratch, else the game's crest of the team (or of its model). pending = a crest chosen on the page
+    and not saved yet (a picture, or 'remove')."""
+    if pending is not None and pending != 'remove':
+        return pending
+    found = project().picture('team', tid, 'crest') if pending is None else None
+    if found:
+        return images.decode_png(found[0])
+    if team['is_new'] and not team['copied']:
+        color = lambda n, default: team['saved'].get(f'teamcolor{n}') or team['values'].get(f'teamcolor{n}') or default  # noqa: E731
+        return teamkits.plain_crest(team.get('abbr3') or '', color(1, [200, 200, 200]), color(2, [255, 255, 255]))
+    data = game.files().read(teamkits.CREST_FILE.format('crest', team['template'] or tid))
+    try:
+        return images.decode_dds(data) if data is not None else None
+    except images.UNREADABLE:
+        return None
+
+
+@app.get('/api/image/kit/{tid}/{kind}')
+def team_kit_image(tid: int, kind: int, part: str = 'mini', size: Optional[int] = None):
+    """A kit of a team as the patch makes it: the minikit (`part=mini`) or the jersey/shorts texture."""
+    if game.state != 'ready':
+        raise ApiError(409, 'game_not_ready')
+    with db() as con:
+        team = _team(con, tid)
+    files, p = game.files(), project()
+    template = team['template'] or tid
+    config = _saved_kit_config(team, tid, kind)
     pics = {}
     for name in KIT_PARTS:
         found = p.picture('team', tid, f'kit{kind}_{name}')
@@ -1024,6 +1051,129 @@ def team_kit_image(tid: int, kind: int, part: str = 'mini', size: Optional[int] 
     except (FileNotFoundError, KeyError, TypeError, images.UNREADABLE) as e:
         raise ApiError(404, 'not_found', str(e))
     return _png_response(img, size)
+
+
+# ---- 3D preview of a kit: game meshes (GLB) and textures (PNG) of the player that wears it -------------------------
+
+@app.get('/api/preview/look/{pid}')
+def preview_look(pid: int):
+    """How the preview dresses a player (f14mod.preview.look); a player the game does not have = the model."""
+    import json as json_lib
+    if game.state != 'ready':
+        raise ApiError(409, 'game_not_ready')
+    with db() as con:
+        row = con.execute('SELECT raw FROM players WHERE id = ?', (pid,)).fetchone()
+    raw = json_lib.loads(row['raw']) if row and row['raw'] else None
+    return preview.look(game.files(), pid if raw else None, raw)
+
+
+@app.get('/api/preview/mesh/{part}/{code}.glb')
+def preview_mesh(part: str, code: int, collar: int = 0, real: bool = False):
+    """One part of the player (head, hair, jersey, arms, shorts, socks, legs, shoes, gloves) as GLB; real = the
+    head/hair of a player's own face (code = his id)."""
+    if game.state != 'ready':
+        raise ApiError(409, 'game_not_ready')
+    try:
+        data = preview.mesh_glb(game.files(), part, code, collar, real)
+    except preview.PreviewError as e:
+        raise ApiError(404, 'not_found', str(e))
+    return Response(data, media_type='model/gltf-binary', headers=IMAGE_HEADERS)
+
+
+@app.get('/api/preview/texture/{name}/{code}.png')
+def preview_texture(name: str, code: int, real: bool = False):
+    """A texture of the player (eyes, hair, hair-cap, hair-strands, skin, shoe, glove, jersey-shade,
+    shorts-shade); real = eyes/hair of a player's own face."""
+    if game.state != 'ready':
+        raise ApiError(409, 'game_not_ready')
+    try:
+        data = preview.texture_png(game.files(), name, code, real)
+    except preview.PreviewError as e:
+        raise ApiError(404, 'not_found', str(e))
+    return Response(data, media_type='image/png', headers=IMAGE_HEADERS)
+
+
+@app.get('/api/preview/face/{key}.png')
+def preview_face(key: str):
+    """The face texture: a player's own (key = his id) or a generic one (key = preview.face_key)."""
+    if game.state != 'ready':
+        raise ApiError(409, 'game_not_ready')
+    try:
+        data = preview.face_png(game.files(), key)
+    except preview.PreviewError as e:
+        raise ApiError(404, 'not_found', str(e))
+    return Response(data, media_type='image/png', headers=IMAGE_HEADERS)
+
+
+class KitPrintBody(BaseModel):
+    part: str = 'jersey'
+    config: Optional[dict] = None
+    values: dict = {}
+    number: Optional[int] = None
+    name: Optional[str] = None
+    crest: Optional[str] = None  # the crest chosen on the page and not saved yet: base64 picture, or 'remove'
+
+
+@app.get('/api/preview/kit-print/{tid}/{kind}.png')
+def preview_kit_print(tid: int, kind: int, part: str = 'jersey', config: Optional[str] = None,
+                      values: Optional[str] = None, number: Optional[int] = None, name: Optional[str] = None):
+    """What the game draws over a kit's jersey or shorts texture (crest, name, numbers) as a transparent picture with
+    the same UVs. config = the kit's config still being edited (JSON; none = the saved one); values = its name and
+    numbers (JSON, teamkits.PRINT keys); number/name = the player who wears it."""
+    import json as json_lib
+    try:
+        cfg = json_lib.loads(config) if config else None
+        shown = json_lib.loads(values) if values else {}
+    except ValueError:
+        raise ApiError(400, 'bad_request')
+    return _kit_print(tid, kind, part, cfg, shown, number, name, None)
+
+
+@app.post('/api/preview/kit-print/{tid}/{kind}.png')
+def preview_kit_print_pending(tid: int, kind: int, body: KitPrintBody):
+    """The same layer with a crest not saved yet (too big for a query)."""
+    import base64
+    import binascii
+    crest = None
+    if body.crest == 'remove':
+        crest = 'remove'
+    elif body.crest:
+        try:
+            crest = images.decode_png(images.normalize_picture(base64.b64decode(body.crest, validate=True)))
+        except (binascii.Error, *images.UNREADABLE) as e:
+            raise ApiError(400, 'bad_picture', str(e))
+    return _kit_print(tid, kind, body.part, body.config, body.values, body.number, body.name, crest)
+
+
+def _kit_print(tid: int, kind: int, part: str, cfg, shown, number, name, crest):
+    if game.state != 'ready':
+        raise ApiError(409, 'game_not_ready')
+    if part not in ('jersey', 'shorts'):
+        raise ApiError(404, 'not_found')
+    with db() as con:
+        team = _team(con, tid)
+    if not isinstance(cfg, dict) or cfg.get('source') in (None, 'keep'):
+        cfg = _saved_kit_config(team, tid, kind)
+    if not isinstance(shown, dict):
+        shown = {}
+    files, template = game.files(), team['template'] or tid
+    crest_picture = None  # the kit file's own crest_cm
+    if cfg['source'] == 'game':
+        data = files.read(teamkits.KIT_FILE.format(cfg.get('team'), cfg.get('kind', kind)))
+    elif cfg['source'] == 'generic':
+        data = files.read(teamkits.KIT_FILE.format(cfg.get('model'), 0))
+        crest_picture = _team_crest(team, tid, crest) or teamkits.EMPTY
+    else:  # upload: the model kit's table; the pictures already carry the crest
+        data = next((d for t, k in ((template, kind), (template, 0), (teamkits.MODEL_TEAM, kind),
+                                    (teamkits.MODEL_TEAM, 0)) if (d := files.read(teamkits.KIT_FILE.format(t, k)))),
+                    None)
+        crest_picture = teamkits.EMPTY
+    size = (1024, 1024) if part == 'jersey' else (1024, 512)
+    try:
+        img = kitprint.decal(files, data, part, size, shown, number=number, name=name, crest_picture=crest_picture)
+    except (ValueError, KeyError, TypeError, images.UNREADABLE) as e:
+        raise ApiError(404, 'not_found', str(e))
+    return Response(images.png(img), media_type='image/png', headers={'Cache-Control': 'no-cache'})
 
 
 # ---- patch: build, install, uninstall -------------------------------------------------------------------------------

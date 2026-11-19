@@ -111,26 +111,25 @@ export function TeamPage() {
     <div className="space-y-4">
       <BackButton back={back} />
       <div className="flex flex-wrap justify-between gap-x-4 gap-y-3">
-        <div className="flex min-w-0 items-center gap-3">
+        {/* one line like the league and country headers: crest, name, leagues · ID, badges */}
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           {crestUrl ? (
-            <img src={crestUrl} alt="" className="size-12 object-contain" />
+            <img src={crestUrl} alt="" className="size-10 shrink-0 object-contain" />
           ) : (
-            <Crest id={team.id} size={96} available={team.has_crest || team.is_new} version={team.own_crest} className="size-12" />
+            <Crest id={team.id} size={96} available={team.has_crest || team.is_new} version={team.own_crest} className="size-10 shrink-0" />
           )}
-          <div className="min-w-0">
-            <h1 className="text-2xl font-semibold break-words">{team.name}</h1>
-            <p className="text-sm text-muted-foreground">
-              {team.leagues.map((l, i) => (
-                <span key={l.id}>
-                  {i > 0 && ' · '}
-                  <Link to={`/leagues/${l.id}`} state={from.state} className="hover:underline">
-                    {l.name}
-                  </Link>
-                </span>
-              ))}{' '}
-              {team.leagues.length > 0 && '· '}ID {team.id}
-            </p>
-          </div>
+          <h1 className="min-w-0 text-2xl font-semibold break-words">{team.name}</h1>
+          <span className="shrink-0 text-sm text-muted-foreground tabular-nums">
+            {team.leagues.map((l, i) => (
+              <span key={l.id}>
+                {i > 0 && ' · '}
+                <Link to={`/leagues/${l.id}`} state={from.state} className="hover:underline">
+                  {l.name}
+                </Link>
+              </span>
+            ))}
+            {team.leagues.length > 0 && ' · '}ID {team.id}
+          </span>
           <OriginalBadge edited={team.edited} isNew={team.is_new} />
           {hide.hidden && <OutOfPatchBadge alert label={team.is_new ? undefined : t('teams.hiddenByProject')} />}
         </div>
@@ -185,6 +184,7 @@ export function TeamPage() {
         <TabsContent value="kits" className="mt-4">
           <TeamKits
             team={team}
+            pendingCrest={pendingCrest}
             pending={pendingKits}
             setPending={(kind, p) =>
               setPendingKits((all) => {

@@ -1,5 +1,5 @@
 import { hasMessage, translate } from '@/i18n'
-import type { Config, CountryDetail, CountryRow, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, NameTable, Options, Page, PlayerDetail, PlayerRow, Status, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart } from './types'
+import type { Config, CountryDetail, CountryRow, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, NameTable, Options, Page, PlayerDetail, PlayerRow, Status, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook } from './types'
 
 /** Error of the backend; `message` is in the interface language when the app knows its code. */
 export class ApiError extends Error {
@@ -109,6 +109,10 @@ export const api = {
   uploadCountryFlag: (id: number, data: string) => request<CountryDetail>('PUT', `/api/countries/${id}/flag`, { data }),
   removeCountryFlag: (id: number) => request<CountryDetail>('DELETE', `/api/countries/${id}/flag`),
   /** A chosen picture drawn as the flag, not saved yet. */
+  /** How the kit preview dresses a player (0 or unknown = the model). */
+  previewLook: (pid: number) => get<PreviewLook>(`/api/preview/look/${pid}`),
+  /** The crest/name/numbers layer of the kit preview with a crest not saved yet. */
+  kitPrintPreview: async (tid: number, kind: number, body: KitPrintBody) => (await send('POST', `/api/preview/kit-print/${tid}/${kind}.png`, body)).blob(),
   flagPreview: async (data: string, size: number) => (await send('POST', `/api/flag-preview?size=${size}`, { data })).blob(),
   resetCountry: (id: number) => request<CountryDetail>('DELETE', `/api/countries/${id}/edits`),
   deleteCountry: (id: number) => request<{ deleted: number }>('DELETE', `/api/countries/${id}`),
