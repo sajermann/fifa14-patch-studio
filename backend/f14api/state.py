@@ -111,7 +111,10 @@ class Jobs:
                 job['result'] = work(progress)
                 job['state'], job['done'] = 'done', 1.0
             except Exception as e:  # noqa: BLE001
-                log.exception('%s failed', kind)
+                if getattr(e, 'code', None) == 'build_cancelled':
+                    log.info('%s stopped by the user', kind)
+                else:
+                    log.exception('%s failed', kind)
                 job['state'], job['error'] = 'error', f'{type(e).__name__}: {e}'
                 # a limit of the game (builder.BuildError): the interface shows its own message
                 job['code'], job['detail'] = getattr(e, 'code', None), getattr(e, 'detail', None)
@@ -123,5 +126,6 @@ class Jobs:
 
 
 def project() -> Project:
-    os.makedirs(settings.PROJECT_DIR, exist_ok=True)
-    return Project(os.path.join(settings.PROJECT_DIR, 'project.sqlite'))
+    folder = settings.load().project_folder()
+    os.makedirs(folder, exist_ok=True)
+    return Project(os.path.join(folder, 'project.sqlite'))

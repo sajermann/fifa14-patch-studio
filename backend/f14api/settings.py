@@ -5,7 +5,7 @@ import os
 import sys
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 log = logging.getLogger('f14api')
 
@@ -41,6 +41,8 @@ APP_VERSION = _version()
 if CORE_DIR not in sys.path:
     sys.path.insert(0, CORE_DIR)
 
+from f14mod import workers  # noqa: E402 - after the core folder is on the path
+
 Language = Literal['pt-BR', 'en']
 GAME_LANGUAGE_OF = {'pt-BR': 'por_br', 'en': 'eng_us'}
 
@@ -50,6 +52,26 @@ class Config(BaseModel):
     game_dir: Optional[str] = None       # the FIFA 14 installation the app patches
     names_language: Optional[str] = None  # game language the lists show names in (None = the interface's)
     face_pack_dirs: list[str] = []         # folders of face packs (one folder = one pack, read in place)
+    # where the project lives (the Street Studio's project folder). Added 20/11/2026, optional: None = PROJECT_DIR,
+    # older files load unchanged. A new folder starts an empty project there; the old one stays where it was
+    project_dir: Optional[str] = None
+    # what the build may use (f14mod.workers; None = the defaults). Added 19/11/2026, optional: older files load
+    # unchanged; out-of-range values (more cores than the machine has, memory outside 10-90%) are brought into range
+    build_cores: Optional[int] = None
+    build_memory_percent: Optional[int] = None
+
+    @field_validator('build_cores', mode='after')
+    @classmethod
+    def _cores_in_range(cls, v):
+        return workers.clamp_cores(v)
+
+    @field_validator('build_memory_percent', mode='after')
+    @classmethod
+    def _memory_in_range(cls, v):
+        return workers.clamp_memory_percent(v)
+
+    def project_folder(self) -> str:
+        return self.project_dir or PROJECT_DIR
 
     def shown_language(self) -> str:
         return self.names_language or GAME_LANGUAGE_OF.get(self.language or 'en', 'eng_us')

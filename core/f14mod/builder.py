@@ -5,15 +5,24 @@ How each changed file reaches the game:
     whose archive lists it gets that record's hash words zeroed, so the game opens the loose file;
   - an entry of data/loc/locale.big (no .bh): the whole archive is written again with the new entry.
 The patch never holds the big archives themselves.
+
+The build goes in BUILD_STEPS, like the Street Studio's: the language texts start first in worker processes
+(f14mod.workers: pure Python, the slow part), the database is edited meanwhile, the pictures (kits, crests, photos,
+league pictures, flags: Pillow) are made in a thread pool, then everything is written. Texts and pictures are kept
+in the build cache (f14mod.buildcache): building again only makes what changed. Faces are copied as they are (the
+game's own format): nothing to convert or keep.
 """
+import functools
 import os
 import shutil
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import wait as wait_futures
 
 import re
 
 from PIL import Image
 
-from . import bh, fields, fifa14, flags, images, t3db, teamkits
+from . import bh, buildcache, fields, fifa14, flags, images, t3db, teamkits, workers
 from .big import BigArchive, normalize, rebuild
 from .dbedit import Database, LanguageStrings, Table
 from .gamefs import DATABASE, GameFiles
@@ -22,16 +31,87 @@ from .project import DEFAULT_LANG, Project
 LOCALE = 'data/loc/locale.big'
 
 
+BUILD_STEPS = ('database', 'images', 'texts', 'files')
+
+
+class BuildCancelled(Exception):
+    """The user stopped the build (build(cancel=...)). What was made so far stays in the cache."""
+    code = 'build_cancelled'  # what the interface shows (f14api Jobs: job code)
+
+
 class PatchBuilder:
-    def __init__(self, files: GameFiles):
+    def __init__(self, files: GameFiles, pool: ThreadPoolExecutor | None = None,
+                 cache: buildcache.BuildCache | None = None, name_of=None):
         self.files = files
         self.entries: dict[str, bytes] = {}  # game path -> new bytes
+        self.pool = pool  # threads for the pictures (None = made at once)
+        self.cache = cache
+        self.game_key = ''  # buildcache.game_fingerprint of files (set by build when there is a cache)
+        self.name_of = name_of  # (kind, id) -> shown name, for the progress
+        self.jobs: list[tuple[Future, str, str]] = []  # pictures being made: (future of {path: bytes}, kind, name)
+        self.from_cache: set[str] = set()  # game paths whose bytes the build cache gave
+
+    def put_all(self, files: dict[str, bytes], cached: bool) -> None:
+        for path, data in files.items():
+            self.put(path, data)
+            if cached:
+                self.from_cache.add(normalize(path))
+            else:
+                self.from_cache.discard(normalize(path))
 
     def put(self, game_path: str, data: bytes) -> None:
         self.entries[normalize(game_path)] = data
 
-    def write(self, out_dir: str) -> dict:
-        """Writes the patch into out_dir (emptied first); returns a summary."""
+    def name(self, kind: str, oid: int, project: 'Project | None' = None) -> str:
+        """What the progress says about an entity: its shown name, else the project's name, else its id."""
+        shown = self.name_of(kind, oid) if self.name_of else None
+        if not shown and project is not None:
+            shown = _shown_name(project.names(kind, oid))
+        return shown or str(oid)
+
+    def key(self, kind: str, modules: tuple, *parts) -> str | None:
+        """Cache key of a picture job (None when there is no cache)."""
+        if self.cache is None or not self.cache.folder:
+            return None
+        return buildcache.key(kind, buildcache.code_version(*modules), self.game_key, *parts)
+
+    def later(self, kind: str, name: str, key: str | None, make) -> None:
+        """make() -> {game path: bytes}, run in the thread pool (Pillow releases the GIL) or reused from the cache
+        under key; collect() puts the files in once they are all made. kind / name: what the progress says while the
+        build waits for it (kit, crest, photo, league, flag)."""
+        def run():
+            if key is not None:
+                found = self.cache.get(key)
+                if found is not None:
+                    return found, True
+            made = make()
+            if key is not None:
+                self.cache.put(key, made)
+            return made, False
+        if self.pool is None:
+            future: Future = Future()
+            future.set_result(run())
+        else:
+            future = self.pool.submit(run)
+        self.jobs.append((future, kind, name))
+
+    def collect(self, progress=None, check=None) -> None:
+        """Waits for the pictures (progress('images', done, total, kind=..., name=...) while waiting; check() may
+        stop the build) and puts their files in, in the order they were asked."""
+        total = len(self.jobs)
+        for k, (future, kind, name) in enumerate(self.jobs):
+            while not future.done():
+                if check:
+                    check()
+                if progress:
+                    done = k + sum(1 for f, _, _ in self.jobs[k:] if f.done())
+                    progress('images', done, total, kind=kind, name=name)
+                wait_futures([future], timeout=0.5)
+            self.put_all(*future.result())
+        self.jobs = []
+
+    def write(self, out_dir: str, progress=None) -> dict:
+        """Writes the patch into out_dir (emptied first); returns a summary. progress('files', done, total)."""
         if os.path.isdir(out_dir):
             shutil.rmtree(out_dir)
         os.makedirs(out_dir)
@@ -39,7 +119,10 @@ class PatchBuilder:
         locale_entries = BigArchive(locale_path).entries if locale_path else {}
         to_locale = {k: v for k, v in self.entries.items() if k in locale_entries}
         loose = {k: v for k, v in self.entries.items() if k not in locale_entries}
-        for path, data in loose.items():
+        total = len(loose) + 1
+        for k, (path, data) in enumerate(loose.items()):
+            if progress and k % 20 == 0:
+                progress('files', k, total)
             target = os.path.join(out_dir, *path.split('/'))
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, 'wb') as f:
@@ -50,7 +133,13 @@ class PatchBuilder:
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, 'wb') as f:
                 f.write(rebuild(locale_path, to_locale))
-        return {'loose': sorted(loose), 'locale': sorted(to_locale), 'indexes': indexes}
+        if progress:
+            progress('files', total, total)
+        # files of the patch the build cache gave whole: "N files, X new and Y reused from the cache"
+        reused = sum(1 for k in loose if k in self.from_cache)
+        if to_locale and all(k in self.from_cache for k in to_locale):
+            reused += 1
+        return {'reused_files': reused, 'loose': sorted(loose), 'locale': sorted(to_locale), 'indexes': indexes}
 
     def _zero_indexes(self, paths: set[str], out_dir: str) -> dict[str, int]:
         """Writes each .bh that lists one of the paths, with those records zeroed; {bh name: records zeroed}."""
@@ -408,22 +497,26 @@ def created_pictures(files: GameFiles, project: Project, builder: 'PatchBuilder'
     logos = project.with_picture('league', 'logo')
     for lid in logos:  # the user's picture: the eight league pictures drawn from it
         png_data = project.picture('league', lid, 'logo')[0]
-        for pattern, (size, _dark) in fifa14.LEAGUE_PICTURES.items():
-            builder.put(pattern.format(lid), images.league_from_picture(png_data, size))
-            count += 1
+        builder.later('league', builder.name('league', lid, project),
+                      builder.key('league_logo', ('images',), lid, png_data, fifa14.LEAGUE_PICTURES),
+                      functools.partial(_league_logo_files, lid, png_data))
+        count += len(fifa14.LEAGUE_PICTURES)
     for lid in project.created('league'):
         if lid in logos:
             continue
         names = project.names('league', lid)
         text = _shown_name(names, 'abbr') or _shown_name(names, 'abbr15') or _shown_name(names) or str(lid)
-        for pattern, (size, dark) in fifa14.LEAGUE_PICTURES.items():
-            builder.put(pattern.format(lid), images.league_picture(size, dark, text))
-            count += 1
+        builder.later('league', builder.name('league', lid, project),
+                      builder.key('league_tile', ('images',), lid, text, fifa14.LEAGUE_PICTURES),
+                      functools.partial(_league_tile_files, lid, text))
+        count += len(fifa14.LEAGUE_PICTURES)
     drawn = project.with_picture('country', 'flag')
     for nid in drawn:  # the user's picture: the four flag files drawn from it
-        for pattern, data in flags.flag_files(files, project.picture('country', nid, 'flag')[0]).items():
-            builder.put(pattern.format(nid), data)
-            count += 1
+        png_data = project.picture('country', nid, 'flag')[0]
+        builder.later('flag', builder.name('country', nid, project),
+                      builder.key('flag', ('flags',), nid, png_data),
+                      functools.partial(_flag_files, files, nid, png_data))
+        count += len(fifa14.FLAG_FILES)
     countries = set(project.created('country')) | {nid for nid, f in project.all_fields('country').items()
                                                        if f.get('flag_from')}
     for nid in sorted(countries - set(drawn)):
@@ -436,6 +529,20 @@ def created_pictures(files: GameFiles, project: Project, builder: 'PatchBuilder'
                 builder.put(pattern.format(nid), data)
                 count += 1
     return count
+
+
+def _league_logo_files(lid: int, png_data: bytes) -> dict[str, bytes]:
+    return {pattern.format(lid): images.league_from_picture(png_data, size)
+            for pattern, (size, _dark) in fifa14.LEAGUE_PICTURES.items()}
+
+
+def _league_tile_files(lid: int, text: str) -> dict[str, bytes]:
+    return {pattern.format(lid): images.league_picture(size, dark, text)
+            for pattern, (size, dark) in fifa14.LEAGUE_PICTURES.items()}
+
+
+def _flag_files(files: GameFiles, nid: int, png_data: bytes) -> dict[str, bytes]:
+    return {pattern.format(nid): data for pattern, data in flags.flag_files(files, png_data).items()}
 
 
 # ---- teams (test TN1) ----------------------------------------------------------------------------------------------
@@ -638,11 +745,18 @@ def write_player_files(files: GameFiles, db: Database, project: Project, builder
     for pid in project.with_picture('player', 'photo'):
         if pid not in rows:
             continue
-        model = files.read(fifa14.PHOTO.format(pid)) or files.read(fifa14.PHOTO.format(fifa14.MODEL_PLAYER))
-        picture = images.fit(_picture(project, 'player', pid, 'photo'), fifa14.PHOTO_SIZE)
-        builder.put(fifa14.PHOTO.format(pid), teamkits.dds_like(model, picture) if model else images.dds(picture))
+        png_data = project.picture('player', pid, 'photo')[0]
+        builder.later('photo', builder.name('player', pid, project),
+                      builder.key('photo', ('teamkits', 'images'), pid, png_data),
+                      functools.partial(_photo_files, files, pid, png_data))
         counts['photos'] += 1
     return {k: v for k, v in counts.items() if v}
+
+
+def _photo_files(files: GameFiles, pid: int, png_data: bytes) -> dict[str, bytes]:
+    model = files.read(fifa14.PHOTO.format(pid)) or files.read(fifa14.PHOTO.format(fifa14.MODEL_PLAYER))
+    picture = images.fit(images.decode_png(png_data), fifa14.PHOTO_SIZE)
+    return {fifa14.PHOTO.format(pid): teamkits.dds_like(model, picture) if model else images.dds(picture)}
 
 
 def _picture(project: Project, kind: str, oid: int, slot: str) -> Image.Image | None:
@@ -679,6 +793,7 @@ def team_files(files: GameFiles, db: Database, project: Project, builder: 'Patch
     listed = [p for p in files.list('data/') if TEAM_COPIED_FILES.match(p) or TEAM_LOOKS.match(p)] if created else []
     counts = {'crests': 0, 'kits': 0, 'copied': 0}
     for tid in sorted(teams):
+        team_name = builder.name('team', tid, project)
         template, copy = _team_source(project, tid) if tid in created else (tid, True)
         if tid in created:  # the model's files under the new id (and its crest and kits when the team is a copy)
             for path in listed:
@@ -695,8 +810,8 @@ def team_files(files: GameFiles, db: Database, project: Project, builder: 'Patch
             crest = teamkits.plain_crest(_shown_name(names, 'abbr3'), _team_color(db, project, tid, 1),
                                          _team_color(db, project, tid, 2))
         if crest is not None:
-            for path, data in teamkits.crest_files(files, crest, tid, template).items():
-                builder.put(path, data)
+            builder.later('crest', team_name, builder.key('crest', ('teamkits',), tid, template, crest),
+                          functools.partial(teamkits.crest_files, files, crest, tid, template))
             counts['crests'] += 1
         else:
             game_crest = files.read(teamkits.CREST_FILE.format('crest', template))
@@ -718,13 +833,14 @@ def team_files(files: GameFiles, db: Database, project: Project, builder: 'Patch
                     if (p := _picture(project, 'team', tid, f'kit{kind}_{name}')) is not None}
             keep = config.get('source') == 'keep'  # only the name and numbers change
             if not keep:
-                builder.put(teamkits.KIT_FILE.format(tid, kind),
-                            teamkits.kit_file(files, config, kind, template, crest, pics))
-            tint = config if config.get('colors') or 'jersey' not in pics else                 {**config, 'colors': [list(pics['jersey'].convert('RGB').resize((1, 1)).getpixel((0, 0)))]}
-            if not keep:
-                builder.put(teamkits.MINIKIT.format(kind, tid),
-                            teamkits.minikit(files, tint, kind, template,
-                                             _picture(project, 'team', tid, f'kit{kind}_mini')))
+                tint = config if config.get('colors') or 'jersey' not in pics else {
+                    **config, 'colors': [list(pics['jersey'].convert('RGB').resize((1, 1)).getpixel((0, 0)))]}
+                mini = _picture(project, 'team', tid, f'kit{kind}_mini')
+                builder.later('kit', team_name,
+                              builder.key('kit', ('teamkits',), tid, kind, template, config, tint, crest,
+                                          sorted(pics), *[pics[n] for n in sorted(pics)], mini),
+                              functools.partial(_kit_files, files, tid, kind, template, config, tint, crest, pics,
+                                                mini))
             row = kit_rows.get(kind)
             if row is None and keep:
                 continue  # nothing to print on: the team has no such kit
@@ -742,6 +858,13 @@ def team_files(files: GameFiles, db: Database, project: Project, builder: 'Patch
             teamkits.apply_print(kits_table, row, config.get('print') or {})
             counts['kits'] += 1
     return counts
+
+
+def _kit_files(files: GameFiles, tid: int, kind: int, template: int, config: dict, tint: dict,
+               crest: Image.Image | None, pics: dict, mini: Image.Image | None) -> dict[str, bytes]:
+    """The kit file and the minikit of one kit of a team."""
+    return {teamkits.KIT_FILE.format(tid, kind): teamkits.kit_file(files, config, kind, template, crest, pics),
+            teamkits.MINIKIT.format(kind, tid): teamkits.minikit(files, tint, kind, template, mini)}
 
 
 def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') -> dict | None:
@@ -779,46 +902,126 @@ def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') 
     return result
 
 
-def build(files: GameFiles, project: Project, out_dir: str, progress=None) -> dict:
-    """The patch of the project over the clean game."""
-    builder = PatchBuilder(files)
+def language_files(lang: str, base: bytes | None, upd: bytes | None, wanted: dict[str, str],
+                   fill: dict[str, str]) -> dict[str, bytes]:
+    """The changed language databases of one language (run in a worker process: top level, plain arguments).
+    The base database gets every string (a new one with its hashid) and, for the texts it lacks, the "every
+    language" value of an original (fill); the _upd one only overrides its own strings."""
+    out = {}
+    for name, raw in ((lang, base), (f'{lang}_upd', upd)):
+        if raw is None:
+            continue
+        strings = LanguageStrings(raw)
+        todo = wanted if name == lang else {k: v for k, v in wanted.items() if strings.get(k) is not None}
+        if name == lang:
+            todo = {**{k: v for k, v in fill.items() if strings.get(k) is None}, **todo}
+        changed = False
+        for sid, text in todo.items():
+            if strings.get(sid) != text:
+                strings.set(sid, text)
+                changed = True
+        if changed:
+            out[f'data/loc/{name}.db'] = strings.build()
+    return out
+
+
+def build(files: GameFiles, project: Project, out_dir: str, progress=None, worker_count: int | None = None,
+          cache: buildcache.BuildCache | None = None, cancel=None, log=None, name_of=None) -> dict:
+    """The patch of the project over the clean game.
+    progress(step, done, total, kind=None, name=None): step of BUILD_STEPS; the 'images' step also says what it waits
+    for (kind: kit, crest, photo, league, flag; name: the team, player...). worker_count: processes for the language
+    texts and threads for the pictures (None = workers.plan(), the machine's defaults). cache: a
+    buildcache.BuildCache whose folder keeps texts and pictures between builds (None = no cache); entries this build
+    did not use are deleted at the end. cancel: a threading.Event; once set, the build stops (BuildCancelled) at the
+    next check and leaves out_dir as it was. log(line): what the build is doing. name_of(kind, id): shown names."""
+    step = progress or (lambda *_, **__: None)
+    say = log or (lambda _line: None)
+
+    def check():
+        if cancel is not None and cancel.is_set():
+            raise BuildCancelled()
+
+    worker_count = workers.plan() if worker_count is None else max(1, int(worker_count))
+    if cache is not None and not cache.folder:
+        cache = None
     project = project.visible()  # what is left out of the patch is not built
-    if progress:
-        progress('database', 0.0)
-    database = write_database(files, project, builder)
-    pictures = created_pictures(files, project, builder)
+    step('database', 0, 1)
+    pool = ThreadPoolExecutor(max_workers=worker_count)
+    builder = PatchBuilder(files, pool, cache, name_of)
+    if cache is not None:
+        builder.game_key = buildcache.game_fingerprint(files)
+    say(f'{worker_count} worker(s)' + (', cache on' if cache is not None else ', no cache'))
+
+    # ---- the language texts first: they run in worker processes while the database is edited
     edits = language_edits(project)
-    missing: set[str] = set()
     languages = sorted({os.path.basename(p)[:-3] for p in files.list('data/loc/') if p.endswith('.db')})
     base_languages = [n for n in languages if not n.endswith('_upd')]
-    for i, lang in enumerate(base_languages):
+    text_version = buildcache.code_version('dbedit') + buildcache.function_source(language_files)
+    texts = []  # (lang, files made or a workers.Task)
+    to_make = []
+    for lang in base_languages:
         wanted = {**edits.get(DEFAULT_LANG, {}), **edits.get(lang, {})}
         fill = {k: v for k, v in edits.get(FILL_ONLY, {}).items() if k not in wanted}
-        if progress:
-            progress(f'language {lang}', i / max(1, len(base_languages)))
         if not wanted and not fill:
             continue
-        for name in (lang, f'{lang}_upd'):
-            path = f'data/loc/{name}.db'
-            raw = files.read(path)
-            if raw is None:
-                continue
-            strings = LanguageStrings(raw)
-            # the base database gets every string (a new one with its hashid); the _upd one only overrides its own
-            todo = wanted if name == lang else {k: v for k, v in wanted.items() if strings.get(k) is not None}
-            if name == lang:  # texts the game lacks in this language get the "All" value of an original
-                todo = {**{k: v for k, v in fill.items() if strings.get(k) is None}, **todo}
-            changed = False
-            for sid, text in todo.items():
-                if strings.get(sid) != text:
-                    strings.set(sid, text)
-                    changed = True
-            if changed:
-                builder.put(path, strings.build())
-    summary = builder.write(out_dir)
-    summary['missing_strings'] = sorted(missing)
+        args = (lang, files.read(f'data/loc/{lang}.db'), files.read(f'data/loc/{lang}_upd.db'), wanted, fill)
+        k = buildcache.key('language', text_version, *args) if cache is not None else None
+        found = cache.get(k) if k is not None else None
+        texts.append([lang, k, found])
+        if found is None:
+            to_make.append((texts[-1], args))
+    procs = workers.Pool(min(worker_count, len(to_make)) if len(to_make) > 1 else 1, log_fn=say)
+    try:
+        for entry, args in to_make:
+            task = entry[2] = procs.submit(language_files, *args)
+            if entry[1] is not None:  # kept as soon as its worker ends, even if the build stops later
+                task.on_success(functools.partial(cache.put, entry[1]))
+        check()
+
+        # ---- database (its pictures go to the thread pool)
+        database = write_database(files, project, builder)
+        step('database', 1, 1)
+        check()
+        pictures = created_pictures(files, project, builder)
+
+        # ---- pictures
+        step('images', 0, len(builder.jobs))
+        builder.collect(step, check)
+        step('images', 1, 1)
+        check()
+
+        # ---- texts
+        total = len(base_languages)
+        skipped = total - len(texts)
+        for k, entry in enumerate(texts):
+            lang, key, made = entry
+            cached = not isinstance(made, workers.Task)
+            if isinstance(made, workers.Task):
+                while not made.finished():
+                    check()
+                    step('texts', skipped + k, total, kind='language', name=lang)
+                    if made.future is None:
+                        break  # runs here, in result()
+                    made.wait(0.5)
+                check()
+                step('texts', skipped + k, total, kind='language', name=lang)
+                made = made.result()
+                if key is not None:  # already there when its worker ended (put keeps the first)
+                    cache.put(key, made)
+            builder.put_all(made, cached)
+        step('texts', total, total)
+        check()
+    finally:
+        pool.shutdown(cancel_futures=True)
+        procs.shutdown()  # waits for the languages being made: they still go to the cache
+    if cache is not None:
+        removed = cache.prune()
+        say(f'cache: {cache.hits} reused, {cache.misses} made, {removed} old entries removed')
+
+    # ---- files
+    step('files', 0, 1)
+    summary = builder.write(out_dir, step)
+    summary['missing_strings'] = []
     summary['database'] = database
     summary['pictures'] = pictures
-    if progress:
-        progress('done', 1.0)
     return summary

@@ -1,7 +1,7 @@
 import { Download, FolderOpen, Hammer, Loader2, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { api } from '@/api/client'
-import { usePatchJob } from '@/components/layout/PatchActions'
+import { useBuildPatch, usePatchJob } from '@/components/layout/PatchActions'
 import { Facts, Section } from '@/components/common/detail'
 import { useI18n, type MessageKey } from '@/i18n'
 import { useStatus } from '@/state/queries'
@@ -12,6 +12,7 @@ export function PatchPage() {
   const job = status?.job
   const running = job?.state === 'running'
   const start = usePatchJob()
+  const rebuild = useBuildPatch()
   const check = status?.game.check
   const edited = status?.project ?? {}
   const result = job?.state === 'done' && job.kind === 'build' ? job.result : null
@@ -30,7 +31,7 @@ export function PatchPage() {
       <Section title={t('patch.steps')}>
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-3">
-            <Button size="sm" disabled={running || start.isPending} onClick={() => start.mutate('build')}>
+            <Button size="sm" disabled={running || start.isPending || rebuild.pending} onClick={rebuild.build}>
               {running && job.kind === 'build' ? <Loader2 className="animate-spin" /> : <Hammer />} {t('patch.build')}
             </Button>
             <Button variant="outline" size="sm" disabled={!status?.patch_built} onClick={() => void api.openPatchFolder()}>
@@ -39,7 +40,7 @@ export function PatchPage() {
             <p className="text-xs text-muted-foreground">{t('patch.buildHint')}</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <Button variant="outline" size="sm" disabled={running || !status?.patch_built || start.isPending} onClick={() => start.mutate('install')}>
+            <Button variant="outline" size="sm" disabled={running || !status?.patch?.up_to_date || start.isPending} onClick={() => start.mutate('install')}>
               <Download /> {t('patch.install')}
             </Button>
             <Button variant="outline" size="sm" disabled={running || check?.state !== 'patched' || start.isPending} onClick={() => start.mutate('uninstall')}>
@@ -69,6 +70,7 @@ export function PatchPage() {
           <li>{t('patch.how3')}</li>
         </ul>
       </Section>
+      {rebuild.confirm}
     </div>
   )
 }

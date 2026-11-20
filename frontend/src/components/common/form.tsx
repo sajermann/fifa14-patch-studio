@@ -1,7 +1,9 @@
+import type { ReactNode } from 'react'
 import { AlertTriangle, ChevronLeft, ChevronRight, CircleAlert } from 'lucide-react'
 import type { ProjectIssue } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { issueText } from '@/lib/issues'
@@ -177,5 +179,45 @@ function IssueList({ issues }: { issues: ProjectIssue[] }) {
         </li>
       ))}
     </ul>
+  )
+}
+
+/** Label + control + hint (the Street Studio's Field, without its per-field issues). */
+export function Field({ label, hint, className, children }: { label: ReactNode; hint?: string; className?: string; children: ReactNode }) {
+  return (
+    <div className={cn('space-y-1.5', className)}>
+      <Label>{label}</Label>
+      {children}
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </div>
+  )
+}
+
+/** A number field; empty = undefined (the Street Studio's NumberInput). */
+export function NumberInput({
+  value,
+  onChange,
+  min,
+  max,
+  placeholder,
+  className,
+}: {
+  value: number | undefined
+  onChange: (v: number | undefined) => void
+  min?: number
+  max?: number
+  placeholder?: string
+  className?: string
+}) {
+  return (
+    <Input
+      type="number"
+      value={value ?? ''}
+      min={min}
+      max={max}
+      placeholder={placeholder}
+      className={className}
+      onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
+    />
   )
 }

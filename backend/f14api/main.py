@@ -2,6 +2,8 @@
 import json
 import logging
 import os
+import threading
+import time
 from contextlib import asynccontextmanager, contextmanager
 from typing import Optional
 
@@ -12,16 +14,19 @@ from pydantic import BaseModel
 
 from . import settings  # noqa: I001 - first: it puts the core folder on the path
 
-from f14mod import (builder, fields, fifa14, flags, images, install_check, installer, kitprint, preview,  # noqa: E402
-                    teamkits)
+from f14mod import (buildcache, builder, fields, fifa14, flags, images, install_check, installer, kitprint,  # noqa: E402
+                    preview, teamkits, workers)
 
-from . import dialogs, queries, validation  # noqa: E402
+from . import diagnostics, dialogs, patch_info, queries, validation  # noqa: E402
 from .state import GameState, Jobs, project  # noqa: E402
 
 log = logging.getLogger('f14api')
 
 game = GameState()
 jobs = Jobs()
+build_progress: dict = {'running': False}  # last/current build, read by GET /api/patch/progress
+build_cancel = threading.Event()  # set by POST /api/patch/build/cancel: the build stops at its next check
+BUILD_CACHE_DIR = os.path.join(settings.CACHE_DIR, 'build')  # f14mod.buildcache
 
 
 class ApiError(HTTPException):
@@ -74,19 +79,53 @@ def get_status():
     cfg = settings.load()
     return {'version': settings.APP_VERSION, 'config': cfg.model_dump(), 'names_language': cfg.shown_language(),
             'game': game.status(), 'project': project().counts(), 'job': jobs.view(),
-            'patch_built': os.path.isdir(settings.PATCH_DIR) and bool(os.listdir(settings.PATCH_DIR))}
+            'patch_built': os.path.isdir(settings.PATCH_DIR) and bool(os.listdir(settings.PATCH_DIR)),
+            'patch': patch_info.status(settings.PATCH_DIR, project().path),
+            'folders': _folders(cfg)}
+
+
+def _folders(cfg: settings.Config) -> dict:
+    """The app's folders the Settings show: the project (the user can change it), the install backups (inside the
+    game folder: uninstalling puts them back), the built patch and the logs."""
+    return {'project': cfg.project_folder(), 'default_project': settings.PROJECT_DIR,
+            'backups': os.path.join(game.game_dir, installer.BACKUP_DIR) if game.game_dir else None,
+            'patch': settings.PATCH_DIR, 'logs': settings.LOG_DIR}
+
+
+@app.get('/api/machine')
+def machine():
+    """What the build may use on this machine (f14mod.workers.describe): cores and memory the system reports (None
+    when it does not tell), the defaults and the worker processes the current settings give."""
+    cfg = settings.load()
+    return workers.describe(cfg.build_cores, cfg.build_memory_percent)
 
 
 class SettingsBody(BaseModel):
     language: Optional[settings.Language] = None
     names_language: Optional[str] = None
     face_pack_dirs: Optional[list[str]] = None
+    build_cores: Optional[int] = None  # null = the default
+    build_memory_percent: Optional[int] = None
+    project_dir: Optional[str] = None  # null or empty = the default folder
 
 
 @app.put('/api/settings')
 def put_settings(body: SettingsBody):
     cfg = settings.load()
-    return settings.save(cfg.model_copy(update=body.model_dump(exclude_unset=True))).model_dump()
+    if 'project_dir' in body.model_fields_set:
+        folder = (body.project_dir or '').strip()
+        body.project_dir = None if not folder or os.path.normcase(os.path.abspath(folder)) == os.path.normcase(
+            os.path.abspath(settings.PROJECT_DIR)) else os.path.abspath(folder)
+        if body.project_dir != cfg.project_dir:
+            if (jobs.view() or {}).get('state') == 'running':
+                raise ApiError(409, 'busy')
+            try:  # a folder the app can write to (the project is created there on first use)
+                os.makedirs(body.project_dir or settings.PROJECT_DIR, exist_ok=True)
+            except OSError as e:
+                raise ApiError(400, 'project_dir_invalid', str(e))
+    # validated again: the build settings are brought into range (settings.Config)
+    return settings.save(settings.Config.model_validate(
+        {**cfg.model_dump(), **body.model_dump(exclude_unset=True)})).model_dump()
 
 
 @app.post('/api/dialog/folder')
@@ -1166,12 +1205,106 @@ def _start(kind: str, work):
         raise ApiError(409, 'busy')
 
 
+NAME_SQL = {'team': f'SELECT {queries._team_name("full")} FROM v_teams t WHERE t.id = :id',  # noqa: SLF001
+            'league': f'SELECT {queries._league_name()} FROM v_leagues l WHERE l.id = :id',  # noqa: SLF001
+            'player': f'SELECT {queries._player_name()} FROM v_players pl WHERE pl.id = :id',  # noqa: SLF001
+            'country': f'SELECT {queries._country_name()} FROM v_nations n WHERE n.id = :id'}  # noqa: SLF001
+
+
+def _name_lookup():
+    """(kind, id) -> the shown name, for the build's progress (its own connection: the build runs in a thread)."""
+    path, project_path, shown = game.catalog_path, project().path, lang()
+    lock, con = threading.Lock(), [None]
+
+    def name_of(kind: str, oid: int):
+        if kind not in NAME_SQL:
+            return None
+        with lock:
+            try:
+                if con[0] is None:
+                    con[0] = queries.connect(path, project_path)
+                row = con[0].execute(NAME_SQL[kind], {'lang': shown, 'id': oid}).fetchone()
+            except Exception:  # noqa: BLE001 - only the progress text: the id is shown instead
+                log.debug('name of %s %s not found', kind, oid, exc_info=True)
+                return None
+        return row[0] if row else None
+
+    def close():
+        if con[0] is not None:
+            con[0].close()
+    return name_of, close
+
+
 @app.post('/api/patch/build')
 def build_patch():
+    """Starts the build (a job); GET /api/patch/progress says where it is, POST /api/patch/build/cancel stops it.
+    Texts and pictures go to the build cache (f14mod.buildcache): building again only makes what changed."""
+    global build_progress
     if game.state != 'ready':
         raise ApiError(409, 'game_not_ready')
-    files, proj = game.files(), project()
-    return _start('build', lambda progress: builder.build(files, proj, settings.PATCH_DIR, progress))
+    files, proj, cfg = game.files(), project(), settings.load()
+    cache = buildcache.BuildCache(BUILD_CACHE_DIR)
+    prog = {'running': True, 'steps': list(builder.BUILD_STEPS), 'step': None, 'done': 0, 'total': 0, 'message': '',
+            'started_at': time.time(), 'finished_at': None, 'error': None, 'item': None, 'stopping': False,
+            'cancelled': False, 'cache': {'reused': 0, 'made': 0}}
+
+    def work(job_progress):
+        name_of, close = _name_lookup()
+        built_from = patch_info.project_hash(proj.path)  # changes saved during the build leave it "not up to date"
+        steps = builder.BUILD_STEPS
+
+        def progress(step, done, total, kind=None, name=None):
+            # item: what the 'images' / 'texts' steps wait for; cache: entries reused / made so far
+            prog.update(step=step, done=done, total=total, item={'kind': kind, 'name': name} if kind else None,
+                        cache={'reused': cache.hits, 'made': cache.misses})
+            share = done / total if total else 0
+            job_progress(step, (steps.index(step) + min(1, share)) / len(steps))
+
+        def log_line(line):  # the log only: the dialog shows the step and what it waits for
+            log.info('build: %s', line)
+        try:
+            summary = builder.build(files, proj, settings.PATCH_DIR, progress,
+                                    worker_count=workers.plan(cfg.build_cores, cfg.build_memory_percent),
+                                    cache=cache, cancel=build_cancel, log=log_line, name_of=name_of)
+            patch_info.write(settings.PATCH_DIR, built_from)
+        except builder.BuildCancelled:
+            prog['cancelled'] = True
+            raise
+        except Exception as e:
+            prog['error'] = str(e)
+            raise
+        finally:
+            close()
+            prog.update(running=False, finished_at=time.time())
+        status = patch_info.status(settings.PATCH_DIR, proj.path)
+        # for "N files, X new and Y reused from the cache, in T"
+        return {**summary, 'cache_reused_files': summary['reused_files'], 'files': len(status.get('files', [])),
+                'duration_s': round(prog['finished_at'] - prog['started_at'], 1)}
+
+    build_cancel.clear()
+    job = _start('build', work)
+    build_progress = prog
+    return job
+
+
+@app.post('/api/patch/build/cancel')
+def cancel_build():
+    """Asks the running build to stop. It stops at its next check, after the languages being made end (they go to
+    the build cache, like everything made before: building again starts from there)."""
+    if not build_progress.get('running'):
+        return {'stopping': False}
+    build_cancel.set()
+    build_progress['stopping'] = True
+    return {'stopping': True}
+
+
+@app.get('/api/patch/progress')
+def get_build_progress():
+    """Where the current (or last) build is: step (builder.BUILD_STEPS), done/total of that step, last message."""
+    prog = dict(build_progress)
+    if prog.get('started_at'):
+        prog['elapsed'] = round((prog['finished_at'] or time.time()) - prog['started_at'], 1)
+    return prog
 
 
 @app.post('/api/patch/install')
@@ -1203,6 +1336,44 @@ def uninstall_patch():
         game.recheck()
         return {'removed': bool(manifest)}
     return _start('uninstall', work)
+
+
+@app.get('/api/logs/report')
+def logs_report():
+    """Plain-text report for support: machine, settings, game, project, patch and the end of the log files."""
+    def part(fn):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001 - the report says what failed
+            return [f'(failed: {type(e).__name__}: {e})']
+
+    def game_lines():
+        st = game.status()
+        return [f'state: {st["state"]} | folder: {st["game_dir"]}', f'check: {st["check"]}', f'error: {st["error"]}']
+
+    def project_lines():
+        proj = project()
+        return [f'file: {proj.path} ({os.path.getsize(proj.path)} bytes)', f'edited: {proj.counts()}']
+
+    def patch_lines():
+        last = {k: v for k, v in build_progress.items() if k != 'steps'}
+        return [f'folder: {settings.PATCH_DIR}', f'status: {patch_info.status(settings.PATCH_DIR, project().path)}',
+                f'last build: {last}', f'last job: {jobs.view()}']
+
+    return Response(diagnostics.report({
+        'settings': part(lambda: [f'{k}: {v}' for k, v in settings.load().model_dump().items()]),
+        'game': part(game_lines), 'project': part(project_lines), 'patch': part(patch_lines)}),
+        media_type='text/plain; charset=utf-8')
+
+
+@app.post('/api/logs/open')
+def logs_open():
+    """Opens the log folder in the Windows Explorer (desktop app; development logs to the console)."""
+    if not diagnostics.log_files():
+        raise ApiError(404, 'logs_not_found')
+    if hasattr(os, 'startfile'):
+        os.startfile(settings.LOG_DIR)  # noqa: S606 - the app's own folder, opened in Explorer
+    return {'folder': settings.LOG_DIR}
 
 
 @app.post('/api/patch/open-folder')

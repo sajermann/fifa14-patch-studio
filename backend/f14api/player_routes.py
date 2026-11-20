@@ -400,6 +400,30 @@ def remove_player_photo(pid: int):
 
 # ---- face packs ---------------------------------------------------------------------------------------------------
 
+class FacePackCheckBody(BaseModel):
+    folders: list[str]
+
+
+@app.post('/api/facepacks/check')
+def check_face_packs(body: FacePackCheckBody):
+    """What the Settings show under each face folder being typed (not saved yet), like the Street Studio's: every
+    pack found in it (index = the folder's position), with its faces and the problems of its manifest.json; a folder
+    without faces gives one entry with an error."""
+    packs = []
+    for index, folder in enumerate(body.folders):
+        parts = facepack.find_parts(folder) if os.path.isdir(folder) else []
+        root = os.path.basename(os.path.normpath(folder)) or folder  # the folder set: first part of every name
+        if not parts:
+            packs.append({'index': index, 'folder': folder, 'name': root,
+                          'count': 0, 'warnings': [], 'error': 'no_faces'})
+        for assets, label in parts:
+            manifest, warnings = facepack.read_manifest(assets, folder)
+            # "folder / part" like the Street Studio (the screen shows the folder's name for several parts)
+            packs.append({'index': index, 'folder': assets, 'name': root + (f' / {label}' if label else ''),
+                          'count': len(facepack.list_faces(assets)), 'warnings': warnings, 'error': None})
+    return {'packs': packs}
+
+
 @app.get('/api/facepacks')
 def face_packs():
     """The configured folders and the packs (parts) found in each one, with how many faces each has."""

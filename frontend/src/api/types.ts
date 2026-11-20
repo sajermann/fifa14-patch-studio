@@ -7,6 +7,51 @@ export interface Config {
   game_dir: string | null
   names_language: string | null
   face_pack_dirs?: string[]
+  project_dir?: string | null // where the project lives (null = the default folder)
+  build_cores?: number | null // processor cores the build may use (null = all but one)
+  build_memory_percent?: number | null // percent of the machine's memory the build may use (null = 50)
+}
+
+/** What the build may use on this machine (GET /api/machine); cores / memory_mb null when the system does not tell. */
+export interface MachineInfo {
+  cores: number | null
+  memory_mb: number | null
+  default_cores: number
+  default_memory_percent: number
+  memory_percent_range: [number, number] // allowed memory setting (10-90)
+  worker_memory_mb: number
+  workers: number
+}
+
+/** Whether a patch was built and from the saved project (GET /api/status → patch). */
+export interface PatchStatus {
+  built: boolean
+  up_to_date: boolean
+  built_at?: string
+  files?: string[]
+}
+
+/** Steps of "Gerar patch" in order (f14mod.builder.BUILD_STEPS). */
+export type BuildStep = 'database' | 'images' | 'texts' | 'files'
+export type BuildItemKind = 'kit' | 'crest' | 'photo' | 'league' | 'flag' | 'language'
+
+/** GET /api/patch/progress: the current (or last) build. */
+export interface BuildProgress {
+  running: boolean
+  steps: BuildStep[]
+  step: BuildStep | null
+  done: number
+  total: number
+  message: string
+  elapsed?: number
+  error: string | null
+  /** what the 'images' / 'texts' steps are waiting for (a kit, a language...) */
+  item?: { kind: BuildItemKind; name: string } | null
+  /** the user asked the build to stop (it ends the languages already being made first) */
+  stopping?: boolean
+  cancelled?: boolean
+  /** build cache entries (texts and pictures) reused / made so far */
+  cache?: { reused: number; made: number }
 }
 
 export interface Issue {
@@ -63,6 +108,9 @@ export interface Status {
   project: Partial<Record<'team' | 'league' | 'player', number>>
   job: Job | null
   patch_built: boolean
+  patch?: PatchStatus
+  /** the app's folders shown in the Settings (backups: inside the game folder, null without a game) */
+  folders?: { project: string; default_project: string; backups: string | null; patch: string; logs: string }
 }
 
 export interface Page<T> {
@@ -432,6 +480,11 @@ export interface FacePackPart {
   count: number
   named: number
   warnings: { code: string; count?: number; detail?: string }[]
+}
+
+/** A pack found in a face folder of the Settings (POST /api/facepacks/check; index = the folder's position). */
+export interface FacePackCheck extends FacePagePack {
+  index: number
 }
 
 export interface FacePackFolder {

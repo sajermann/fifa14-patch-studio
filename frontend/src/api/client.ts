@@ -1,5 +1,5 @@
 import { hasMessage, translate } from '@/i18n'
-import type { BulkKind, Config, CountryDetail, CountryRow, FaceChoice, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, Status, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook, ProjectIssue } from './types'
+import type { BuildProgress, BulkKind, Config, CountryDetail, CountryRow, FaceChoice, FacePackCheck, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, MachineInfo, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, Status, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook, ProjectIssue } from './types'
 
 /** Error of the backend; `message` is in the interface language when the app knows its code. */
 export class ApiError extends Error {
@@ -151,10 +151,20 @@ export const api = {
   /** How the 3D preview dresses a player with the values of his screen (saved or not). */
   playerLook: (id: number, values: Record<string, FieldValue>, face: FaceChoice | null) => post<PreviewLook>(`/api/preview/player-look/${id}`, { values, face }),
   facePacks: () => get<FacePackFolder[]>('/api/facepacks'),
+  /** What each face folder being typed in the Settings has (not saved yet). */
+  checkFacePacks: (folders: string[]) => post<{ packs: FacePackCheck[] }>('/api/facepacks/check', { folders }),
+  /** Plain-text support report: machine, settings, game, project, patch and the end of the log files. */
+  logsReport: () => send('GET', '/api/logs/report').then((r) => r.text()),
+  openLogs: () => post<{ folder: string }>('/api/logs/open'),
   /** One page of the faces of the packs (all, one pack, or only a folder opened on the picker for this visit). */
   facePage: (p: { offset: number; limit: number; q?: string; pack?: string; folder?: string }) => get<FacePage>(`/api/facepack/page${query(p)}`),
 
+  /** Cores and memory of this machine and the build's defaults (f14mod.workers). */
+  machine: () => get<MachineInfo>('/api/machine'),
   buildPatch: () => post<Job>('/api/patch/build'),
+  buildProgress: () => get<BuildProgress>('/api/patch/progress'),
+  /** Asks the running build to stop; what was made stays in the build cache. */
+  cancelBuild: () => post<{ stopping: boolean }>('/api/patch/build/cancel'),
   installPatch: () => post<Job>('/api/patch/install'),
   uninstallPatch: () => post<Job>('/api/patch/uninstall'),
   openPatchFolder: () => post<{ path: string }>('/api/patch/open-folder'),

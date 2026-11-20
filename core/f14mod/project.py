@@ -83,6 +83,7 @@ class Project:
         try:
             found = con.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'meta'").fetchone()
+            row = None
             if found:
                 row = con.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
                 if row and int(row[0]) > SCHEMA_VERSION:
@@ -92,7 +93,9 @@ class Project:
                 con.execute('ALTER TABLE team_rosters ADD COLUMN hidden INTEGER DEFAULT 0')
             if 'hidden' not in {r[1] for r in con.execute('PRAGMA table_info(league_members)')}:  # schema 6 and older
                 con.execute('ALTER TABLE league_members ADD COLUMN hidden INTEGER DEFAULT 0')
-            con.execute("INSERT OR REPLACE INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
+            if not row or row[0] != str(SCHEMA_VERSION):  # opening an up-to-date project never writes to it (the
+                # patch's "up to date" compares the file: f14api.patch_info)
+                con.execute("INSERT OR REPLACE INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
             con.commit()
         finally:
             con.close()

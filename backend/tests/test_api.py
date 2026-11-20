@@ -530,3 +530,63 @@ def test_issues(client):
     assert _issues(client) == {('team_league_hidden', f'team:{tid}')}
     client.put(f'/api/leagues/{fakegame.LEAGUE}/hidden', json={'hidden': False})
     assert client.get('/api/issues').json()['issues'] == []
+
+
+def test_build_progress_cache_and_up_to_date(client):
+    client.put(f'/api/teams/{fakegame.TEAM}', json={'names': {'full': {'*': 'Progress FC'}}})
+    assert client.get('/api/status').json()['patch']['up_to_date'] is False
+    durations = []
+    for _ in range(2):
+        client.post('/api/patch/build')
+        wait(lambda: client.get('/api/job').json()['state'] != 'running')
+        job = client.get('/api/job').json()
+        assert job['state'] == 'done', job
+        durations.append(job['result'])
+        prog = client.get('/api/patch/progress').json()
+        assert prog['running'] is False and prog['steps'] == ['database', 'images', 'texts', 'files']
+        assert prog['step'] == 'files' and prog['elapsed'] >= 0
+    first, second = durations
+    assert first['cache_reused_files'] == 0 and second['cache_reused_files'] > 0  # the texts came from the cache
+    assert second['files'] > 0 and second['duration_s'] >= 0
+    patch = client.get('/api/status').json()['patch']
+    assert patch['built'] and patch['up_to_date'] and patch['files']
+    client.put(f'/api/teams/{fakegame.TEAM}', json={'names': {'full': {'*': 'Changed FC'}}})
+    assert client.get('/api/status').json()['patch']['up_to_date'] is False
+    assert client.post('/api/patch/build/cancel').json() == {'stopping': False}  # nothing running
+    client.delete(f'/api/teams/{fakegame.TEAM}/edits')
+
+
+def test_machine_and_build_settings(client):
+    info = client.get('/api/machine').json()
+    assert info['workers'] >= 1 and info['memory_percent_range'] == [10, 90]
+    cfg = client.put('/api/settings', json={'build_cores': 1, 'build_memory_percent': 500}).json()
+    assert cfg['build_cores'] == 1 and cfg['build_memory_percent'] == 90  # brought into range
+    assert client.get('/api/machine').json()['workers'] == 1
+    cfg = client.put('/api/settings', json={'build_cores': None, 'build_memory_percent': None}).json()
+    assert cfg['build_cores'] is None and cfg['build_memory_percent'] is None
+
+
+def test_settings_folders_logs_and_face_check(client, tmp_path):
+    folders = client.get('/api/status').json()['folders']
+    assert folders['project'] == folders['default_project'] and folders['backups'].endswith('fifa14-patch-studio-backup')
+    other = str(tmp_path / 'other project')
+    client.put('/api/settings', json={'project_dir': other})
+    assert client.get('/api/status').json()['folders']['project'] == other
+    assert os.path.isfile(os.path.join(other, 'project.sqlite'))  # an empty project starts there
+    assert client.get('/api/status').json()['project'] == {}
+    assert client.put('/api/settings', json={'project_dir': ''}).json()['project_dir'] is None  # back to the default
+    report = client.get('/api/logs/report')
+    assert report.status_code == 200 and 'support report' in report.text and '== project' in report.text
+    packs = client.post('/api/facepacks/check', json={'folders': [str(tmp_path / 'nothing')]}).json()['packs']
+    assert packs == [{'index': 0, 'folder': str(tmp_path / 'nothing'), 'name': 'nothing', 'count': 0,
+                      'warnings': [], 'error': 'no_faces'}]
+
+
+def test_face_folder_with_several_packs_is_named_after_the_folder(client, tmp_path):
+    """Like the Street Studio: every pack of a folder set is "<folder> / <pack>"."""
+    versions = tmp_path / 'others'
+    for name in ('one', 'two'):
+        (versions / name / 'heads').mkdir(parents=True)
+        (versions / name / 'faces').mkdir()
+    packs = client.post('/api/facepacks/check', json={'folders': [str(versions)]}).json()['packs']
+    assert sorted(p['name'] for p in packs) == ['others / one', 'others / two']
