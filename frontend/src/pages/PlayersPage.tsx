@@ -3,13 +3,14 @@ import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
-import { OutOfPatchBadge } from '@/components/common/HideButton'
+import { HideButton, OutOfPatchBadge, useHide } from '@/components/common/HideButton'
 import { NewPlayerDialog, nameFields, type NewPlayer } from '@/components/player/NewPlayerDialog'
 import { toast } from '@/lib/notify'
 import { useFrom } from '@/lib/back'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
 import { OriginalBadge, OverallBadge } from '@/components/common/detail'
+import { EntityIssues } from '@/components/common/form'
 import { Photo } from '@/components/common/pictures'
 import { BulkActions, RowCheckbox, SelectAllCheckbox, SelectAllDialog, useListSelection } from '@/components/common/selection'
 import { useI18n } from '@/i18n'
@@ -29,6 +30,7 @@ export function PlayersPage() {
   const selection = useListSelection((data?.items ?? []).filter(own).map((r) => r.id), data?.own_ids ?? [])
   const options = useOptions().data
   const qc = useQueryClient()
+  const hide = useHide('player', ['players', 'player', 'teams', 'team'])
   const [creating, setCreating] = useState(false)
   const create = useMutation({
     mutationFn: (n: NewPlayer) => api.createPlayer({ fields: nameFields(n.name), template: n.copyOf }),
@@ -91,13 +93,15 @@ export function PlayersPage() {
             </TableHead>
             <TableHead className="w-12" />
             <SortHead field="name" label={t('col.name')} state={sortState} />
-            <SortHead field="position" label={t('col.position')} state={sortState} />
-            <SortHead field="overall" label={t('col.overall')} state={sortState} />
-            <SortHead field="potential" label={t('col.potential')} state={sortState} />
+            <SortHead field="position" label={t('col.position')} state={sortState} className="text-center" />
+            <SortHead field="overall" label={t('col.overall')} state={sortState} className="text-center" />
+            <SortHead field="potential" label={t('col.potential')} state={sortState} className="text-center" />
             <SortHead field="team" label={t('col.team')} state={sortState} />
             <TableHead>{t('col.nationality')}</TableHead>
             <SortHead field="birthdate" label={t('col.birthdate')} state={sortState} />
             <SortHead field="id" label={t('col.id')} state={sortState} />
+            <TableHead className="w-28" />
+            <TableHead className="w-16" />
           </TableRow>
         </TableHeader>
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
@@ -111,22 +115,36 @@ export function PlayersPage() {
                 <span className="font-medium text-foreground">{p.name}</span> {!p.is_new && <OriginalBadge edited={p.edited} />}
                 {p.hidden && <OutOfPatchBadge />}
               </TableCell>
-              <TableCell>{p.position_name ?? '—'}</TableCell>
-              <TableCell>
+              <TableCell className="text-center">{p.position_name ?? '—'}</TableCell>
+              <TableCell className="text-center">
                 <OverallBadge value={p.overall} />
               </TableCell>
-              <TableCell>
+              <TableCell className="text-center">
                 <OverallBadge value={p.potential} />
               </TableCell>
               <TableCell>{p.team ?? '—'}</TableCell>
               <TableCell>{p.nationality_name ?? '—'}</TableCell>
               <TableCell className="tabular-nums">{p.birthdate ?? '—'}</TableCell>
               <TableCell className="text-muted-foreground tabular-nums">{p.id}</TableCell>
+              <TableCell>
+                {p.is_new && (
+                  <HideButton
+                    hidden={p.hidden}
+                    disabled={hide.isPending && hide.variables?.id === p.id}
+                    onToggle={() => hide.mutate({ id: p.id, hidden: !p.hidden })}
+                    hideHint={t('players.hideHint')}
+                    showHint={t('players.showHint')}
+                  />
+                )}
+              </TableCell>
+              <TableCell>
+                <EntityIssues kind="player" id={p.id} />
+              </TableCell>
             </TableRow>
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={10} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={12} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>

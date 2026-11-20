@@ -21,7 +21,7 @@ import { computeOverall } from '@/lib/overall'
 import { EditActions, FieldsEditor, useEntityForm, useFieldLabel } from '@/components/common/edit'
 import { HideButton, OutOfPatchBadge, usePendingHide } from '@/components/common/HideButton'
 import { Photo } from '@/components/common/pictures'
-import { Stepper } from '@/components/common/form'
+import { EntityIssues, Stepper } from '@/components/common/form'
 import { PlayerLook } from '@/components/player/PlayerLook'
 import { PlayerPhoto, type PendingPhoto } from '@/components/player/PlayerPhoto'
 import { PlayerTeams, sameTeams, savedTeams } from '@/components/player/PlayerTeams'
@@ -178,6 +178,9 @@ export function PlayerPage() {
               </Button>
             </>
           )}
+          <span className="self-center">
+            <EntityIssues kind="player" id={id} />
+          </span>
         </div>
       </div>
       {data.is_new && !NAME_FIELDS.some((k) => String(fields[k] ?? '').trim()) && <p className="text-sm text-amber-600 dark:text-amber-400">{t('player.nameRequired')}</p>}

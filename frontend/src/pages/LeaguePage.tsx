@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ImageOff, Loader2, Plus, RotateCcw, Trash2, Upload, UserMinus } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { EntityIssues } from '@/components/common/form'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -200,6 +201,9 @@ export function LeaguePage() {
               <Trash2 /> {t('common.delete')}
             </Button>
           )}
+          <span className="self-center">
+            <EntityIssues kind="league" id={id} />
+          </span>
         </div>
       </div>
       <p className="text-sm text-muted-foreground">{t('league.freeHint')}</p>
@@ -286,16 +290,17 @@ export function LeaguePage() {
                   <TableRow>
                     <TableHead className="w-12" />
                     <TableHead>{t('col.name')}</TableHead>
-                    <TableHead className="w-28">{t('col.overall')}</TableHead>
-                    <TableHead className="w-28">{t('col.players')}</TableHead>
+                    <TableHead className="w-28 text-center">{t('col.overall')}</TableHead>
+                    <TableHead className="w-28 text-center">{t('col.players')}</TableHead>
                     <TableHead className="w-28 text-center">{t('roster.inPatch')}</TableHead>
                     <TableHead className="w-32" />
+                    <TableHead className="w-16" />
                   </TableRow>
                 </TableHeader>
                 <TableBody className={teamRows.isFetching ? 'opacity-70' : undefined}>
                   {teamIds.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                      <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
                         {t('league.noTeams')}
                       </TableCell>
                     </TableRow>
@@ -315,10 +320,10 @@ export function LeaguePage() {
                           {hiddenTeamIds.includes(tid) && <OutOfPatchBadge label={t('league.outOfPatchHere')} />}
                           {tm?.hidden && <HiddenByProjectBadge label={t('teams.hiddenByProject')} />}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="text-center">
                           <OverallBadge value={tm?.overall ?? null} />
                         </TableCell>
-                        <TableCell className="tabular-nums">{tm?.player_count ?? '—'}</TableCell>
+                        <TableCell className="text-center tabular-nums">{tm?.player_count ?? '—'}</TableCell>
                         <TableCell className="text-center">
                           <Switch
                             checked={!hiddenTeamIds.includes(tid)}
@@ -330,6 +335,9 @@ export function LeaguePage() {
                           <Button variant="ghost" size="sm" title={t('league.removeTeam')} onClick={() => setTeams(teamIds.filter((x) => x !== tid))}>
                             <UserMinus /> {t('common.remove')}
                           </Button>
+                        </TableCell>
+                        <TableCell>
+                          <EntityIssues kind="team" id={tid} />
                         </TableCell>
                       </TableRow>
                     )

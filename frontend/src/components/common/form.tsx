@@ -1,8 +1,12 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { AlertTriangle, ChevronLeft, ChevronRight, CircleAlert } from 'lucide-react'
+import type { ProjectIssue } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
+import { issueText } from '@/lib/issues'
 import { cn } from '@/lib/utils'
+import { useIssues } from '@/state/queries'
 
 /** "n/total" of a value in its list (the same as the Street Studio's); a value not set shows the inherited one (the
  * game's) with "default". */
@@ -103,5 +107,75 @@ export function ColorInput({ value, onChange }: { value: number[]; onChange: (v:
         className="w-28 font-mono"
       />
     </div>
+  )
+}
+
+/** Validation messages of one entity field. */
+export function FieldIssues({ issues }: { issues: ProjectIssue[] }) {
+  const { t } = useI18n()
+  if (!issues.length) return null
+  return (
+    <ul className="mt-1 space-y-0.5">
+      {issues.map((i, k) => (
+        <li
+          key={k}
+          className={cn(
+            'flex items-start gap-1 text-xs',
+            i.severity === 'error' ? 'text-destructive' : 'text-amber-600 dark:text-amber-500',
+          )}
+        >
+          {i.severity === 'error' ? <CircleAlert className="mt-0.5 size-3 shrink-0" /> : <AlertTriangle className="mt-0.5 size-3 shrink-0" />}
+          {issueText(t, i)}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** Error/warning counts of a league/team/player, with the messages in a tooltip (lists and edit screens). */
+export function EntityIssues({ kind, id }: { kind: 'league' | 'team' | 'player'; id: number }) {
+  const issues = useIssues(kind, id)
+  const errors = issues.filter((i) => i.severity === 'error').length
+  const warnings = issues.length - errors
+  if (!issues.length) return null
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex cursor-help gap-2 text-xs">
+          {errors > 0 && (
+            <span className="inline-flex items-center gap-1 text-destructive">
+              <CircleAlert className="size-3" /> {errors}
+            </span>
+          )}
+          {warnings > 0 && (
+            <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-500">
+              <AlertTriangle className="size-3" /> {warnings}
+            </span>
+          )}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-sm">
+        <IssueList issues={issues} />
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function IssueList({ issues }: { issues: ProjectIssue[] }) {
+  const { t } = useI18n()
+  const sorted = [...issues].sort((a, b) => (a.severity === 'error' ? 0 : 1) - (b.severity === 'error' ? 0 : 1))
+  return (
+    <ul className="space-y-1">
+      {sorted.map((i, k) => (
+        <li key={k} className="flex items-start gap-1.5">
+          {i.severity === 'error' ? (
+            <CircleAlert className="mt-0.5 size-3 shrink-0 text-red-400 dark:text-red-600" />
+          ) : (
+            <AlertTriangle className="mt-0.5 size-3 shrink-0 text-amber-400 dark:text-amber-600" />
+          )}
+          <span>{issueText(t, i)}</span>
+        </li>
+      ))}
+    </ul>
   )
 }

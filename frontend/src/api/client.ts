@@ -1,5 +1,5 @@
 import { hasMessage, translate } from '@/i18n'
-import type { BulkKind, Config, CountryDetail, CountryRow, FaceChoice, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, Status, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook } from './types'
+import type { BulkKind, Config, CountryDetail, CountryRow, FaceChoice, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, Status, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook, ProjectIssue } from './types'
 
 /** Error of the backend; `message` is in the interface language when the app knows its code. */
 export class ApiError extends Error {
@@ -69,6 +69,7 @@ export interface PlayerTeamBody {
 
 export const api = {
   status: () => get<Status>('/api/status'),
+  issues: () => get<{ issues: ProjectIssue[] }>('/api/issues'),
   saveSettings: (fields: Partial<Config>) => request<Config>('PUT', '/api/settings', fields),
   pickFolder: (initial?: string | null, title?: string) => post<{ path: string | null }>('/api/dialog/folder', { initial, title }),
 

@@ -4,7 +4,8 @@ import { Link } from 'react-router-dom'
 import type { PlayerTeamBody } from '@/api/client'
 import type { PlayerDetail } from '@/api/types'
 import { Badge, Section } from '@/components/common/detail'
-import { OutOfPatchBadge } from '@/components/common/HideButton'
+import { EntityIssues } from '@/components/common/form'
+import { HiddenByProjectBadge, OutOfPatchBadge } from '@/components/common/HideButton'
 import { Crest } from '@/components/common/pictures'
 import { TeamPickerDialog } from '@/components/team/NewTeamDialog'
 import { BENCH, RESERVE } from '@/components/team/pending'
@@ -54,10 +55,11 @@ export function PlayerTeams({ player, rows, setRows }: { player: PlayerDetail; r
           <TableHeader>
             <TableRow>
               <TableHead>{t('col.team')}</TableHead>
-              <TableHead className="w-28">{t('col.number')}</TableHead>
-              <TableHead className="w-52">{t('col.position')}</TableHead>
+              <TableHead className="w-28 text-center">{t('col.number')}</TableHead>
+              <TableHead className="w-52 text-center">{t('col.position')}</TableHead>
               <TableHead className="w-28 text-center">{t('roster.inPatch')}</TableHead>
               <TableHead className="w-32" />
+              <TableHead className="w-16" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -73,6 +75,7 @@ export function PlayerTeams({ player, rows, setRows }: { player: PlayerDetail; r
                         {tm?.name ?? names[r.team] ?? `#${r.team}`}
                       </Link>
                       {tm?.national_of != null && <Badge>{t('playerTeams.national')}</Badge>}
+                      {tm?.team_hidden && (tm.is_new ? <OutOfPatchBadge /> : <HiddenByProjectBadge label={t('teams.hiddenByProject')} />)}
                       {r.hidden && <OutOfPatchBadge label={t('playerTeams.hidden')} />}
                     </span>
                     {tm && tm.squad_size > player.max_squad && (
@@ -84,12 +87,12 @@ export function PlayerTeams({ player, rows, setRows }: { player: PlayerDetail; r
                       type="number"
                       min={1}
                       max={99}
-                      className="h-8 w-20 tabular-nums"
+                      className="h-8 w-20 text-center tabular-nums"
                       value={r.jersey ?? ''}
                       onChange={(e) => update(r.team, { jersey: e.target.value === '' ? null : Math.min(99, Math.max(1, Number(e.target.value))) })}
                     />
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="text-center">
                     <Select value={r.slot === undefined ? '' : String(r.slot)} onValueChange={(v) => update(r.team, { slot: Number(v) })}>
                       <SelectTrigger size="sm" className="w-44">
                         <SelectValue placeholder={t('playerTeams.autoSlot')} />
@@ -117,6 +120,9 @@ export function PlayerTeams({ player, rows, setRows }: { player: PlayerDetail; r
                     <Button variant="ghost" size="sm" title={t('playerTeams.remove')} onClick={() => setRows(rows.filter((x) => x.team !== r.team))}>
                       <UserMinus /> {t('common.remove')}
                     </Button>
+                  </TableCell>
+                  <TableCell>
+                    <EntityIssues kind="team" id={r.team} />
                   </TableCell>
                 </TableRow>
               )

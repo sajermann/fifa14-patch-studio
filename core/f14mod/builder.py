@@ -259,8 +259,7 @@ def add_created(db: Database, project: Project) -> dict:
         if leagues.find(leagueid=lid):
             raise BuildError('league_id_taken', str(lid))
         row = _model_row(leagues, 'leagueid', fifa14.TEMPLATE_LEAGUE)
-        for column, value in (('leagueid', lid), ('leaguename', f'League {lid}'), ('level', 1),
-                              ('leaguetimeslice', 0), ('iswithintransferwindow', 0)):
+        for column, value in fifa14.new_league_values(lid).items():
             if _has(leagues, column):
                 leagues.set(row, column, value)
         leagues.records.append(row)

@@ -18,6 +18,14 @@ def _saved_sql(kind: str, alias: str, field: str) -> str:
             f"AND field = '{field}')")
 
 
+def _team_colors_sql() -> str:
+    """The three kit colors of a team (the project's value, else the game's), one JSON [r, g, b] column each."""
+    return ', '.join(
+        f"COALESCE({_saved_sql('team', 't', f'teamcolor{n}')}, json_array(json_extract(t.raw, '$.teamcolor{n}r'), "
+        f"json_extract(t.raw, '$.teamcolor{n}g'), json_extract(t.raw, '$.teamcolor{n}b'))) AS color{n}"
+        for n in (1, 2, 3))
+
+
 def _overall_sql(alias: str, raw: str, stored: str) -> str:
     """The player's overall: the game's own value, or (a player with saved edits) the one the attributes give."""
     saved = f"FROM p.fields WHERE kind = 'player' AND id = {alias}.id"
@@ -238,6 +246,7 @@ def leagues(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAUL
     sorts = {'name': 'fold(name)', 'id': 'id', 'level': 'level', 'country': 'fold(country)',
              'team_count': 'team_count'}
     out = _page(con, select, where, params, sorts, sort, direction, ('name', 'asc'), page, size, new_first=True)
+    countries_hidden = {r[0] for r in con.execute("SELECT id FROM p.hidden WHERE kind = 'country'")}
     for r in out['items']:
         r.pop('search', None)
         r['edited'] = bool(r['edited'])
@@ -247,6 +256,10 @@ def leagues(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAUL
         r['extra_countries'] = json.loads(r['extra_countries']) if r['extra_countries'] else []
         r['hidden_in_countries'] = json.loads(r['hidden_in_countries']) if r['hidden_in_countries'] else []
         r['has_logo'] = bool(r['has_logo'] or r['own_logo'])
+        # same rule as the league detail: every country it shows in is out of the patch (or out there only)
+        shown_in = [c for c in dict.fromkeys([r['country_id'], *r['extra_countries']]) if c]
+        gone = countries_hidden | set(r['hidden_in_countries'])
+        r['hidden_by_countries'] = bool(shown_in) and all(c in gone for c in shown_in)
     return out
 
 
@@ -255,6 +268,7 @@ def teams(con, lang: str, q='', league: int | None = None, edited: bool | None =
     params: dict = {'lang': lang}
     select = f"""SELECT t.id, {_team_name('full')} AS name, {_team_name('abbr15')} AS abbr15,
                  {_team_name('abbr3')} AS abbr3, t.overall, t.attack, t.midfield, t.defense, t.color, t.has_crest,
+                 {_team_colors_sql()},
                  t.national_of, {_first_league()} AS league_id,
                  (SELECT {_league_name('l')} FROM v_leagues l WHERE l.id = {_first_league()}) AS league,
                  (SELECT COUNT(*) FROM v_team_players WHERE team_id = t.id) AS player_count,
@@ -283,6 +297,8 @@ def teams(con, lang: str, q='', league: int | None = None, edited: bool | None =
     for r in out['items']:
         r.pop('search', None)
         r['color'] = json.loads(r['color']) if r['color'] else None
+        r['colors'] = [c for c in (json.loads(r.pop(f'color{n}') or 'null') for n in (1, 2, 3))
+                       if c and None not in c]
         r['has_crest'] = bool(r['has_crest'])
         r['edited'] = bool(r['edited'])
         r['hidden'] = bool(r['hidden'])
@@ -378,7 +394,8 @@ def team(con, lang: str, tid: int) -> dict | None:
         f"""SELECT pl.id, {_player_name()} AS name, pl.overall, pl.position, tp.jersey, tp.position AS link_position,
                   COALESCE({_saved('player', 'pl', 'name.jersey')}, pl.jersey_name, {_saved('player', 'pl', 'name.last')},
                            pl.last, pl.name) AS back_name,
-                  pl.has_photo, pl.is_new, {_edited('player', 'pl')} AS edited, tp.ord, tp.hidden
+                  pl.has_photo, pl.is_new, {_edited('player', 'pl')} AS edited, tp.ord, tp.hidden,
+                  {_flag('hidden', 'player', 'pl')} AS player_hidden
            FROM v_team_players tp JOIN v_players pl ON pl.id = tp.player_id WHERE tp.team_id = ?
            ORDER BY tp.ord, tp.position, pl.overall DESC""", (tid,))]
     for r in roster:
@@ -388,6 +405,7 @@ def team(con, lang: str, tid: int) -> dict | None:
         r['is_new'] = bool(r['is_new'])
         r['edited'] = bool(r['edited'])
         r['hidden'] = bool(r['hidden'])
+        r['player_hidden'] = bool(r['player_hidden'])  # the player is out of the patch everywhere
     leagues_of = [dict(r) for r in con.execute(
         f'SELECT l.id, {_league_name()} AS name, l.is_new, (SELECT x.hidden FROM v_league_teams x '
         'WHERE x.league_id = l.id AND x.team_id = :tid) AS hidden FROM v_leagues l WHERE l.id IN '
@@ -500,6 +518,13 @@ def league(con, lang: str, lid: int) -> dict | None:
                            (SELECT {_country_name()} FROM v_nations n WHERE n.id = l.country_id) AS country, l.has_logo, l.is_new
                            FROM v_leagues l WHERE l.id = :lid""", {'lang': lang, 'lid': lid}).fetchone()
     raw = json.loads(row['raw'])
+    if head['is_new']:  # the row the patch writes: a copy of the model league's row with the new league's values
+        # (a game without the model league: another of its leagues, as the patch does)
+        model = con.execute('SELECT raw FROM leagues ORDER BY id = ? DESC, id LIMIT 1',
+                            (fifa14.TEMPLATE_LEAGUE,)).fetchone()
+        if model and model['raw']:
+            raw = json.loads(model['raw'])
+            raw.update({k: v for k, v in fifa14.new_league_values(lid).items() if k in raw})
     original = _names(con, 'league', lid)
     team_ids = [r[0] for r in con.execute(
         'SELECT team_id FROM v_league_teams WHERE league_id = ? ORDER BY ord, team_id', (lid,))]
@@ -542,6 +567,7 @@ def player(con, lang: str, pid: int) -> dict | None:
     names = {k: row[k] for k in ('first', 'last', 'common', 'jersey_name') if row[k]}
     links = [dict(r) for r in con.execute(
         f"""SELECT t.id, {_team_name('abbr15')} AS name, tp.jersey, tp.position, tp.hidden, t.national_of, t.is_new,
+                   {_flag('hidden', 'team', 't')} AS team_hidden,
                    (SELECT COUNT(*) FROM v_team_players x WHERE x.team_id = t.id AND x.hidden = 0) AS squad_size
             FROM v_team_players tp JOIN v_teams t ON t.id = tp.team_id WHERE tp.player_id = :pid
             ORDER BY t.national_of IS NOT NULL, tp.ord, t.id""",
@@ -549,6 +575,7 @@ def player(con, lang: str, pid: int) -> dict | None:
     for r in links:
         r['position_name'] = fifa14.position_name(r['position'])
         r['hidden'] = bool(r['hidden'])
+        r['team_hidden'] = bool(r['team_hidden'])  # the team is out of the patch everywhere
         r['is_new'] = bool(r['is_new'])
         r['slots'] = team_slots(con, r['id'], r['is_new'])
     source = con.execute('SELECT template FROM p.player_sources WHERE player_id = ?', (pid,)).fetchone()

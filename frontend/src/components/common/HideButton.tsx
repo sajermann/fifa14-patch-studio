@@ -31,7 +31,7 @@ export function HideButton({
     <Button
       variant={variant}
       size="sm"
-      className="min-w-24 justify-start" // same width for "hide" and "show": the columns do not move
+      className="min-w-24 justify-center" // same width for "hide" and "show": the columns do not move
       title={hidden ? showHint : hideHint}
       disabled={disabled}
       onClick={(e) => {
@@ -80,11 +80,12 @@ export function GameHiddenBadge({ country = false }: { country?: boolean }) {
   )
 }
 
-type HideKind = 'country' | 'league' | 'team'
+type HideKind = 'country' | 'league' | 'team' | 'player'
 const SETTERS: Record<HideKind, (id: number, hidden: boolean) => Promise<{ hidden: boolean }>> = {
   country: api.setCountryHidden,
   league: api.setLeagueHidden,
   team: api.setTeamHidden,
+  player: api.setPlayerHidden,
 }
 
 /** Saves the Hide button at once (list rows). */

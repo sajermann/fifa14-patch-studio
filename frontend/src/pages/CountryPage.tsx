@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { EntityIssues } from '@/components/common/form'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api } from '@/api/client'
@@ -280,11 +281,12 @@ export function CountryPage() {
                   <TableRow>
                     <TableHead className="w-12" />
                     <TableHead>{t('col.name')}</TableHead>
-                    <TableHead className="w-28">{t('col.level')}</TableHead>
-                    <TableHead className="w-28">{t('col.teams')}</TableHead>
-                    <TableHead className="w-28">{t('col.id')}</TableHead>
+                    <TableHead className="w-28 text-center">{t('col.level')}</TableHead>
+                    <TableHead className="w-28 text-center">{t('col.teams')}</TableHead>
+                    <TableHead className="w-28 text-center">{t('col.id')}</TableHead>
                     <TableHead className="w-28 text-center">{t('roster.inPatch')}</TableHead>
                     <TableHead className="w-32" />
+                    <TableHead className="w-16" />
                   </TableRow>
                 </TableHeader>
                 <TableBody className={leagueRows.isFetching ? 'opacity-70' : undefined}>
@@ -306,9 +308,9 @@ export function CountryPage() {
                           {l?.hidden && (l.is_new ? <OutOfPatchBadge /> : <HiddenByProjectBadge label={t('leagues.hiddenByProject')} />)}
                           {!leagueOut && hiddenHere && <OutOfPatchBadge label={t('country.outOfPatchHere')} />}
                         </TableCell>
-                        <TableCell className="tabular-nums">{l?.level ?? '—'}</TableCell>
-                        <TableCell className="tabular-nums">{l?.team_count ?? '—'}</TableCell>
-                        <TableCell className="tabular-nums">{lid}</TableCell>
+                        <TableCell className="text-center tabular-nums">{l?.level ?? '—'}</TableCell>
+                        <TableCell className="text-center tabular-nums">{l?.team_count ?? '—'}</TableCell>
+                        <TableCell className="text-center tabular-nums">{lid}</TableCell>
                         <TableCell className="text-center">
                           <Switch
                             checked={!leagueOut && !hiddenHere}
@@ -323,12 +325,15 @@ export function CountryPage() {
                             <UserMinus /> {t('common.remove')}
                           </Button>
                         </TableCell>
+                        <TableCell>
+                          <EntityIssues kind="league" id={lid} />
+                        </TableCell>
                       </TableRow>
                     )
                   })}
                   {leagueIds.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                      <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
                         {t('country.noLeagues')}
                       </TableCell>
                     </TableRow>

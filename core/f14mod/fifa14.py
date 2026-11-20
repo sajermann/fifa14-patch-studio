@@ -46,6 +46,14 @@ MAX_LEAGUE_LINKS = 4095    # leagueteamlinks.artificialkey has 12 bits: every te
 MAX_SQUAD = 41             # players a team shows in the game (more appear as "undefined")
 TEMPLATE_LEAGUE = 76       # Rest of World: the model row of a new league (no career, no competition)
 TEMPLATE_NATION = 211      # Rest of World: the model row and the default flag of a new country
+
+
+def new_league_values(lid: int) -> dict:
+    """The columns a new league changes in its copy of the TEMPLATE_LEAGUE row (the user's fields go on top)."""
+    return {'leagueid': lid, 'leaguename': f'League {lid}', 'level': 1, 'leaguetimeslice': 0,
+            'iswithintransferwindow': 0}
+
+
 TABLE_POSITIONS = 64       # leagueteamlinks.currenttableposition has 6 bits (1-64)
 
 # pictures (game paths; {} = the id)

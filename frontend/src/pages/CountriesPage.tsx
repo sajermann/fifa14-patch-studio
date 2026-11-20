@@ -7,7 +7,7 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/compon
 import { api } from '@/api/client'
 import { CreateDialog } from '@/components/common/create'
 import { OriginalBadge } from '@/components/common/detail'
-import { GameHiddenBadge, HiddenByProjectBadge, OutOfPatchBadge } from '@/components/common/HideButton'
+import { GameHiddenBadge, HiddenByProjectBadge, HideButton, OutOfPatchBadge, useHide } from '@/components/common/HideButton'
 import { CountryFlag } from '@/components/common/pictures'
 import { BulkActions, RowCheckbox, SelectAllCheckbox, SelectAllDialog, useListSelection } from '@/components/common/selection'
 import { useI18n } from '@/i18n'
@@ -29,6 +29,7 @@ export function CountriesPage() {
   // the project's items (created, or edited ones of the game) can be picked and deleted in bulk, like in the Street Studio
   const own = (r: { is_new: boolean; edited?: boolean }) => r.is_new || !!r.edited
   const selection = useListSelection((data?.items ?? []).filter(own).map((r) => r.id), data?.own_ids ?? [])
+  const hide = useHide('country', ['countries', 'country', 'leagues'])
   const [creating, setCreating] = useState(false)
   const create = useMutation({
     mutationFn: (name: string) => api.createCountry({ full: { '*': name } }),
@@ -84,8 +85,10 @@ export function CountriesPage() {
             </TableHead>
             <TableHead className="w-14" />
             <SortHead field="name" label={t('col.name')} state={sortState} />
-            <SortHead field="league_count" label={t('col.leagues')} state={sortState} />
-            <SortHead field="id" label={t('col.id')} state={sortState} />
+            <SortHead field="league_count" label={t('col.leagues')} state={sortState} className="text-center" />
+            <SortHead field="id" label={t('col.id')} state={sortState} className="text-center" />
+            <TableHead className="w-28" />
+            <TableHead className="w-16" />
           </TableRow>
         </TableHeader>
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
@@ -100,13 +103,25 @@ export function CountriesPage() {
                 {c.game_hidden && <GameHiddenBadge country />}
                 {c.hidden && (c.is_new ? <OutOfPatchBadge /> : <HiddenByProjectBadge label={t('countries.hiddenByProject')} />)}
               </TableCell>
-              <TableCell className="tabular-nums">{c.league_count}</TableCell>
-              <TableCell className="text-muted-foreground tabular-nums">{c.id}</TableCell>
+              <TableCell className="text-center tabular-nums">{c.league_count}</TableCell>
+              <TableCell className="text-center text-muted-foreground tabular-nums">{c.id}</TableCell>
+              <TableCell>
+                {!c.game_hidden && (
+                  <HideButton
+                    hidden={c.hidden}
+                    disabled={hide.isPending && hide.variables?.id === c.id}
+                    onToggle={() => hide.mutate({ id: c.id, hidden: !c.hidden })}
+                    hideHint={t(c.is_new ? 'countries.hideHint' : 'countries.originalHideHint')}
+                    showHint={t(c.is_new ? 'countries.showHint' : 'countries.originalShowHint')}
+                  />
+                )}
+              </TableCell>
+              <TableCell />{/* warnings column: countries have none yet */}
             </TableRow>
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>

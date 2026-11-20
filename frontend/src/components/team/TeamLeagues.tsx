@@ -10,6 +10,7 @@ import { PickerDialog } from '@/components/common/PickerDialog'
 import { LeagueImage } from '@/components/common/pictures'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { EntityIssues } from '@/components/common/form'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useI18n } from '@/i18n'
 import { useStatus, useToken } from '@/state/queries'
@@ -85,15 +86,16 @@ export function TeamLeagues({
             <TableRow>
               <TableHead className="w-12" />
               <TableHead>{t('col.name')}</TableHead>
-              <TableHead className="w-48">{t('col.country')}</TableHead>
+              <TableHead className="w-48 text-right">{t('col.country')}</TableHead>
               <TableHead className="w-28 text-center">{t('roster.inPatch')}</TableHead>
               <TableHead className="w-32" />
+              <TableHead className="w-16" />
             </TableRow>
           </TableHeader>
           <TableBody className={rows.isFetching ? 'opacity-70' : undefined}>
             {ids.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                   {t('team.noLeagues')}
                 </TableCell>
               </TableRow>
@@ -111,9 +113,10 @@ export function TeamLeagues({
                     </Link>{' '}
                     {l && !l.is_new && <OriginalBadge edited={l.edited} />}
                     {hidden.includes(lid) && <OutOfPatchBadge label={t('team.outOfPatchHere')} />}
-                    {l?.hidden && <HiddenByProjectBadge label={t('leagues.hiddenByProject')} />}
+                    {l?.hidden && (l.is_new ? <OutOfPatchBadge /> : <HiddenByProjectBadge label={t('leagues.hiddenByProject')} />)}
+                    {l && !l.hidden && l.hidden_by_countries && <HiddenByProjectBadge label={t('leagues.countryHidden')} />}
                   </TableCell>
-                  <TableCell>{l?.country ?? '—'}</TableCell>
+                  <TableCell className="text-right">{l?.country ?? '—'}</TableCell>
                   <TableCell className="text-center">
                     <Switch
                       checked={!hidden.includes(lid)}
@@ -125,6 +128,9 @@ export function TeamLeagues({
                     <Button variant="ghost" size="sm" title={t('team.removeLeague')} onClick={() => setLeagues(ids.filter((x) => x !== lid), hidden.filter((x) => x !== lid))}>
                       <UserMinus /> {t('common.remove')}
                     </Button>
+                  </TableCell>
+                  <TableCell>
+                    <EntityIssues kind="league" id={lid} />
                   </TableCell>
                 </TableRow>
               )

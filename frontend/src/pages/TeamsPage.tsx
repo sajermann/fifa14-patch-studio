@@ -9,7 +9,8 @@ import { toast } from '@/lib/notify'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
 import { OriginalBadge, OverallBadge } from '@/components/common/detail'
-import { HiddenByProjectBadge, OutOfPatchBadge } from '@/components/common/HideButton'
+import { EntityIssues } from '@/components/common/form'
+import { HiddenByProjectBadge, HideButton, OutOfPatchBadge, useHide } from '@/components/common/HideButton'
 import { cn } from '@/lib/utils'
 import { ColorDot, Crest } from '@/components/common/pictures'
 import { BulkActions, RowCheckbox, SelectAllCheckbox, SelectAllDialog, useListSelection } from '@/components/common/selection'
@@ -30,6 +31,7 @@ export function TeamsPage() {
   const selection = useListSelection((data?.items ?? []).filter(own).map((r) => r.id), data?.own_ids ?? [])
   const options = useOptions().data
   const qc = useQueryClient()
+  const hide = useHide('team', ['teams', 'team', 'leagues', 'league', 'players'])
   const [creating, setCreating] = useState(false)
   const create = useMutation({
     mutationFn: (n: NewTeam) =>
@@ -99,11 +101,13 @@ export function TeamsPage() {
             </TableHead>
             <TableHead className="w-12" />
             <SortHead field="name" label={t('col.name')} state={sortState} />
-            <SortHead field="league" label={t('col.league')} state={sortState} />
-            <SortHead field="overall" label={t('col.overall')} state={sortState} />
-            <SortHead field="player_count" label={t('col.players')} state={sortState} />
-            <TableHead>{t('col.colors')}</TableHead>
-            <SortHead field="id" label={t('col.id')} state={sortState} />
+            <SortHead field="league" label={t('col.league')} state={sortState} className="text-right" />
+            <SortHead field="overall" label={t('col.overall')} state={sortState} className="text-center" />
+            <SortHead field="player_count" label={t('col.players')} state={sortState} className="text-center" />
+            <TableHead className="text-center">{t('col.colors')}</TableHead>
+            <SortHead field="id" label={t('col.id')} state={sortState} className="text-center" />
+            <TableHead className="w-28" />
+            <TableHead className="w-16" />
           </TableRow>
         </TableHeader>
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
@@ -122,20 +126,36 @@ export function TeamsPage() {
                 </div>
                 {tm.abbr15 && tm.abbr15 !== tm.name && <div className="text-xs text-muted-foreground">{tm.abbr15}</div>}
               </TableCell>
-              <TableCell>{tm.national_of !== null ? t('teams.nationalTeam') : (tm.league ?? '—')}</TableCell>
-              <TableCell>
+              <TableCell className="text-right">{tm.national_of !== null ? t('teams.nationalTeam') : (tm.league ?? '—')}</TableCell>
+              <TableCell className="text-center">
                 <OverallBadge value={tm.overall} />
               </TableCell>
-              <TableCell className="tabular-nums">{tm.player_count}</TableCell>
+              <TableCell className="text-center tabular-nums">{tm.player_count}</TableCell>
               <TableCell>
-                <ColorDot rgb={tm.color} />
+                <span className="flex items-center justify-center gap-1">
+                  {tm.colors.map((c, i) => (
+                    <ColorDot key={i} rgb={c} />
+                  ))}
+                </span>
               </TableCell>
-              <TableCell className="text-muted-foreground tabular-nums">{tm.id}</TableCell>
+              <TableCell className="text-center text-muted-foreground tabular-nums">{tm.id}</TableCell>
+              <TableCell>
+                <HideButton
+                  hidden={tm.hidden}
+                  disabled={hide.isPending && hide.variables?.id === tm.id}
+                  onToggle={() => hide.mutate({ id: tm.id, hidden: !tm.hidden })}
+                  hideHint={t(tm.is_new ? 'teams.hideHint' : 'teams.originalHideHint')}
+                  showHint={t(tm.is_new ? 'teams.showHint' : 'teams.originalShowHint')}
+                />
+              </TableCell>
+              <TableCell>
+                <EntityIssues kind="team" id={tm.id} />
+              </TableCell>
             </TableRow>
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={10} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>

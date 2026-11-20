@@ -15,7 +15,7 @@ from . import settings  # noqa: I001 - first: it puts the core folder on the pat
 from f14mod import (builder, fields, fifa14, flags, images, install_check, installer, kitprint, preview,  # noqa: E402
                     teamkits)
 
-from . import dialogs, queries  # noqa: E402
+from . import dialogs, queries, validation  # noqa: E402
 from .state import GameState, Jobs, project  # noqa: E402
 
 log = logging.getLogger('f14api')
@@ -59,6 +59,15 @@ app = FastAPI(title='FIFA 14 Patch Studio', version=settings.APP_VERSION, lifesp
 
 
 # ---- status, settings and the game --------------------------------------------------------------------------------
+
+@app.get('/api/issues')
+def get_issues():
+    """The project's problems (errors stop the build, warnings do not); empty while the game is not ready."""
+    if game.state != 'ready' or not game.catalog_path:
+        return {'issues': []}
+    with db() as con:
+        return {'issues': validation.issues(con, lang())}
+
 
 @app.get('/api/status')
 def get_status():

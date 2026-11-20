@@ -1,13 +1,18 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, Download, FolderOpen, Hammer, Loader2, RotateCcw } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { AlertTriangle, ChevronDown, CircleAlert, Download, FolderOpen, Hammer, Loader2, RotateCcw } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { api } from '@/api/client'
-import type { Job } from '@/api/types'
+import type { Job, ProjectIssue } from '@/api/types'
 import { hasMessage, useI18n, type MessageKey } from '@/i18n'
+import { issueLink, issueText } from '@/lib/issues'
 import { toast } from '@/lib/notify'
-import { useStatus } from '@/state/queries'
+import { useProjectIssues, useStatus } from '@/state/queries'
 
 export type PatchJobKind = Job['kind']
 
@@ -42,12 +47,64 @@ export function JobWatcher() {
   return null
 }
 
+/** The issues, errors first, each with a link to its league/team/player. */
+function IssueList({ issues, onNavigate }: { issues: ProjectIssue[]; onNavigate: () => void }) {
+  const { t } = useI18n()
+  const sorted = useMemo(() => [...issues].sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1)), [issues])
+  if (sorted.length === 0) return <p className="text-sm text-muted-foreground">{t('issues.none')}</p>
+  return (
+    <ul className="space-y-2">
+      {sorted.map((i, k) => {
+        const link = issueLink(t, i)
+        return (
+          <li key={k} className="flex items-start gap-2 text-sm">
+            {i.severity === 'error' ? (
+              <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
+            ) : (
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+            )}
+            <div>
+              {link && (
+                <Link to={link.to} className="font-medium underline-offset-4 hover:underline" onClick={onNavigate}>
+                  {link.label}
+                </Link>
+              )}
+              <p className="text-muted-foreground">{issueText(t, i)}</p>
+            </div>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+function IssuesDialog({ open, onOpenChange, issues }: { open: boolean; onOpenChange: (v: boolean) => void; issues: ProjectIssue[] }) {
+  const { t } = useI18n()
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent width="lg">
+        <DialogHeader>
+          <DialogTitle>{t('issues.title')}</DialogTitle>
+          <DialogDescription>{t('issues.description')}</DialogDescription>
+        </DialogHeader>
+        <ScrollArea className="max-h-[60vh] pr-3">
+          <IssueList issues={issues} onNavigate={() => onOpenChange(false)} />
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 /** Header actions: build the patch (the main action), install it, and the rest in a menu (uninstall last). */
 export function PatchActions() {
   const { t } = useI18n()
   const status = useStatus().data
   const start = usePatchJob()
+  const issues = useProjectIssues()
+  const [issuesOpen, setIssuesOpen] = useState(false)
   if (status?.game.state !== 'ready') return null
+  const errors = issues.filter((i) => i.severity === 'error').length
+  const warnings = issues.length - errors
   const job = status.job
   const running = job?.state === 'running' || start.isPending
   const busy = (kind: PatchJobKind) => job?.state === 'running' && job.kind === kind
@@ -58,9 +115,20 @@ export function PatchActions() {
           {t(`patch.running.${job.kind}` as MessageKey)} {Math.round(job.done * 100)}%
         </span>
       )}
-      <Button size="sm" disabled={running} onClick={() => start.mutate('build')}>
-        {busy('build') ? <Loader2 className="animate-spin" /> : <Hammer />} {t('patch.build')}
+      <Button variant="ghost" size="sm" onClick={() => setIssuesOpen(true)}>
+        <CircleAlert className={errors ? 'text-destructive' : 'text-muted-foreground'} /> {errors}
+        <AlertTriangle className={warnings ? 'text-amber-600' : 'text-muted-foreground'} /> {warnings}
       </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span>
+            <Button size="sm" disabled={running || errors > 0} onClick={() => start.mutate('build')}>
+              {busy('build') ? <Loader2 className="animate-spin" /> : <Hammer />} {t('patch.build')}
+            </Button>
+          </span>
+        </TooltipTrigger>
+        {errors > 0 && <TooltipContent>{t('patch.fixErrorsFirst')}</TooltipContent>}
+      </Tooltip>
       <Button variant="outline" size="sm" disabled={running || !status.patch_built} onClick={() => start.mutate('install')}>
         {busy('install') ? <Loader2 className="animate-spin" /> : <Download />} {t('patch.install')}
       </Button>
@@ -80,6 +148,7 @@ export function PatchActions() {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      <IssuesDialog open={issuesOpen} onOpenChange={setIssuesOpen} issues={issues} />
     </div>
   )
 }

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { EntityIssues } from '@/components/common/form'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -161,6 +162,9 @@ export function TeamPage() {
               <Trash2 /> {t('common.delete')}
             </Button>
           )}
+          <span className="self-center">
+            <EntityIssues kind="team" id={id} />
+          </span>
         </div>
       </div>
       {team.is_new && team.leagues.length === 0 && <p className="text-sm text-amber-600 dark:text-amber-400">{t('team.noLeague')}</p>}

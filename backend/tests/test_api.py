@@ -184,6 +184,7 @@ def test_free_country_and_league_crud(client):
                                                'fields': {'countryid': cid}}).json()
     lid = league['id']
     assert lid >= 400 and league['is_new'] and league['country_id'] == cid and league['team_ids'] == []
+    assert league['raw'].get('leagueid') == lid  # the Database tab shows the row the patch writes
     assert [x['id'] for x in client.get(f'/api/countries/{cid}').json()['leagues']] == [lid]
     assert client.get('/api/leagues', params={'country': cid}).json()['total'] == 1
     assert client.get('/api/leagues', params={'sort': 'id'}).json()['items'][0]['id'] == lid
@@ -357,9 +358,12 @@ def test_league_hidden_in_one_country(client):
     r = client.put('/api/countries/52/leagues', json={'league_ids': [fakegame.PLAIN_LEAGUE, lid]})
     assert next(x for x in r.json()['leagues'] if x['id'] == lid)['hidden_in_countries'] == [52]
     assert not client.get(f'/api/leagues/{lid}').json()['hidden_by_countries']  # still in the patch in 54
+    assert ('league_hidden_in_countries', f'league:{lid}') not in _issues(client)
     client.put('/api/countries/54/leagues', json={'league_ids': [lid], 'hidden_league_ids': [lid]})
     assert client.get(f'/api/leagues/{lid}').json()['hidden_by_countries']  # out in every country of it
+    assert ('league_hidden_in_countries', f'league:{lid}') in _issues(client)  # warned: it leaves the game
     client.put('/api/countries/54/leagues', json={'league_ids': [lid], 'hidden_league_ids': []})
+    assert ('league_hidden_in_countries', f'league:{lid}') not in _issues(client)
     # removed from the country: the hidden mark there goes too
     client.put('/api/countries/52/leagues', json={'league_ids': [fakegame.PLAIN_LEAGUE]})
     assert 'hidden_in_countries' not in client.get(f'/api/leagues/{lid}').json()['saved']
@@ -473,3 +477,56 @@ def test_bulk_delete_takes_created_and_resets_edited(client):
     assert sorted(r.json()['deleted']) == sorted([a, b]) and r.json()['skipped'] == []
     assert client.get('/api/leagues', params={'q': 'Bulk'}).json()['own_ids'] == []
     assert client.post('/api/bulk-delete', json={'kind': 'nope', 'ids': [1]}).status_code == 400
+
+
+def _issues(client):
+    return {(i['code'], i['entity']) for i in client.get('/api/issues').json()['issues']}
+
+
+def test_issues(client):
+    tid = fakegame.TEAM
+    client.put(f'/api/teams/{tid}/hidden', json={'hidden': False})  # (an earlier test leaves it hidden)
+    assert client.get('/api/issues').json()['issues'] == []  # the clean game has none
+    squad = client.get(f'/api/teams/{tid}').json()['roster']
+    captain = client.get(f'/api/teams/{tid}').json()['values']['captainid']
+    rows = [{'player': r['id'], 'jersey': r['jersey'], 'slot': r['link_position'], 'hidden': r['id'] == captain}
+            for r in squad]
+    rows[1]['jersey'] = rows[2]['jersey'] = 7
+    r = client.put(f'/api/teams/{tid}/roster', json={'rows': rows})
+    assert r.status_code == 200, r.text
+    found = _issues(client)
+    assert ('captain_hidden', f'team:{tid}') in found and ('duplicate_number', f'team:{tid}') in found
+    client.put(f'/api/teams/{tid}/roster', json={'rows': rows[:5]})
+    errors = [i for i in client.get('/api/issues').json()['issues'] if i['severity'] == 'error']
+    assert [(i['code'], i['entity'], i['params']['count']) for i in errors] == [('roster_too_small', f'team:{tid}', 5)]
+    assert errors[0]['name'] == 'Test Athletic Club'
+    client.delete(f'/api/teams/{tid}/edits')
+    # created things: a league without country and teams, a team without players or league, a player without team
+    lid = client.post('/api/leagues', json={'names': {'full': {'*': 'Empty League'}}}).json()['id']
+    new_team = client.post('/api/teams', json={'names': {'full': {'*': 'New FC'}}, 'template': fakegame.TEAM}).json()['id']
+    found = _issues(client)
+    assert {('league_without_country', f'league:{lid}'), ('league_without_teams', f'league:{lid}'),
+            ('roster_too_small', f'team:{new_team}'), ('team_without_league', f'team:{new_team}')} <= found
+    client.put(f'/api/leagues/{lid}/hidden', json={'hidden': True})
+    assert not any(e == f'league:{lid}' for _, e in _issues(client))  # left out of the patch: not checked
+    client.delete(f'/api/leagues/{lid}')
+    client.delete(f'/api/teams/{new_team}')
+    assert client.get('/api/issues').json()['issues'] == []
+    # a hidden country: its league and the team only in it leave the game (both warned)
+    client.put('/api/countries/54/hidden', json={'hidden': True})  # the country of LEAGUE, TEAM's only league
+    assert _issues(client) == {('league_hidden_in_countries', f'league:{fakegame.LEAGUE}'),
+                               ('team_league_hidden', f'team:{tid}')}
+    # one league still in the game is enough for the team
+    client.put(f'/api/leagues/{fakegame.PLAIN_LEAGUE}/teams', json={'team_ids': [fakegame.SMALL_TEAM, tid]})
+    assert _issues(client) == {('league_hidden_in_countries', f'league:{fakegame.LEAGUE}')}
+    # ...unless the team is left out of the patch in that league
+    client.put(f'/api/leagues/{fakegame.PLAIN_LEAGUE}/teams',
+               json={'team_ids': [fakegame.SMALL_TEAM, tid], 'hidden_team_ids': [tid]})
+    assert ('team_league_hidden', f'team:{tid}') in _issues(client)
+    client.delete(f'/api/leagues/{fakegame.PLAIN_LEAGUE}/teams')
+    client.put('/api/countries/54/hidden', json={'hidden': False})
+    # the user's Hide on the league itself: no league warning (wanted), but its only team is warned
+    client.put(f'/api/leagues/{fakegame.LEAGUE}/hidden', json={'hidden': True})
+    assert _issues(client) == {('team_league_hidden', f'team:{tid}')}
+    client.put(f'/api/leagues/{fakegame.LEAGUE}/hidden', json={'hidden': False})
+    assert client.get('/api/issues').json()['issues'] == []

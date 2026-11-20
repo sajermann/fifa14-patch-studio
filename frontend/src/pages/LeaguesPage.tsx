@@ -9,6 +9,7 @@ import { useFrom } from '@/lib/back'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
 import { OriginalBadge } from '@/components/common/detail'
+import { EntityIssues } from '@/components/common/form'
 import { GameHiddenBadge, HiddenByProjectBadge, HideButton, OutOfPatchBadge, useHide } from '@/components/common/HideButton'
 import { LeagueImage } from '@/components/common/pictures'
 import { BulkActions, RowCheckbox, SelectAllCheckbox, SelectAllDialog, useListSelection } from '@/components/common/selection'
@@ -70,11 +71,12 @@ export function LeaguesPage() {
             </TableHead>
             <TableHead className="w-12" />
             <SortHead field="name" label={t('col.name')} state={sortState} />
-            <SortHead field="country" label={t('col.country')} state={sortState} />
-            <SortHead field="level" label={t('col.level')} state={sortState} />
-            <SortHead field="team_count" label={t('col.teams')} state={sortState} />
-            <SortHead field="id" label={t('col.id')} state={sortState} />
+            <SortHead field="country" label={t('col.country')} state={sortState} className="text-right" />
+            <SortHead field="level" label={t('col.level')} state={sortState} className="text-center" />
+            <SortHead field="team_count" label={t('col.teams')} state={sortState} className="text-center" />
+            <SortHead field="id" label={t('col.id')} state={sortState} className="text-center" />
             <TableHead className="w-28" />
+            <TableHead className="w-16" />
           </TableRow>
         </TableHeader>
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
@@ -88,14 +90,15 @@ export function LeaguesPage() {
                 <span className={l.hidden ? 'font-medium text-muted-foreground' : 'font-medium text-foreground'}>{l.name}</span> {!l.is_new && <OriginalBadge edited={l.edited} />}
                 {l.game_hidden && <GameHiddenBadge />}
                 {l.hidden && (l.is_new ? <OutOfPatchBadge /> : <HiddenByProjectBadge label={t('leagues.hiddenByProject')} />)}
+                {!l.hidden && l.hidden_by_countries && <HiddenByProjectBadge label={t('leagues.countryHidden')} />}
               </TableCell>
-              <TableCell>
+              <TableCell className="text-right">
                 {l.country ?? '—'}
                 {l.extra_countries.length > 0 && <span className="text-muted-foreground"> +{l.extra_countries.length}</span>}
               </TableCell>
-              <TableCell className="tabular-nums">{l.level ?? '—'}</TableCell>
-              <TableCell className="tabular-nums">{l.team_count}</TableCell>
-              <TableCell className="text-muted-foreground tabular-nums">{l.id}</TableCell>
+              <TableCell className="text-center tabular-nums">{l.level ?? '—'}</TableCell>
+              <TableCell className="text-center tabular-nums">{l.team_count}</TableCell>
+              <TableCell className="text-center text-muted-foreground tabular-nums">{l.id}</TableCell>
               <TableCell>
                 {!l.game_hidden && (
                   <HideButton
@@ -107,11 +110,14 @@ export function LeaguesPage() {
                   />
                 )}
               </TableCell>
+              <TableCell>
+                <EntityIssues kind="league" id={l.id} />
+              </TableCell>
             </TableRow>
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>

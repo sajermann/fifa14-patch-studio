@@ -14,6 +14,18 @@ export interface Issue {
   detail: string
 }
 
+/** A problem of the project (backend f14api.validation): an error stops the build, a warning does not. */
+export interface ProjectIssue {
+  code: string
+  severity: 'error' | 'warning'
+  kind: 'league' | 'team' | 'player' | null
+  id: number | null
+  entity: string | null // 'team:123'
+  field: string | null
+  params: Record<string, string | number>
+  name: string | null // the entity's shown name
+}
+
 export interface GameCheck {
   state: 'not_found' | 'invalid' | 'modified' | 'clean' | 'patched'
   game_dir: string | null
@@ -94,6 +106,8 @@ export interface LeagueRow {
   extra_countries: number[]
   /** Countries of the league where it is left out of the patch (it stays in them in the app). */
   hidden_in_countries: number[]
+  /** Every country the league shows in is out of the patch: the league is out too. */
+  hidden_by_countries: boolean
   own_logo: number | null
 }
 
@@ -139,6 +153,8 @@ export interface TeamRow {
   midfield: number | null
   defense: number | null
   color: (number | null)[] | null
+  /** The kit colors the team has (1 to 3), as [r, g, b]. */
+  colors: number[][]
   has_crest: boolean
   national_of: number | null
   league_id: number | null
@@ -222,6 +238,8 @@ export interface RosterRow {
   edited: boolean
   /** out of the patch in this team only */
   hidden: boolean
+  /** the player is out of the patch everywhere (Hide) */
+  player_hidden: boolean
 }
 
 /** One row of a squad being edited: lineup slot = a position code (starter), 28 = bench, 29 = out of the squad. */
@@ -359,6 +377,8 @@ export interface PlayerTeam {
   national_of: number | null
   /** out of the patch in this team only */
   hidden: boolean
+  /** the team is out of the patch everywhere (Hide) */
+  team_hidden: boolean
   is_new: boolean
   /** players of the team in the patch (hidden ones not counted) */
   squad_size: number

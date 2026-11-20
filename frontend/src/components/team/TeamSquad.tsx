@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom'
 import { ApiError, api } from '@/api/client'
 import type { FieldValue, PlayerRow, SquadRow, TeamDetail } from '@/api/types'
 import { FillScroll, OriginalBadge, OverallBadge, Section } from '@/components/common/detail'
+import { EntityIssues } from '@/components/common/form'
 import { OutOfPatchBadge } from '@/components/common/HideButton'
 import { PickerDialog, type PickerItem } from '@/components/common/PickerDialog'
 import { Photo } from '@/components/common/pictures'
@@ -38,6 +39,7 @@ interface PlayerInfo {
   has_photo: boolean
   is_new: boolean
   edited: boolean
+  hidden?: boolean // out of the patch everywhere
 }
 
 const infoOf = (p: PlayerInfo): PlayerInfo => ({
@@ -48,6 +50,7 @@ const infoOf = (p: PlayerInfo): PlayerInfo => ({
   has_photo: p.has_photo,
   is_new: p.is_new,
   edited: p.edited,
+  hidden: !!p.hidden,
 })
 
 const SCROLL_RESERVE = 330 // height kept under the table for the captain and takers card
@@ -256,16 +259,17 @@ export function TeamSquad({
           <TableHeader className="sticky top-0 z-10 bg-card shadow-[0_1px_0_var(--border)]">
             <TableRow>
               <TableHead>{t('col.name')}</TableHead>
-              <TableHead className="w-20">{t('col.overall')}</TableHead>
-              <TableHead className="w-24">{t('col.number')}</TableHead>
-              <TableHead className="w-44">{t('col.position')}</TableHead>
+              <TableHead className="w-20 text-center">{t('col.overall')}</TableHead>
+              <TableHead className="w-24 text-center">{t('col.number')}</TableHead>
+              <TableHead className="w-44 text-center">{t('col.position')}</TableHead>
               {ROLES.map(({ column, label, icon: Icon }) => (
                 <TableHead key={column} className="w-8 px-1 text-center" title={t(label)}>
                   <Icon className="mx-auto size-4" aria-label={t(label)} />
                 </TableHead>
               ))}
-              <TableHead className="w-20">{t('roster.inPatch')}</TableHead>
+              <TableHead className="w-28 text-center">{t('roster.inPatch')}</TableHead>
               <TableHead className="w-28" />
+              <TableHead className="w-16" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -282,10 +286,11 @@ export function TeamSquad({
                       </Link>
                       {/* the game's players say original / updated; the ones the user made have no badge */}
                       {!p?.is_new && <OriginalBadge edited={p?.edited} />}
+                      {p?.hidden && <OutOfPatchBadge />}
                       {r.hidden ? <OutOfPatchBadge label={t('playerTeams.hidden')} /> : overLimit && <OutOfPatchBadge label={t('squad.overLimit')} />}
                     </span>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="text-center">
                     <OverallBadge value={p?.overall ?? null} />
                   </TableCell>
                   <TableCell>
@@ -293,7 +298,7 @@ export function TeamSquad({
                       type="number"
                       min={1}
                       max={99}
-                      className={cn('h-8 tabular-nums', r.jersey !== null && repeated.has(r.jersey) && 'border-destructive')}
+                      className={cn('h-8 text-center tabular-nums', r.jersey !== null && repeated.has(r.jersey) && 'border-destructive')}
                       value={r.jersey ?? ''}
                       onChange={(e) => setRows(rows.map((x) => (x.player === r.player ? { ...x, jersey: e.target.value === '' ? null : Math.min(99, Math.max(1, Number(e.target.value))) } : x)))}
                     />
@@ -320,7 +325,7 @@ export function TeamSquad({
                       {roleValue(column) === r.player && <Icon className="mx-auto size-4 text-primary" aria-label={t(label)} />}
                     </TableCell>
                   ))}
-                  <TableCell>
+                  <TableCell className="text-center">
                     <Switch
                       checked={!r.hidden}
                       title={r.hidden ? t('squad.showHint') : t('squad.hideHint')}
@@ -332,12 +337,15 @@ export function TeamSquad({
                       <UserMinus /> {t('common.remove')}
                     </Button>
                   </TableCell>
+                  <TableCell>
+                    <EntityIssues kind="player" id={r.player} />
+                  </TableCell>
                 </TableRow>
               )
             })}
             {rows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5 + ROLES.length} className="py-8 text-center text-muted-foreground">
+                <TableCell colSpan={6 + ROLES.length} className="py-8 text-center text-muted-foreground">
                   {t('squad.empty')}
                 </TableCell>
               </TableRow>
