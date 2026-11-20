@@ -166,6 +166,7 @@ def generate_players(tid: int, body: GeneratePlayersBody):
         taken = {r[0] for r in con.execute("SELECT json_extract(value, '$') FROM p.fields WHERE kind = 'player' "
                                            "AND field = 'name.last'")}
     codes = player_options()['codes']
+    faces = _generic_faces()
     first_day, last_day = (d.toordinal() for d in GENERATED_BIRTHDATES)
     middle = {spec.name: (spec.min + spec.max) // 2 for spec in fields.PLAYER
               if spec.group in ('physical', 'mental', 'skill', 'goalkeeper')}
@@ -180,6 +181,8 @@ def generate_players(tid: int, body: GeneratePlayersBody):
                   'birthdate': datetime.date.fromordinal(random.randint(first_day, last_day)).isoformat(),
                   'preferredfoot': random.choice((1, 2)), **middle,
                   **{c: random.choice(codes[c]) for c in GENERATED_LOOK if codes.get(c)}}
+        if faces:  # the face codes go together: one face texture the game has, not each code on its own
+            values.update(preview.codes_of_face(random.choice(faces), codes.get('skintonecode', [])))
         if nations:
             values['nationality'] = random.choice(nations)
         out.append(create_player(CreatePlayerBody(fields=values)))
@@ -503,6 +506,13 @@ def game_face_thumb(pid: int):
 # ---- options of the look codes, thumbnails --------------------------------------------------------------------
 
 _options_cache: dict[str, dict] = {}
+_faces_cache: dict[str, list] = {}
+
+
+def _generic_faces() -> list[tuple[int, ...]]:
+    if game.token not in _faces_cache:
+        _faces_cache[game.token] = preview.generic_faces(game.files())
+    return _faces_cache[game.token]
 
 
 def _file_codes(folder: str, pattern: str) -> list[int]:
@@ -538,6 +548,13 @@ def player_options():
         codes['headtypecode'] = heads
     if hairs:
         codes['hairtypecode'] = [0, *hairs]  # 0 = bald
+    for spec in fields.PLAYER:  # what the database can store (the game has hair files it cannot point to)
+        if spec.name in codes:
+            codes[spec.name] = [c for c in codes[spec.name] if spec.min <= c <= spec.max]
+    faces = _generic_faces()
+    if faces:  # a generic head with a value no face texture has shows a checkered face in the game
+        for field in preview.FACE_CODES:
+            codes[field] = [c for c in codes.get(field, []) if preview.face_codes_allowed(field, c, faces)]
     out = {'codes': codes, 'traits': list(fifa14.TRAITS), 'thumbs': list(appearance_thumbs.FIELDS),
            'hair_colors': ['#%06x' % c for c in preview.HAIR_COLORS]}
     _options_cache[game.token] = out

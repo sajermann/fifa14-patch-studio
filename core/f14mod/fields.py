@@ -79,9 +79,10 @@ PLAYER = [
                'standingtackle', 'volleys'], 'skill'),
     *_ratings(['gkdiving', 'gkhandling', 'gkkicking', 'gkpositioning', 'gkreflexes'], 'goalkeeper'),
     # generic head (headclasscode 1): the game builds it from these codes
-    *_codes([('headtypecode', 0, 16383), ('hairtypecode', 0, 8191), ('haircolorcode', 0, 15),
+    # (the ranges are the bits of the game's database: hair files above 127, e.g. hair_213, cannot be stored)
+    *_codes([('headtypecode', 0, 8191), ('hairtypecode', 0, 127), ('haircolorcode', 0, 15),
              ('facialhairtypecode', 0, 31), ('facialhaircolorcode', 0, 15), ('eyebrowcode', 0, 3),
-             ('sideburnscode', 0, 3), ('eyecolorcode', 1, 16), ('skintypecode', 0, 15)], 'look'),
+             ('sideburnscode', 0, 3), ('eyecolorcode', 1, 8), ('skintypecode', 0, 15)], 'look'),
     *_codes([('skintonecode', 1, 16), ('bodytypecode', 1, 32), ('jerseysleevelengthcode', 0, 7),
              ('socklengthcode', 0, 3), ('jerseystylecode', 0, 1), ('jerseyfit', 0, 3), ('shortstyle', 0, 1),
              ('hasseasonaljersey', 0, 7)], 'body'),

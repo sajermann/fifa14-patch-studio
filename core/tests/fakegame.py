@@ -79,7 +79,7 @@ def _players():
             # traits: flair (trait1 bit 14) for the star; trait2 bit 12 is one the app does not know (kept)
             'trait1': 1 << 14 if pid == STAR else 0, 'trait2': 1 << 12, 'headclasscode': 0 if pid == STAR else 1,
             # appearance codes outside any short list: they must go exactly as they are
-            'headtypecode': 2500 + pid % 7, 'hairtypecode': 300 + pid % 5, 'skintonecode': 1 + pid % 10,
+            'headtypecode': 2500 + pid % 7, 'hairtypecode': 30 + pid % 5, 'skintonecode': 1 + pid % 10,
             **{attr: overall for attr in ('acceleration', 'sprintspeed', 'finishing', 'shortpassing', 'dribbling',
                                           'ballcontrol', 'standingtackle', 'interceptions', 'strength',
                                           'stamina', 'gkdiving', 'gkhandling', 'gkpositioning', 'gkreflexes')}})
@@ -352,7 +352,9 @@ def build(root):
         f.write(b'fake head')
     # 3D preview: one body part and the skin (the rest of the player is missing: those parts answer 404)
     for game_path, blob in (('body/shorts_1_0.rx3', mesh_rx3('shorts')), ('body/skin_4_textures.rx3', kit_rx3((180, 120, 90))),
-                           ('faces/face_0_1_0_0_0_0_0_0_4_textures.rx3', kit_rx3((200, 150, 120)))):
+                           ('faces/face_0_1_0_0_0_0_0_0_4_textures.rx3', kit_rx3((200, 150, 120))),
+                           # a second generic face: only these values of the face codes can be picked
+                           ('faces/face_0_1_0_2_1_3_5_2_8_textures.rx3', kit_rx3((90, 60, 40)))):
         path = os.path.join(data, 'sceneassets', *game_path.split('/'))
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'wb') as f:

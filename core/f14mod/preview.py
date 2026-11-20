@@ -20,6 +20,8 @@ Files (data/sceneassets/, all RX3l), in the game's reference pose (cm, y up, fac
           shaded by kit/jersey_<sleeve>_0_textures.rx3 (jersey_am) and kit/shorts_0_0_textures.rx3 (shorts_am).
 """
 import io
+import random
+import re
 from functools import lru_cache
 
 from . import gltf, rx3, rx3mesh
@@ -126,6 +128,32 @@ def look(files, pid: int | None, raw: dict | None) -> dict:
 
 def face_key(v: dict) -> str:
     return '_'.join(str(_tone(v[k]) if k == 'skintonecode' else v[k]) for k in FACE_CODES)
+
+
+_GENERIC_FACE_RX = re.compile(r'/face_0_1_0_(\d+(?:_\d+){5})_textures\.rx3$')
+
+
+def generic_faces(files) -> list[tuple[int, ...]]:
+    """The face textures the game has for a generic head: the six FACE_CODES of each one (the skin tone as in the
+    file name: tones 1, 3 and 7 use 2, 4 and 8). The game shows a missing texture (a checkered face) for any other
+    combination."""
+    return sorted({tuple(int(c) for c in m.group(1).split('_'))
+                   for p in files.list(ASSETS + 'faces/') if (m := _GENERIC_FACE_RX.search(p))})
+
+
+def face_codes_allowed(field: str, code: int, faces: list[tuple[int, ...]]) -> bool:
+    """Whether some face of `faces` (generic_faces) has this value of one of the FACE_CODES."""
+    i = FACE_CODES.index(field)
+    value = _tone(code) if field == 'skintonecode' else code
+    return any(f[i] == value for f in faces)
+
+
+def codes_of_face(face: tuple[int, ...], tones: list[int]) -> dict:
+    """The FACE_CODES of a face of generic_faces; the skin tone is one of `tones` (the codes offered) that uses the
+    file's tone."""
+    out = dict(zip(FACE_CODES, face))
+    out['skintonecode'] = random.choice([t for t in tones if _tone(t) == face[-1]] or [face[-1]])
+    return out
 
 
 @lru_cache(maxsize=128)

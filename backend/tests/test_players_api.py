@@ -104,5 +104,10 @@ def test_face_packs_and_options(client, tmp_path):
     client.delete(f'/api/players/{pid}/edits')
     assert main.project().player_files(pid) == {}
     options = client.get('/api/player-options').json()
-    assert 'flair' in options['traits'] and options['codes']['eyebrowcode'] == [0, 1, 2, 3]
+    assert 'flair' in options['traits'] and options['codes']['eyebrowcode'] == [0, 2]
+    # only the values some face texture of the game has (the rest would show a checkered face)
+    assert options['codes']['skintypecode'] == [0, 2] and options['codes']['sideburnscode'] == [0, 1]
+    assert options['codes']['facialhaircolorcode'] == [0, 3]
+    # only what the database can store (hairtypecode has 7 bits, eyecolorcode 3)
+    assert all(c <= 127 for c in options['codes']['hairtypecode']) and all(c <= 8 for c in options['codes']['eyecolorcode'])
     client.put('/api/settings', json={'face_pack_dirs': []})

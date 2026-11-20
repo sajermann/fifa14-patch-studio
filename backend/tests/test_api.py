@@ -395,6 +395,12 @@ def test_generate_players_creates_random_strikers(client):
     assert [p['name'] for p in made] == ['Player 01', 'Player 02', 'Player 03']
     assert all(p['is_new'] and p['position'] == 25 and p['saved']['finishing'] == 50 for p in made)
     assert all(p['saved']['face']['source'] == 'generic' for p in made)
+    faces = {'0_0_0_0_0_4', '2_1_3_5_2_8'}  # the generic face textures of the fake game
+    for _ in range(5):  # the face codes are drawn together: always a face texture the game has
+        p = client.post(f'/api/teams/{fakegame.TEAM}/generate-players', json={'count': 1}).json()[0]
+        look = client.get(f"/api/preview/look/{p['id']}").json()
+        assert look['face'] in faces, look
+        assert client.delete(f"/api/players/{p['id']}").status_code == 200
     keepers = client.post(f'/api/teams/{fakegame.TEAM}/generate-players', json={'count': 3, 'goalkeepers': 2}).json()
     assert [p['position'] for p in keepers] == [0, 0, 25]
     again = client.post(f'/api/teams/{fakegame.TEAM}/generate-players', json={'count': 1}).json()
