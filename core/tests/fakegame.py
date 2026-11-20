@@ -309,7 +309,7 @@ def chunkzip(raw, chunk_size=0x8000):
 
 
 FACE_FILES = ['heads/head_{}_0.rx3', 'faces/face_{}_0_0_0_0_0_0_0_0_textures.rx3', 'heads/eyes_{}_0_textures.rx3',
-              'hair/hair_{}_0_0.rx3']
+              'hair/hair_{}_0_0.rx3', 'hair/hair_{}_0_textures.rx3']
 
 
 def build(root):

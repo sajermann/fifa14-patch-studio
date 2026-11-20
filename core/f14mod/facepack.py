@@ -128,8 +128,14 @@ def _photo_path(assets, face_id):
     return os.path.join(pack_root(assets), PHOTOS, f'p{face_id}.dds')
 
 
+def missing_parts(kinds):
+    """The OPTIONAL parts a face does not bring (kinds of FILES, in their order): the app never fills them in."""
+    return [k for k in FILES if k not in REQUIRED and k not in kinds]
+
+
 def list_faces(assets):
-    """[{'id', 'hair', 'hairlod', 'photo'}] of the complete faces (head mesh + face texture), by id."""
+    """[{'id', 'hair', 'hairlod', 'photo', 'missing'}] of the faces with a head mesh and a face texture, by id
+    (missing = missing_parts)."""
     names = {kind: set(os.listdir(os.path.join(assets, os.path.dirname(f))))
              for kind, f in FILES.items() if os.path.isdir(os.path.join(assets, os.path.dirname(f)))}
     out = []
@@ -141,7 +147,8 @@ def list_faces(assets):
         has = {kind: os.path.basename(f.format(fid)) in names.get(kind, ()) for kind, f in FILES.items()}
         if all(has[k] for k in REQUIRED):
             out.append({'id': fid, 'hair': has['hair'] and has['hair_textures'], 'hairlod': has['hairlod'],
-                        'photo': os.path.isfile(_photo_path(assets, fid))})
+                        'photo': os.path.isfile(_photo_path(assets, fid)),
+                        'missing': missing_parts({k for k, v in has.items() if v})})
     return sorted(out, key=lambda f: f['id'])
 
 
@@ -260,6 +267,10 @@ def photo(assets, face_id):
 FRAME = (-15.0, 150.5, 15.0, 186.5)  # cm (x0, y0, x1, y1) around the head in the reference pose
 LIGHT = (0.35, 0.45, 0.82)  # towards the viewer, from the upper left
 BACKGROUND = (0, 0, 0, 0)
+# blue and green checkers, as the game draws a missing texture (8x8 cells, repeated over the eyeball's UVs)
+MISSING_TEXTURE = Image.new('RGBA', (32, 32))
+MISSING_TEXTURE.putdata([(40, 90, 220, 255) if ((x // 4) + (y // 4)) % 2 else (40, 200, 70, 255)
+                         for y in range(32) for x in range(32)])
 
 
 def _texture(d, index):
@@ -326,8 +337,8 @@ def thumbnail(files, size=160, hair_tint=0.9, hair_rgb=None):
     img = Image.new('RGBA', (size, size), BACKGROUND)
     out, zbuf = img.load(), [-1e9] * (size * size)
     face = _texture(files['face'], 0)
-    # some packs have no eyes file (the build uses the template's eyeball): dark eyes instead of holes
-    eyes = _texture(files['eyes'], 0) if files.get('eyes') else Image.new('RGBA', (4, 4), (55, 42, 34, 255))
+    # a face without its eyes texture: the game's checkered missing texture (nothing is filled in)
+    eyes = _texture(files['eyes'], 0) if files.get('eyes') else MISSING_TEXTURE
     for m in rx3mesh.meshes(rx3.unpack(files['head'])):
         _draw(out, zbuf, size, m, eyes if 'eyes' in m['name'] else face)
     if files.get('hair') and files.get('hair_textures'):

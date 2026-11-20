@@ -104,6 +104,27 @@ function loadTexture(url: string, color = true, channel = 0, repeat = false) {
   })
 }
 
+let missing: THREE.Texture | undefined
+
+/** The blue and green checkers the game draws where a texture is missing (a face without its eyes texture). */
+function missingTexture() {
+  if (!missing) {
+    const n = 8
+    const data = new Uint8Array(n * n * 4)
+    for (let i = 0; i < n * n; i++) {
+      const [r, g, b] = ((i % n) + Math.floor(i / n)) % 2 ? [40, 90, 220] : [40, 200, 70]
+      data.set([r, g, b, 255], i * 4)
+    }
+    missing = new THREE.DataTexture(data, n, n)
+    missing.wrapS = missing.wrapT = THREE.RepeatWrapping
+    missing.repeat.set(0.5, 0.5)
+    missing.magFilter = THREE.NearestFilter
+    missing.colorSpace = THREE.SRGBColorSpace
+    missing.needsUpdate = true
+  }
+  return missing
+}
+
 /** Value of load() for key; keeps returning the previous value while a new key loads. */
 function useLoaded<T>(key: string | null, load: () => Promise<T>): T | undefined {
   const [state, setState] = useState<{ key: string; value: T }>()
@@ -140,8 +161,12 @@ const withFace = (path: string, look: PreviewLook) => (look.real && look.query ?
 
 function Head({ look }: { look: PreviewLook }) {
   const url = useAssetUrl()
-  const [glb, face, eyes] = [meshUrl('head', look.head, 0, look.real), `/api/preview/face/${look.face}.png`, textureUrl('eyes', look.eyes, look.real)].map((p) => url(withFace(p, look)))
-  const loaded = useLoaded([glb, face, eyes].join('|'), () => Promise.all([loadMeshes(glb), loadTexture(face), loadTexture(eyes, true, 0, true)]))
+  const [glb, face] = [meshUrl('head', look.head, 0, look.real), `/api/preview/face/${look.face}.png`].map((p) => url(withFace(p, look)))
+  // a face without its eyes texture: checkered eyes, like the game shows a missing texture (nothing is filled in)
+  const eyes = look.eyes === null ? null : url(withFace(textureUrl('eyes', look.eyes, look.real), look))
+  const loaded = useLoaded([glb, face, eyes].join('|'), () =>
+    Promise.all([loadMeshes(glb), loadTexture(face), eyes === null ? Promise.resolve(missingTexture()) : loadTexture(eyes, true, 0, true)]),
+  )
   if (!loaded) return null
   const [meshes, faceMap, eyesMap] = loaded
   return (

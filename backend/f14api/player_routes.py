@@ -478,12 +478,15 @@ def _cache_file(*parts) -> str:
     return os.path.join(settings.CACHE_DIR, 'faces', f'{key}.png')
 
 
+THUMB_VERSION = 2  # raised when facepack.thumbnail draws differently (2: missing eyes checkered)
+
+
 @app.get('/api/facepack/thumb')
 def face_pack_thumb(pack: str, id: int):  # noqa: A002 - the face id
     assets = _check_pack(pack)
     head = os.path.join(assets, *facepack.FILES['head'].format(id).split('/'))
     stamp = os.path.getmtime(head) if os.path.isfile(head) else 0
-    cache = _cache_file('thumb', assets, id, stamp)
+    cache = _cache_file('thumb', THUMB_VERSION, assets, id, stamp)
     if os.path.isfile(cache):
         return FileResponse(cache, media_type='image/png', headers=IMAGE_HEADERS)
     try:

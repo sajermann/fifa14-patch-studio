@@ -3,7 +3,10 @@
 How each changed file reaches the game:
   - an entry of an archive with a .bh index (data0..7.big, patch.big): written loose at its game path, and every .bh
     whose archive lists it gets that record's hash words zeroed, so the game opens the loose file;
-  - an entry of data/loc/locale.big (no .bh): the whole archive is written again with the new entry.
+  - an entry of data/loc/locale.big (no .bh): the whole archive is written again with the new entry;
+  - an entry removed (PatchBuilder.remove: a part a chosen face does not bring): its .bh record is zeroed and no loose
+    file is written, so the game finds it nowhere (tested in the game: a missing hair model or LOD is not drawn, a
+    missing eyes texture shows the game's checkered texture).
 The patch never holds the big archives themselves.
 
 The build goes in BUILD_STEPS, like the Street Studio's: the language texts start first in worker processes
@@ -44,6 +47,7 @@ class PatchBuilder:
                  cache: buildcache.BuildCache | None = None, name_of=None):
         self.files = files
         self.entries: dict[str, bytes] = {}  # game path -> new bytes
+        self.removed: set[str] = set()  # game paths the game must no longer find (no loose file, record zeroed)
         self.pool = pool  # threads for the pictures (None = made at once)
         self.cache = cache
         self.game_key = ''  # buildcache.game_fingerprint of files (set by build when there is a cache)
@@ -61,6 +65,12 @@ class PatchBuilder:
 
     def put(self, game_path: str, data: bytes) -> None:
         self.entries[normalize(game_path)] = data
+        self.removed.discard(normalize(game_path))
+
+    def remove(self, game_path: str) -> None:
+        """The game no longer finds this archive entry (nothing happens to a path no indexed archive has)."""
+        self.entries.pop(normalize(game_path), None)
+        self.removed.add(normalize(game_path))
 
     def name(self, kind: str, oid: int, project: 'Project | None' = None) -> str:
         """What the progress says about an entity: its shown name, else the project's name, else its id."""
@@ -127,7 +137,7 @@ class PatchBuilder:
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, 'wb') as f:
                 f.write(data)
-        indexes = self._zero_indexes(set(loose), out_dir)
+        indexes = self._zero_indexes(set(loose) | self.removed, out_dir)
         if to_locale:
             target = os.path.join(out_dir, *LOCALE.split('/'))
             os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -139,7 +149,8 @@ class PatchBuilder:
         reused = sum(1 for k in loose if k in self.from_cache)
         if to_locale and all(k in self.from_cache for k in to_locale):
             reused += 1
-        return {'reused_files': reused, 'loose': sorted(loose), 'locale': sorted(to_locale), 'indexes': indexes}
+        return {'reused_files': reused, 'loose': sorted(loose), 'locale': sorted(to_locale), 'indexes': indexes,
+                'removed': sorted(self.removed)}
 
     def _zero_indexes(self, paths: set[str], out_dir: str) -> dict[str, int]:
         """Writes each .bh that lists one of the paths, with those records zeroed; {bh name: records zeroed}."""
@@ -716,7 +727,8 @@ def add_created_players(db: Database, project: Project) -> int:
 def write_player_files(files: GameFiles, db: Database, project: Project, builder: 'PatchBuilder') -> dict:
     """The head of every player whose face the user chose (headclasscode 0 = his own face files, named after his id:
     copied from another game player or from the pack face kept in the project; 1 = the generic head of his look
-    codes) and the photo of every player with a picture (heads/p<id>.dds)."""
+    codes) and the photo of every player with a picture (heads/p<id>.dds). A part the chosen face does not bring is
+    removed (PatchBuilder.remove), never left to the game's file of that id."""
     players = db.table('players')
     rows = {players.get(r, 'playerid'): r for r in players.records}
     has_class = _has(players, 'headclasscode')
@@ -737,8 +749,11 @@ def write_player_files(files: GameFiles, db: Database, project: Project, builder
         if not all(kind in own for kind in fifa14.FACE_REQUIRED):
             raise BuildError('player_face_missing', str(pid))
         if face['source'] != 'player' or face['player'] != pid:
-            for kind, data in own.items():
-                builder.put(fifa14.PLAYER_FACE_FILES[kind].format(pid), data)
+            for kind, path in fifa14.PLAYER_FACE_FILES.items():
+                if kind in own:
+                    builder.put(path.format(pid), own[kind])
+                else:  # never the part the game has under his id (another face's): the face goes without it
+                    builder.remove(path.format(pid))
         if has_class:
             players.set(row, 'headclasscode', 0)
         counts['faces'] += 1

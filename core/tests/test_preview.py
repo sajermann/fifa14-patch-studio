@@ -98,3 +98,20 @@ def test_look_of_a_generic_player_a_real_face_and_the_model(files):
 def test_face_falls_back_to_the_plain_face_of_the_tone(files):
     img = Image.open(io.BytesIO(preview.face_png(files, '2_1_4_7_2_4')))
     assert img.getpixel((0, 0)) == (200, 150, 120)
+
+
+def test_pack_face_never_borrows_the_parts_it_lacks_from_the_game(files):
+    """The game has STAR's whole face; a pack face with the same id and only head + face textures must not get the
+    game's hair or eyes (another face's parts): it shows bald and without eyes, as it brings nothing else."""
+    pack = preview.FaceFiles(files, 'pack:test', fakegame.STAR, {'head': b'pack head', 'face': b'pack face'})
+    assert pack.read('data/sceneassets/heads/head_%d_0.rx3' % fakegame.STAR) == b'pack head'
+    assert pack.read('data/sceneassets/hair/hair_%d_0_0.rx3' % fakegame.STAR) is None
+    assert not pack.exists('data/sceneassets/heads/eyes_%d_0_textures.rx3' % fakegame.STAR)
+    assert pack.exists('data/sceneassets/body/shorts_1_0.rx3')  # the rest of the game is still there
+    look = preview.look(pack, fakegame.STAR, {'headclasscode': 0})
+    assert look['real'] is True and look['hair'] == 0 and look['eyes'] is None
+    # hair textures without the hair model (or the other way round): no hair either
+    half = preview.FaceFiles(files, 'pack:half', fakegame.STAR,
+                             {'head': b'h', 'face': b'f', 'hair_textures': b't', 'eyes': b'e'})
+    look = preview.look(half, fakegame.STAR, {'headclasscode': 0})
+    assert look['hair'] == 0 and look['eyes'] == fakegame.STAR

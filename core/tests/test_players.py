@@ -118,6 +118,26 @@ def test_original_player_generic_head_and_pack_face(installed, tmp_path):
     assert project.player_files(fakegame.KEEPER) == {}
 
 
+def test_parts_a_face_lacks_are_removed_never_taken_from_the_game(installed, tmp_path):
+    """STAR has his whole real face in data1.big. A pack face with only head + face textures goes without the rest:
+    the game must not find his own hair, hair LOD and eyes any more (tested in the game: no hair model drawn,
+    checkered eyes), so their .bh records are zeroed and no loose file is written for them."""
+    from f14mod import bh
+    from f14mod.big import BigArchive
+    project = Project(str(tmp_path / 'p.sqlite'))
+    project.save('player', fakegame.STAR, None, {'face': {'source': 'pack', 'pack': 'x', 'id': 51318}})
+    project.set_player_files(fakegame.STAR, {'head': b'RX3l pack head', 'face': b'RX3l pack face'})
+    summary, _tables, patch_dir = _build(installed, tmp_path, project)
+    gone = {fifa14.PLAYER_FACE_FILES[k].format(fakegame.STAR) for k in ('eyes', 'hair', 'hair_textures')}
+    assert gone <= set(summary['removed'])
+    for path in gone:
+        assert not os.path.exists(os.path.join(patch_dir, *path.split('/')))
+    archive = BigArchive(os.path.join(installed, 'data1.big'))
+    with open(os.path.join(patch_dir, 'data1.bh'), 'rb') as f:
+        zeroed = {archive.order[i] for i in bh.zeroed(f.read())}
+    assert gone <= zeroed  # with the head and face textures (written loose)
+    assert fifa14.PLAYER_FACE_FILES['head'].format(fakegame.STAR) in zeroed
+
 def test_face_without_files_cannot_be_built(installed, tmp_path):
     project = Project(str(tmp_path / 'p.sqlite'))
     project.save('player', fakegame.KEEPER, None, {'face': {'source': 'pack', 'pack': 'x', 'id': 1}})
@@ -139,6 +159,8 @@ def test_face_pack_reader(tmp_path):
     assert [label for _p, label in parts] == ['Pack']
     assets = parts[0][0]
     assert [f['id'] for f in facepack.list_faces(assets)] == [77]
+    # what the face does not bring is listed (the app never fills it in)
+    assert facepack.list_faces(assets)[0]['missing'] == ['eyes', 'hair_textures', 'hairlod']
     manifest, warnings = facepack.read_manifest(assets, str(tmp_path))
     assert manifest == {77: {'name': 'Someone', 'credits': 'Maker'}} and warnings == []
     assert set(facepack.read_face(assets, 77)) == {'head', 'face', 'hair'}

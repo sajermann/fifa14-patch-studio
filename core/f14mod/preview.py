@@ -74,19 +74,23 @@ class PreviewError(LookupError):
 class FaceFiles:
     """The game's files with one face (a pack face or one kept in the project: {kind of fifa14.PLAYER_FACE_FILES:
     bytes}) under the id `face_id`, so the preview shows it as a player's own face. `key` names the face (the caches
-    tell faces apart by it)."""
+    tell faces apart by it). A part the face does not bring is missing: never the game's file of the same id (that
+    would be another face's part, e.g. the game's old hair of that player over the pack's hair textures)."""
 
     def __init__(self, files, key: str, face_id: int, data: dict[str, bytes]):
         from . import fifa14
         self.files, self.key = files, key
-        self._own = {fifa14.PLAYER_FACE_FILES[kind].format(face_id): v for kind, v in data.items()
+        self._paths = {path.format(face_id).lower() for path in fifa14.PLAYER_FACE_FILES.values()}
+        self._own = {fifa14.PLAYER_FACE_FILES[kind].format(face_id).lower(): v for kind, v in data.items()
                      if kind in fifa14.PLAYER_FACE_FILES}
 
     def read(self, path: str):
-        return self._own.get(path.lower()) or self.files.read(path)
+        p = path.lower()
+        return self._own.get(p) if p in self._paths else self.files.read(path)
 
     def exists(self, path: str) -> bool:
-        return path.lower() in self._own or self.files.exists(path)
+        p = path.lower()
+        return p in self._own if p in self._paths else self.files.exists(path)
 
     def __hash__(self):
         return hash((id(self.files), self.key))
@@ -111,11 +115,14 @@ def look(files, pid: int | None, raw: dict | None) -> dict:
     return {
         'real': bool(real),
         'head': pid if real else v['headtypecode'],
-        # 0 = bald (a real face without hair files too)
-        'hair': (pid if files.exists(ASSETS + MESHES['hair'].format(code=pid, cls=0)) else 0) if real else
+        # 0 = bald (a real face without its hair model or its hair textures too)
+        'hair': (pid if files.exists(ASSETS + MESHES['hair'].format(code=pid, cls=0)) and
+                 files.exists(ASSETS + TEXTURES['hair'][0].format(code=pid, cls=0)) else 0) if real else
         v['hairtypecode'],
         'hair_color': '#%06x' % (0x808080 if real else color),  # a real face's hair_cm has its own color
-        'eyes': pid if real else v['eyecolorcode'],
+        # None = a real face without its eyes texture (the preview draws the eyeballs dark, nothing is filled in)
+        'eyes': (pid if files.exists(ASSETS + TEXTURES['eyes'][0].format(code=pid, cls=0)) else None) if real else
+        v['eyecolorcode'],
         'face': str(pid) if real else face_key(v),
         'skin': v['skintonecode'] if files.exists(ASSETS + TEXTURES['skin'][0].format(code=v['skintonecode'])) else 4,
         'sleeve': 1 if v['jerseysleevelengthcode'] == 1 else 0,

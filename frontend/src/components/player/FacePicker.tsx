@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useI18n, type MessageKey } from '@/i18n'
+import { facePartsText } from '@/lib/issues'
 import { FilterSelect, Pager, SearchInput } from '@/lib/list'
 import { toast } from '@/lib/notify'
 import { cn } from '@/lib/utils'
@@ -304,13 +305,21 @@ export function FacePicker({
 
       {browsing && (
         <div className="flex items-center gap-2 rounded-md border border-primary/40 bg-primary/5 p-2 text-sm">
-          <p className="min-w-0 flex-1">
-            {t('faces.viewing')}{' '}
-            <span className="font-medium">
-              {'player' in browsing ? browsing.name : browsing.face.name ? `${browsing.face.name} (${browsing.face.id})` : browsing.face.id}
-            </span>{' '}
-            {t('faces.viewingRest')}
-          </p>
+          <div className="min-w-0 flex-1">
+            <p>
+              {t('faces.viewing')}{' '}
+              <span className="font-medium">
+                {'player' in browsing ? browsing.name : browsing.face.name ? `${browsing.face.name} (${browsing.face.id})` : browsing.face.id}
+              </span>{' '}
+              {t('faces.viewingRest')}
+            </p>
+            {'face' in browsing && !!browsing.face.missing?.length && (
+              <p className="mt-1 flex gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                {t('faces.missingParts', { parts: facePartsText(t, browsing.face.missing) })}
+              </p>
+            )}
+          </div>
           <Button size="sm" onClick={pick}>
             <Check /> {t('faces.use')}
           </Button>

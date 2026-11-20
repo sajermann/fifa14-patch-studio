@@ -67,7 +67,7 @@ export interface ProjectIssue {
   id: number | null
   entity: string | null // 'team:123'
   field: string | null
-  params: Record<string, string | number>
+  params: Record<string, string | number | string[]>
   name: string | null // the entity's shown name
 }
 
@@ -508,11 +508,15 @@ export interface FacePage {
   total: number
 }
 
+export type FacePart = 'eyes' | 'hair' | 'hair_textures' | 'hairlod'
+
 export interface PackFace {
   id: number
   hair: boolean
   hairlod: boolean
   photo: boolean
+  /** optional parts the pack does not bring (the app never fills them in) */
+  missing?: FacePart[]
   name?: string
   credits?: string
   credits_url?: string
@@ -527,13 +531,14 @@ export interface Options {
 }
 
 /** How the player looks (GET /api/preview/look/<id>, f14mod.preview.look): real = his own face files (head, hair,
- * eyes and face are then his id); hair 0 = bald; scale = his height over the reference model's. */
+ * eyes and face are then his id); hair 0 = bald; eyes null = a real face without eyes (drawn dark, never filled in);
+ * scale = his height over the reference model's. */
 export interface PreviewLook {
   real: boolean
   head: number
   hair: number
   hair_color: string
-  eyes: number
+  eyes: number | null
   face: string
   skin: number
   sleeve: number

@@ -101,6 +101,11 @@ def test_face_packs_and_options(client, tmp_path):
     assert set(main.project().player_files(pid)) == {'head', 'face'}
     look = client.post(f'/api/preview/player-look/{pid}', json={'values': {}, 'face': face}).json()
     assert look['real'] and look['query'] == f'face_stored={pid}'
+    assert look['hair'] == 0 and look['eyes'] is None  # the pack brings neither: nothing is filled in
+    assert page['items'][0]['missing'] == ['eyes', 'hair', 'hair_textures', 'hairlod']
+    issue = next(i for i in client.get('/api/issues').json()['issues'] if i['code'] == 'face_incomplete')
+    assert issue['severity'] == 'warning' and issue['id'] == pid
+    assert issue['params']['parts'] == ['eyes', 'hair', 'hair_textures', 'hairlod']
     client.delete(f'/api/players/{pid}/edits')
     assert main.project().player_files(pid) == {}
     options = client.get('/api/player-options').json()
