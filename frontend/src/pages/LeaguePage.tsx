@@ -20,17 +20,17 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api } from '@/api/client'
 import { FillScroll, OriginalBadge, OverallBadge, RawTable, Section } from '@/components/common/detail'
-import { ALL, EditActions, FieldsEditor, NamesGrid, useEntityForm } from '@/components/common/edit'
+import { ALL, EditActions, FieldsEditor, LEAGUE_COUNTRIES, NamesGrid, RefPickerDialog, useEntityForm } from '@/components/common/edit'
 import { GameHiddenBadge, HiddenByProjectBadge, HideButton, OutOfPatchBadge, usePendingHide } from '@/components/common/HideButton'
 import { PickerDialog } from '@/components/common/PickerDialog'
 import { BackButton, useBack, useFrom, useTabParam } from '@/lib/back'
 import { cn } from '@/lib/utils'
-import { Crest, LeagueImage, readPicture } from '@/components/common/pictures'
+import { CountryFlag, Crest, LeagueImage, readPicture } from '@/components/common/pictures'
 import { LoadingBlock } from '@/components/layout/LoadingBlock'
 import { useI18n } from '@/i18n'
-import { useStatus, useToken } from '@/state/queries'
+import { useOptions, useStatus, useToken } from '@/state/queries'
 
-const TABS = ['data', 'teams', 'raw'] as const
+const TABS = ['data', 'countries', 'teams', 'raw'] as const
 /** The league's teams shown on the page (a league can have more: the rest is counted). */
 const SHOWN_TEAMS = 100
 
@@ -84,6 +84,8 @@ export function LeaguePage() {
   const back = useBack({ to: '/leagues', label: { key: 'nav.leagues' } })
   const from = useFrom(data?.name ?? { key: 'nav.leagues' })
   const [picking, setPicking] = useState(false)
+  const [pickingCountry, setPickingCountry] = useState(false)
+  const nations = useOptions().data?.nations ?? []
   const [deleting, setDeleting] = useState(false)
   const [pendingLogo, setPendingLogo] = useState<PendingLogo>(null)
   // the team list being edited (null = the saved one); Save sends it with the rest of the form
@@ -138,6 +140,29 @@ export function LeaguePage() {
     const kept = hidden.filter((x) => ids.includes(x))
     setPendingTeams(data && sameList(ids, data.team_ids) && sameSet(kept, data.hidden_team_ids) ? null : { ids, hidden: kept })
   }
+  // the league's countries: its own first (countryid), then the ones it also shows in (extra_countries)
+  const pickField = (name: string) => (entity.form.fields[name] === undefined ? data?.values[name] : entity.form.fields[name])
+  const ownId = pickField(LEAGUE_COUNTRIES.own)
+  const extraIds = pickField(LEAGUE_COUNTRIES.extra)
+  const countryIds = [...(typeof ownId === 'number' && ownId > 0 ? [ownId] : []), ...(Array.isArray(extraIds) ? (extraIds as number[]) : [])]
+  const hiddenValue = pickField(LEAGUE_COUNTRIES.hidden)
+  const hiddenCountryIds = Array.isArray(hiddenValue) ? (hiddenValue as number[]) : []
+  const setCountries = (ids: number[]) => {
+    entity.setField(LEAGUE_COUNTRIES.own, ids[0] ?? 0)
+    entity.setField(LEAGUE_COUNTRIES.extra, ids.slice(1))
+    // a country the league left is no longer "out of the patch" there
+    if (hiddenCountryIds.some((x) => !ids.includes(x))) entity.setField(LEAGUE_COUNTRIES.hidden, hiddenCountryIds.filter((x) => ids.includes(x)))
+  }
+  /** The league shown or left out of the patch in this country only (it stays in the country in the app). */
+  const setShownIn = (cid: number, shown: boolean) =>
+    entity.setField(LEAGUE_COUNTRIES.hidden, shown ? hiddenCountryIds.filter((x) => x !== cid) : [...hiddenCountryIds, cid])
+  const countryRows = useQuery({
+    queryKey: ['countries', token, lang, 'ids', countryIds.join(',')],
+    queryFn: () => api.countries({ ids: countryIds.join(','), size: 100 }),
+    enabled: !!token && countryIds.length > 0,
+    placeholderData: (previous) => previous,
+  })
+  const countriesById = new Map((countryRows.data?.items ?? []).map((r) => [r.id, r]))
   const fileInput = useRef<HTMLInputElement>(null)
   const chooseLogo = useMutation({
     mutationFn: async (file: File) => {
@@ -210,6 +235,9 @@ export function LeaguePage() {
       <Tabs {...tabs}>
         <TabsList>
           <TabsTrigger value="data">{t('team.tab.data')}</TabsTrigger>
+          <TabsTrigger value="countries">
+            {t('col.countries')} ({countryIds.length})
+          </TabsTrigger>
           <TabsTrigger value="teams">
             {t('col.teams')} ({teamIds.length})
           </TabsTrigger>
@@ -219,6 +247,7 @@ export function LeaguePage() {
           <FieldsEditor
             form={data}
             groups={['info']}
+            skip={[LEAGUE_COUNTRIES.own, LEAGUE_COUNTRIES.extra]}
             fields={entity.form.fields}
             setField={entity.setField}
             columns=""
@@ -265,6 +294,86 @@ export function LeaguePage() {
             setNames={entity.setNames}
             required={data.is_new ? ['full'] : []}
           />
+        </TabsContent>
+        <TabsContent value="countries">
+          <Section
+            title={t('col.countries')}
+            description={t('field.countries.hint')}
+            action={
+              <Button size="sm" onClick={() => setPickingCountry(true)}>
+                <Plus /> {t('field.nationsAdd')}
+              </Button>
+            }
+          >
+            <FillScroll>
+              <Table>
+                <TableHeader className="sticky top-0 z-10 shadow-[0_1px_0_var(--border)] [&_th]:bg-card">
+                  <TableRow>
+                    <TableHead className="w-16" />
+                    <TableHead>{t('col.name')}</TableHead>
+                    <TableHead className="w-28 text-center">{t('col.leagues')}</TableHead>
+                    <TableHead className="w-28 text-center">{t('col.id')}</TableHead>
+                    <TableHead className="w-28 text-center">{t('roster.inPatch')}</TableHead>
+                    <TableHead className="w-44" />
+                    <TableHead className="w-32" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody className={countryRows.isFetching ? 'opacity-70' : undefined}>
+                  {countryIds.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                        {t('league.noCountries')}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {countryIds.map((cid, i) => {
+                    const c = countriesById.get(cid)
+                    const countryOut = !!c?.hidden || !!c?.game_hidden // out of the patch (or the game) everywhere
+                    const hiddenHere = hiddenCountryIds.includes(cid)
+                    return (
+                    <TableRow key={cid}>
+                      <TableCell>
+                        <CountryFlag id={cid} size={64} className="h-5 w-8" />
+                      </TableCell>
+                      <TableCell>
+                        <Link to={`/countries/${cid}`} state={from.state} className="font-medium underline-offset-4 hover:underline">
+                          {nations.find((n) => n.id === cid)?.name ?? `#${cid}`}
+                        </Link>{' '}
+                        {i === 0 && <span className="text-xs text-muted-foreground">({t('field.countries.own')})</span>}
+                        {c?.game_hidden && <GameHiddenBadge country />}
+                        {c?.hidden && <HiddenByProjectBadge label={t('countries.hiddenByProject')} />}
+                        {!countryOut && hiddenHere && <OutOfPatchBadge label={t('country.outOfPatchHere')} />}
+                      </TableCell>
+                      <TableCell className="text-center tabular-nums">{c?.league_count ?? '—'}</TableCell>
+                      <TableCell className="text-center tabular-nums">{cid}</TableCell>
+                      <TableCell className="text-center">
+                        <Switch
+                          checked={!countryOut && !hiddenHere}
+                          disabled={countryOut}
+                          title={countryOut ? t('league.countryOutOfPatch') : hiddenHere ? t('country.showInCountry') : t('country.hideInCountry')}
+                          aria-label={hiddenHere ? t('country.showInCountry') : t('country.hideInCountry')}
+                          onCheckedChange={(v) => setShownIn(cid, v)}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        {i > 0 && (
+                          <Button variant="ghost" size="sm" title={t('league.makeOwnCountryHint')} onClick={() => setCountries([cid, ...countryIds.filter((x) => x !== cid)])}>
+                            {t('league.makeOwnCountry')}
+                          </Button>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Button variant="ghost" size="sm" title={t('field.nationsRemove')} onClick={() => setCountries(countryIds.filter((x) => x !== cid))}>
+                          <UserMinus /> {t('common.remove')}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            </FillScroll>
+          </Section>
         </TabsContent>
         <TabsContent value="teams">
           <Section
@@ -354,6 +463,7 @@ export function LeaguePage() {
         </TabsContent>
       </Tabs>
       <AddTeamDialog open={picking} onOpenChange={setPicking} chosen={teamIds} onPick={(tid) => setTeams([...teamIds, tid])} />
+      <RefPickerDialog kind="nation" open={pickingCountry} onOpenChange={setPickingCountry} exclude={countryIds} title={t('field.nationsAdd')} onPick={(cid) => setCountries([...countryIds, cid])} />
       <AlertDialog open={deleting} onOpenChange={(o) => !remove.isPending && setDeleting(o)}>
         <AlertDialogContent>
           <AlertDialogHeader>

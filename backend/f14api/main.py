@@ -405,9 +405,11 @@ def reset_league(lid: int):
 @app.get('/api/countries')
 def list_countries(q: str = '', origin: Optional[str] = None, status: Optional[str] = None,
                    sort: Optional[str] = None, dir: Optional[str] = None, page: int = 1,
-                   size: int = queries.DEFAULT_PAGE_SIZE):
+                   size: int = queries.DEFAULT_PAGE_SIZE, ids: Optional[str] = None):
+    """`ids` (comma separated) = only these countries (the list a page is editing)."""
     with db() as con:
-        return queries.countries(con, lang(), q, sort, dir, page, size, origin=origin, status=status)
+        return queries.countries(con, lang(), q, sort, dir, page, size, origin=origin, status=status,
+                                 ids=_id_list(ids))
 
 
 @app.get('/api/countries/{cid}')

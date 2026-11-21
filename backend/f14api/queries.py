@@ -630,7 +630,8 @@ def _country_name(alias: str = 'n') -> str:
 
 
 def countries(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAULT_PAGE_SIZE,
-              only: int | None = None, origin: str | None = None, status: str | None = None) -> dict:
+              only: int | None = None, origin: str | None = None, status: str | None = None,
+              ids: list[int] | None = None) -> dict:
     params: dict = {'lang': lang}
     select = f"""SELECT n.id, {_country_name()} AS name, n.is_new, n.has_flag,
                  COALESCE({_saved('country', 'n', 'flag_from')}, n.id) AS flag_id,
@@ -645,6 +646,9 @@ def countries(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFA
     if only is not None:
         params['only'] = only
         where.append('id = :only')
+    if ids is not None:  # these countries only (a list the page is editing)
+        listed = ','.join(str(int(i)) for i in ids) or 'NULL'
+        where.append(f'id IN ({listed})')
     if q.strip():
         where.append(_search("fold(name) || ' ' || id || ' ' || search", q, params))
     if origin == 'project':

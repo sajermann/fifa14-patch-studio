@@ -426,7 +426,7 @@ function PickIcon({ kind, id, small }: { kind: PickKind; id: number; small?: boo
 }
 
 /** The picker dialog over a whole list (countries or teams): search by name or ID; the user's created countries first. */
-function RefPickerDialog({
+export function RefPickerDialog({
   kind,
   open,
   onOpenChange,
@@ -556,30 +556,9 @@ function NationsInput({ value, onChange, title, firstLabel, className }: { value
 }
 
 /** A league's countries as one list, its own country first and then the ones it also shows in (the fields countryid
- * and extra_countries, kept apart in the project). Removing the first makes the next one its own. */
-const LEAGUE_COUNTRIES = { own: 'countryid', extra: 'extra_countries' } as const
-
-function LeagueCountriesInput({ form, fields, setField }: { form: EditForm; fields: Fields; setField: (name: string, value: FieldValue) => void }) {
-  const { t } = useI18n()
-  const { label } = useFieldLabel()
-  const pick = (name: string) => (fields[name] === undefined ? form.values[name] : fields[name])
-  const own = pick(LEAGUE_COUNTRIES.own)
-  const extra = pick(LEAGUE_COUNTRIES.extra)
-  const value = [...(typeof own === 'number' && own > 0 ? [own] : []), ...(Array.isArray(extra) ? (extra as number[]) : [])]
-  const changed = [LEAGUE_COUNTRIES.own, LEAGUE_COUNTRIES.extra].some((n) => fields[n] !== undefined && !sameValue(fields[n], form.values[n]))
-  return (
-    <NationsInput
-      value={value}
-      title={label('countries')}
-      firstLabel={t('field.countries.own')}
-      className={changed ? 'border-primary' : undefined}
-      onChange={(ids) => {
-        setField(LEAGUE_COUNTRIES.own, ids[0] ?? 0)
-        setField(LEAGUE_COUNTRIES.extra, ids.slice(1))
-      }}
-    />
-  )
-}
+ * and extra_countries, kept apart in the project). Removing the first makes the next one its own. Edited in the
+ * league's Countries tab, so the fields editor skips both. */
+export const LEAGUE_COUNTRIES = { own: 'countryid', extra: 'extra_countries', hidden: 'hidden_in_countries' } as const
 
 /** One input for one field; the shown value is the edited one, else the game's. */
 function FieldInput({ spec, value, original, onChange, roster, bar }: { spec: FieldSpec; value: FieldValue | undefined; original: FieldValue | undefined; onChange: (v: FieldValue) => void; roster?: RosterRow[]; bar?: boolean }) {
@@ -674,9 +653,12 @@ export function FieldsEditor({
   title,
   extra,
   bars = false,
+  skip = [],
 }: {
   form: EditForm
   groups: string[]
+  /** Fields edited elsewhere on the page (not shown here). */
+  skip?: string[]
   fields: Fields
   setField: (name: string, value: FieldValue) => void
   roster?: RosterRow[]
@@ -691,7 +673,7 @@ export function FieldsEditor({
   return (
     <div className={cn('grid gap-4', columns)}>
       {groups.map((group) => {
-        const specs = form.fields.filter((f) => f.group === group)
+        const specs = form.fields.filter((f) => f.group === group && !skip.includes(f.name))
         if (!specs.length) return null
         const groupKey = `fieldGroup.${group}`
         return (
@@ -699,21 +681,14 @@ export function FieldsEditor({
             <div className="grid gap-3">
               {extra?.[group]}
               {specs.map((spec) => {
-                const both = specs.some((s) => s.name === LEAGUE_COUNTRIES.extra)
-                if (both && spec.name === LEAGUE_COUNTRIES.extra) return null // shown with countryid
-                const countries = both && spec.name === LEAGUE_COUNTRIES.own
-                const name = countries ? 'countries' : spec.name
+                const name = spec.name
                 return (
                   <div key={spec.name} className="grid items-center gap-1 sm:grid-cols-[minmax(9rem,40%)_1fr] sm:gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-sm">{label(name)}</p>
                       {hint(name) && <p className="text-xs text-muted-foreground">{hint(name)}</p>}
                     </div>
-                    {countries ? (
-                      <LeagueCountriesInput form={form} fields={fields} setField={setField} />
-                    ) : (
-                      <FieldInput spec={spec} value={fields[spec.name]} original={form.values[spec.name]} onChange={(v) => setField(spec.name, v)} roster={roster} bar={bars} />
-                    )}
+                    <FieldInput spec={spec} value={fields[spec.name]} original={form.values[spec.name]} onChange={(v) => setField(spec.name, v)} roster={roster} bar={bars} />
                   </div>
                 )
               })}
