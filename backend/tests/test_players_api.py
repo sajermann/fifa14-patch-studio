@@ -3,6 +3,7 @@ look options, the preview of a player with the screen's values, hide and delete.
 import base64
 import io
 import json
+import os
 
 import fakegame
 from PIL import Image
@@ -69,6 +70,34 @@ def test_original_player_traits_and_reset(client):
     look = client.post(f'/api/preview/player-look/{pid}', json={'values': {}, 'face': {'source': 'generic'}}).json()
     assert look['real'] is False
     assert client.delete(f'/api/players/{pid}/edits').json()['edited'] is False
+
+
+def test_preview_shows_a_newer_pack_face_converted_like_the_patch(client, tmp_path):
+    """The meshes of a pack face in a newer format are shown converted into FIFA 14's (like the build does: the
+    newer necks stick out of the shirts), and the conversion is kept in the cache folder."""
+    import fakeface
+    from f14mod import faceconv
+    pack = tmp_path / 'Newer'
+    data = fakeface.newer_pack_face()
+    for kind, blob in data.items():
+        path = pack / 'sceneassets' / main.player_routes.facepack.FILES[kind].format(51318)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(blob)
+    client.put('/api/settings', json={'face_pack_dirs': [str(tmp_path)]})
+    folder = client.get('/api/facepack/page', params={'folder': str(pack)}).json()['items'][0]['folder']
+    cache = os.path.join(main.player_routes.settings.CACHE_DIR, 'faces')
+    before = set(os.listdir(cache)) if os.path.isdir(cache) else set()
+    params = {'real': True, 'face_pack': folder, 'face_id': 51318}
+    for part in ('head', 'hair'):
+        assert client.get(f'/api/preview/mesh/{part}/51318.glb', params=params).status_code == 200
+    made = set(os.listdir(cache)) - before
+    assert len(made) == 1  # one conversion for both (and the hair LOD)
+    entry = os.path.join(cache, made.pop())
+    converted = faceconv.convert_face(fakeface.template(), data)
+    for kind in faceconv.MESHES:
+        with open(os.path.join(entry, kind), 'rb') as f:
+            assert f.read() == converted[kind]
+    client.put('/api/settings', json={'face_pack_dirs': []})
 
 
 def test_face_packs_and_options(client, tmp_path):

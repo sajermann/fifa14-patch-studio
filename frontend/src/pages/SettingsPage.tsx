@@ -76,7 +76,7 @@ function GameCard({ status }: { status: Status }) {
             </Line>
           </ul>
         )}
-        <Button variant="outline" onClick={() => navigate('/game')}>
+        <Button variant="outline" onClick={() => navigate('/setup')}>
           <Settings2 /> {t('settings.changeFolders')}
         </Button>
       </CardContent>
@@ -109,7 +109,7 @@ function FoldersCard({ status }: { status: Status }) {
         }
         toast.info(t('settings.facePackFound', { count: packs.reduce((n, p) => n + p.count, 0), packs: facePackDirs.length }))
       }
-      // the game folder changes only through the Game screen (it checks the installation)
+      // the game folder changes only through the setup screen (it checks the installation)
       await api.saveSettings({ project_dir: config.project_dir?.trim() || null, face_pack_dirs: facePackDirs })
       await qc.invalidateQueries() // another project folder changes every screen
       toast.success(t('settings.saved'))

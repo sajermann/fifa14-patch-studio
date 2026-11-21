@@ -17,6 +17,7 @@ const STEP_LABELS: Record<BuildStep, MessageKey> = {
   files: 'build.stepFiles',
 }
 const ITEM_LABELS: Record<BuildItemKind, MessageKey> = {
+  face: 'build.itemFace',
   kit: 'build.itemKit',
   crest: 'build.itemCrest',
   photo: 'build.itemPhoto',

@@ -1,5 +1,5 @@
-import { AlertTriangle, Flag, FolderOpen, Hammer, Heart, Loader2, Settings, Shield, Trophy, Users } from 'lucide-react'
-import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
+import { AlertTriangle, Flag, Hammer, Heart, Loader2, Settings, Shield, Trophy, Users } from 'lucide-react'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { useI18n, type MessageKey } from '@/i18n'
 import { APP_NAME, APP_VERSION, AUTHOR_GITHUB, AUTHOR_NAME, DONATE_URL, REPO_URL } from '@/lib/about'
@@ -40,7 +40,7 @@ function GithubMark() {
   )
 }
 
-/** Pages that need the game ready: they show it being prepared, or send the user to the game screen. */
+/** Pages that need the game ready: they show it being prepared, or what went wrong reading it. */
 export function RequireGame() {
   const { t } = useI18n()
   const game = useStatus().data?.game
@@ -51,7 +51,15 @@ export function RequireGame() {
         <Loader2 className="size-4 animate-spin" /> {t('game.preparing', { percent: Math.round(game.progress.done * 100) })}
       </div>
     )
-  if (game.state !== 'ready') return <Navigate to="/game" replace />
+  if (game.state !== 'ready')
+    return (
+      <div className="space-y-3 py-10 text-sm">
+        {game.error && <p className="text-destructive">{game.error}</p>}
+        <Button variant="outline" asChild>
+          <NavLink to="/setup">{t('settings.changeFolders')}</NavLink>
+        </Button>
+      </div>
+    )
   return <Outlet />
 }
 
@@ -79,13 +87,6 @@ export function AppShell() {
           </div>
         </div>
         <nav className="space-y-1">
-          <NavItem
-            to="/game"
-            label="nav.game"
-            icon={FolderOpen}
-            extra={game?.state === 'building' ? <Loader2 className="size-3.5 animate-spin" /> : undefined}
-          />
-          <div className="my-2 border-t" />
           {NAV.map((n) => (
             <NavItem key={n.to} {...n} />
           ))}

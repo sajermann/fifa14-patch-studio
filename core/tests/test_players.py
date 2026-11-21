@@ -138,6 +138,36 @@ def test_parts_a_face_lacks_are_removed_never_taken_from_the_game(installed, tmp
     assert gone <= zeroed  # with the head and face textures (written loose)
     assert fifa14.PLAYER_FACE_FILES['head'].format(fakegame.STAR) in zeroed
 
+def test_pack_face_in_a_newer_format_is_converted_on_build(installed, tmp_path):
+    """FIFA 14 crashes on the meshes of the newer packs: the build converts them on the game's template
+    (f14mod.faceconv); the textures go as they are."""
+    import fakeface
+    from f14mod import faceconv
+    project = Project(str(tmp_path / 'p.sqlite'))
+    pack = fakeface.newer_pack_face()
+    project.save('player', fakegame.KEEPER, None, {'face': {'source': 'pack', 'pack': 'x', 'id': 51318}})
+    project.set_player_files(fakegame.KEEPER, pack)
+    _summary, _tables, patch_dir = _build(installed, tmp_path, project)
+    template = fakeface.template()
+    for kind in faceconv.MESHES:
+        made = _patch_file(patch_dir, fifa14.PLAYER_FACE_FILES[kind].format(fakegame.KEEPER))
+        assert made != pack[kind] and not faceconv.is_newer(made)
+        assert faceconv.check(made, template[kind]) == []
+    for kind in ('face', 'hair_textures'):
+        assert _patch_file(patch_dir, fifa14.PLAYER_FACE_FILES[kind].format(fakegame.KEEPER)) == pack[kind]
+
+
+def test_pack_face_the_converter_cannot_handle_stops_the_build(installed, tmp_path):
+    import fakeface
+    project = Project(str(tmp_path / 'p.sqlite'))
+    pack = dict(fakeface.newer_pack_face(), head=fakeface.head_without_eyes())
+    project.save('player', fakegame.KEEPER, None, {'face': {'source': 'pack', 'pack': 'x', 'id': 51318}})
+    project.set_player_files(fakegame.KEEPER, pack)
+    with pytest.raises(builder.BuildError) as e:
+        _build(installed, tmp_path, project)
+    assert (e.value.code, e.value.detail) == ('player_face_format', str(fakegame.KEEPER))
+
+
 def test_face_without_files_cannot_be_built(installed, tmp_path):
     project = Project(str(tmp_path / 'p.sqlite'))
     project.save('player', fakegame.KEEPER, None, {'face': {'source': 'pack', 'pack': 'x', 'id': 1}})

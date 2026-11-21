@@ -15,6 +15,24 @@ def test_status_and_check(client, game_dir, tmp_path):
     assert r.status_code == 400 and r.json()['detail']['code'] == 'game_not_usable'
 
 
+def test_first_run_setup(client, game_dir, tmp_path):
+    from f14api import settings
+    cfg = settings.load()
+    settings.save(cfg.model_copy(update={'terms_version': None}))
+    setup = client.get('/api/status').json()['setup']
+    assert setup['required'] and setup['reasons'] == ['terms']
+    body = {'game_dir': game_dir, 'face_pack_dirs': [' ', ''], 'terms_version': setup['terms_version']}
+    r = client.post('/api/setup/apply', json={**body, 'terms_version': 0})
+    assert r.status_code == 409 and r.json()['detail']['code'] == 'terms_not_accepted'
+    r = client.post('/api/setup/apply', json={**body, 'game_dir': str(tmp_path)})
+    assert r.status_code == 400 and r.json()['detail']['code'] == 'game_not_usable'
+    r = client.post('/api/setup/apply', json={**body, 'build_cores': 1})
+    assert r.status_code == 200, r.text
+    assert r.json()['setup'] == {'required': False, 'reasons': [], 'terms_version': settings.TERMS_VERSION}
+    cfg = settings.load()
+    assert cfg.face_pack_dirs == [] and cfg.build_cores == 1 and main.game.state == 'ready'  # same game: not read again
+
+
 def test_lists_page_filter_sort(client):
     teams = client.get('/api/teams').json()
     assert teams['total'] == 2

@@ -359,6 +359,15 @@ def build(root):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'wb') as f:
             f.write(blob)
+    # the template the face converter puts pack faces in a newer format on (f14mod.faceconv.TEMPLATE)
+    import fakeface
+    from f14mod import faceconv, fifa14
+    for kind, blob in fakeface.template().items():
+        path = os.path.join(data, 'sceneassets',
+                            *fifa14.PLAYER_FACE_FILES[kind].format(faceconv.TEMPLATE).split('/')[2:])
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'wb') as f:
+            f.write(blob)
     for game_path, blob in _fonts().items():
         path = os.path.join(root, 'Game', *game_path.split('/'))
         os.makedirs(os.path.dirname(path), exist_ok=True)

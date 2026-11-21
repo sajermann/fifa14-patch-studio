@@ -1,5 +1,5 @@
 import { hasMessage, translate } from '@/i18n'
-import type { BuildProgress, BulkKind, Config, CountryDetail, CountryRow, FaceChoice, FacePackCheck, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, MachineInfo, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, Status, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook, ProjectIssue } from './types'
+import type { BuildProgress, BulkKind, Config, CountryDetail, CountryRow, FaceChoice, FacePackCheck, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, MachineInfo, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, SetupRequest, Status, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook, ProjectIssue } from './types'
 
 /** Error of the backend; `message` is in the interface language when the app knows its code. */
 export class ApiError extends Error {
@@ -76,6 +76,7 @@ export const api = {
   checkGame: (path: string) => post<GameCheck>('/api/game/check', { path }),
   chooseGame: (path: string) => post<GameStatus>('/api/game', { path }),
   recheckGame: () => post<GameStatus>('/api/game/recheck'),
+  setupApply: (body: SetupRequest) => post<{ game: GameStatus; setup: Status['setup'] }>('/api/setup/apply', body),
 
   leagues: (p: ListParams) => get<Page<LeagueRow>>(`/api/leagues${query(p)}`),
   teams: (p: ListParams) => get<Page<TeamRow>>(`/api/teams${query(p)}`),

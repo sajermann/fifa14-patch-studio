@@ -9,13 +9,14 @@ import json
 import os
 import random
 import re
+import threading
 from typing import Optional
 from urllib.parse import quote
 
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from f14mod import appearance_thumbs, builder, facepack, fields, fifa14, images, preview
+from f14mod import appearance_thumbs, buildcache, builder, faceconv, facepack, fields, fifa14, images, preview
 from f14mod.project import BENCH, RESERVE
 
 from . import queries, settings
@@ -611,8 +612,48 @@ def appearance_thumb(field: str, code: int, variant: int = 0):
 
 # ---- 3D preview of a player with the screen's values ----------------------------------------------------------------
 
-def _face_files(face_pack: Optional[str], face_id: Optional[int], face_stored: Optional[int]):
-    """The game's files, with the face of a pack or the one kept in the project for a player put under its id."""
+_FACE_LOCK = threading.Lock()  # one conversion at a time (the preview asks for the head and the hair together)
+
+
+def _as_in_game(files, data: dict) -> dict:
+    """The face as the patch takes it: a pack face in a newer format with its meshes converted into FIFA 14's
+    (faceconv, as the build does), so the preview shows what the game will. Converting takes seconds: the result is
+    kept in the cache folder. A face the converter cannot handle is shown as it is (the build says so)."""
+    if not faceconv.face_needs_conversion(data):
+        return data
+    h = hashlib.sha1(f'{game.token}\0{buildcache.code_version("faceconv")}'.encode())
+    for kind in sorted(data):
+        h.update(kind.encode() + b'\0' + len(data[kind]).to_bytes(8, 'little') + data[kind])
+    folder = os.path.join(settings.CACHE_DIR, 'faces', h.hexdigest())
+    meshes = [kind for kind in faceconv.MESHES if data.get(kind)]
+    with _FACE_LOCK:
+        if all(os.path.isfile(os.path.join(folder, kind)) for kind in meshes):
+            out = dict(data)
+            for kind in meshes:
+                with open(os.path.join(folder, kind), 'rb') as f:
+                    out[kind] = f.read()
+            return out
+        template = faceconv.game_template(files)
+        if template is None:
+            return data
+        try:
+            out = faceconv.convert_face(template, data)
+        except faceconv.FaceFormatError:
+            return data
+        os.makedirs(folder, exist_ok=True)
+        for kind in meshes:
+            tmp = os.path.join(folder, kind + '.tmp')
+            with open(tmp, 'wb') as f:
+                f.write(out[kind])
+            os.replace(tmp, os.path.join(folder, kind))
+        return out
+
+
+def _face_files(face_pack: Optional[str], face_id: Optional[int], face_stored: Optional[int], in_game: bool = True):
+    """The game's files, with the face of a pack or the one kept in the project for a player put under its id.
+    in_game: its meshes as the patch takes them (_as_in_game; seconds the first time). The look only asks which
+    parts the face has: False there, so the conversion happens while the preview loads the meshes (and shows that
+    it is loading)."""
     files = game.files()
     if face_pack and face_id is not None:
         assets = _check_pack(face_pack)
@@ -620,11 +661,15 @@ def _face_files(face_pack: Optional[str], face_id: Optional[int], face_stored: O
             data = facepack.read_face(assets, face_id)
         except facepack.FaceFormatError as e:
             raise ApiError(422, 'face_unreadable', str(e))
-        return preview.FaceFiles(files, f'pack:{assets}:{face_id}', face_id, data)
+        if not in_game:
+            return preview.FaceFiles(files, f'pack:{assets}:{face_id}:raw', face_id, data)
+        return preview.FaceFiles(files, f'pack:{assets}:{face_id}', face_id, _as_in_game(files, data))
     if face_stored is not None:
         data = project().player_files(face_stored)
         stamp = hashlib.sha1(b''.join(data.get(k, b'')[:4096] for k in sorted(data))).hexdigest()[:12]
-        return preview.FaceFiles(files, f'stored:{face_stored}:{stamp}', face_stored, data)
+        if not in_game:
+            return preview.FaceFiles(files, f'stored:{face_stored}:{stamp}:raw', face_stored, data)
+        return preview.FaceFiles(files, f'stored:{face_stored}:{stamp}', face_stored, _as_in_game(files, data))
     return files
 
 
@@ -653,10 +698,10 @@ def _player_look(pid: int, values: dict, face: Optional[dict]) -> dict:
         elif face.get('source') == 'pack' and isinstance(face.get('id'), int):
             saved = project().fields('player', pid).get('face')
             if saved == face and project().player_files(pid):
-                files, query = _face_files(None, None, pid), f'face_stored={pid}'
+                files, query = _face_files(None, None, pid, in_game=False), f'face_stored={pid}'
                 raw['headclasscode'], look_id = 0, pid
             else:
-                files = _face_files(face.get('pack'), face['id'], None)
+                files = _face_files(face.get('pack'), face['id'], None, in_game=False)
                 query = f"face_pack={quote(face['pack'])}&face_id={face['id']}"
                 raw['headclasscode'], look_id = 0, face['id']
     elif created:

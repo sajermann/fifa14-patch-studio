@@ -81,7 +81,15 @@ def get_status():
             'game': game.status(), 'project': project().counts(), 'job': jobs.view(),
             'patch_built': os.path.isdir(settings.PATCH_DIR) and bool(os.listdir(settings.PATCH_DIR)),
             'patch': patch_info.status(settings.PATCH_DIR, project().path),
-            'folders': _folders(cfg)}
+            'folders': _folders(cfg), 'setup': _setup_state(cfg)}
+
+
+def _setup_state(cfg: settings.Config) -> dict:
+    """What the first-run screen needs (the Street Studio's): done when a usable game is chosen and the current
+    notice was accepted; nothing else opens before it."""
+    reasons = [r for r, bad in (('game_dir', not cfg.game_dir or game.state in ('empty', 'invalid')),
+                                ('terms', cfg.terms_version != settings.TERMS_VERSION)) if bad]
+    return {'required': bool(reasons), 'reasons': reasons, 'terms_version': settings.TERMS_VERSION}
 
 
 def _folders(cfg: settings.Config) -> dict:
@@ -160,6 +168,38 @@ def choose_game(body: GameBody):
     except RuntimeError:
         raise ApiError(409, 'busy')
     return game.status()
+
+
+class SetupBody(BaseModel):
+    game_dir: str
+    face_pack_dirs: list[str] = []
+    terms_version: int
+    build_cores: Optional[int] = None  # brought into range by settings.Config
+    build_memory_percent: Optional[int] = None
+
+
+@app.post('/api/setup/apply')
+def setup_apply(body: SetupBody):
+    """Saves the first-run choices (the Street Studio's setup): the notice, a usable game, the face pack folders and
+    the build settings; then the app starts reading the game."""
+    if body.terms_version != settings.TERMS_VERSION:
+        raise ApiError(409, 'terms_not_accepted')
+    result = install_check.check(body.game_dir.strip().strip('"'))
+    if result['state'] not in ('clean', 'patched'):
+        raise ApiError(400, 'game_not_usable', result['state'])
+    cfg = settings.load()
+    changed = cfg.game_dir != result['game_dir'] or game.state not in ('ready', 'building')
+    cfg = settings.save(settings.Config.model_validate({
+        **cfg.model_dump(), 'game_dir': result['game_dir'],
+        'face_pack_dirs': [f.strip() for f in body.face_pack_dirs if f.strip()],
+        'terms_version': body.terms_version, 'build_cores': body.build_cores,
+        'build_memory_percent': body.build_memory_percent}))
+    if changed:
+        try:
+            game.open(cfg.game_dir)
+        except RuntimeError:
+            raise ApiError(409, 'busy')
+    return {'game': game.status(), 'setup': _setup_state(cfg)}
 
 
 @app.post('/api/game/recheck')

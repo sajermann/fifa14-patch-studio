@@ -45,6 +45,7 @@ from f14mod import workers  # noqa: E402 - after the core folder is on the path
 
 Language = Literal['pt-BR', 'en']
 GAME_LANGUAGE_OF = {'pt-BR': 'por_br', 'en': 'eng_us'}
+TERMS_VERSION = 1  # bump when the text of the first-run notice changes: everyone accepts it again
 
 
 class Config(BaseModel):
@@ -59,6 +60,9 @@ class Config(BaseModel):
     # unchanged; out-of-range values (more cores than the machine has, memory outside 10-90%) are brought into range
     build_cores: Optional[int] = None
     build_memory_percent: Optional[int] = None
+    # version of the first-run notice the user accepted (TERMS_VERSION). Added 20/11/2026, optional: older files
+    # load unchanged and show the first-run screen once
+    terms_version: Optional[int] = None
 
     @field_validator('build_cores', mode='after')
     @classmethod

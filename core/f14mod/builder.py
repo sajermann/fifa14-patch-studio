@@ -11,9 +11,10 @@ The patch never holds the big archives themselves.
 
 The build goes in BUILD_STEPS, like the Street Studio's: the language texts start first in worker processes
 (f14mod.workers: pure Python, the slow part), the database is edited meanwhile, the pictures (kits, crests, photos,
-league pictures, flags: Pillow) are made in a thread pool, then everything is written. Texts and pictures are kept
-in the build cache (f14mod.buildcache): building again only makes what changed. Faces are copied as they are (the
-game's own format): nothing to convert or keep.
+league pictures, flags: Pillow) and the pack faces in a newer FIFA format (converted into FIFA 14's by
+f14mod.faceconv, a few seconds each) are made in a thread pool, then everything is written. Texts, pictures and
+converted faces are kept in the build cache (f14mod.buildcache): building again only makes what changed. The other
+faces are copied as they are.
 """
 import functools
 import os
@@ -25,7 +26,7 @@ import re
 
 from PIL import Image
 
-from . import bh, buildcache, fields, fifa14, flags, images, t3db, teamkits, workers
+from . import bh, buildcache, faceconv, fields, fifa14, flags, images, t3db, teamkits, workers
 from .big import BigArchive, normalize, rebuild
 from .dbedit import Database, LanguageStrings, Table
 from .gamefs import DATABASE, GameFiles
@@ -733,6 +734,7 @@ def write_player_files(files: GameFiles, db: Database, project: Project, builder
     rows = {players.get(r, 'playerid'): r for r in players.records}
     has_class = _has(players, 'headclasscode')
     counts = {'faces': 0, 'photos': 0}
+    template = None  # faceconv's template files, read once the first face needs converting
     for pid, values in project.all_fields('player').items():
         face, row = values.get('face'), rows.get(pid)
         if not face or row is None:
@@ -754,6 +756,12 @@ def write_player_files(files: GameFiles, db: Database, project: Project, builder
                     builder.put(path.format(pid), own[kind])
                 else:  # never the part the game has under his id (another face's): the face goes without it
                     builder.remove(path.format(pid))
+            if face['source'] != 'player' and faceconv.face_needs_conversion(own):
+                if template is None:
+                    template = _face_template(files)
+                builder.later('face', builder.name('player', pid, project),
+                              builder.key('face', ('faceconv',), pid, *[x for k in sorted(own) for x in (k, own[k])]),
+                              functools.partial(_converted_face, template, pid, own))
         if has_class:
             players.set(row, 'headclasscode', 0)
         counts['faces'] += 1
@@ -766,6 +774,24 @@ def write_player_files(files: GameFiles, db: Database, project: Project, builder
                       functools.partial(_photo_files, files, pid, png_data))
         counts['photos'] += 1
     return {k: v for k, v in counts.items() if v}
+
+
+def _face_template(files: GameFiles) -> dict[str, bytes]:
+    """The game's files of faceconv.TEMPLATE that pack faces are converted on."""
+    template = faceconv.game_template(files)
+    if template is None:
+        raise BuildError('face_template_missing', str(faceconv.TEMPLATE))
+    return template
+
+
+def _converted_face(template: dict[str, bytes], pid: int, own: dict[str, bytes]) -> dict[str, bytes]:
+    """{game path: bytes} of the meshes of a pack face converted into FIFA 14's format (faceconv); the textures and
+    the parts it lacks were already put / removed by write_player_files."""
+    try:
+        converted = faceconv.convert_face(template, own)
+    except faceconv.FaceFormatError as e:
+        raise BuildError('player_face_format', str(pid)) from e
+    return {fifa14.PLAYER_FACE_FILES[kind].format(pid): converted[kind] for kind in faceconv.MESHES if own.get(kind)}
 
 
 def _photo_files(files: GameFiles, pid: int, png_data: bytes) -> dict[str, bytes]:

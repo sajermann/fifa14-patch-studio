@@ -39,6 +39,12 @@ const VIEWS: Record<View, { camera: Vec3; target: Vec3 }> = {
 
 // ------------------------------------------------------------------ loading (cached, no Suspense)
 
+// The browser keeps the preview's files for an hour (Cache-Control) and a page reload does not refetch them: bump
+// when what an existing URL serves changes, or a stale copy breaks the preview (2: pack faces in a newer format
+// come converted into FIFA 14's meshes).
+const ASSETS_VERSION = '2'
+const versioned = (url: string) => `${url}${url.includes('?') ? '&' : '?'}v=${ASSETS_VERSION}`
+
 const cache = new Map<string, Promise<unknown>>()
 const gltfLoader = new GLTFLoader()
 const textureLoader = new THREE.TextureLoader()
@@ -78,7 +84,7 @@ function useLoading(delayMs = 200) {
 /** Geometries of a GLB by node name. */
 function loadMeshes(url: string) {
   return cached(url, async () => {
-    const gltf = await gltfLoader.loadAsync(url)
+    const gltf = await gltfLoader.loadAsync(versioned(url))
     const out: Record<string, THREE.BufferGeometry[]> = {}
     gltf.scene.traverse((o) => {
       const mesh = o as THREE.Mesh
@@ -94,7 +100,7 @@ function loadMeshes(url: string) {
 /** color = false for data textures (opacity, shading); channel = UV set the texture is sampled with. */
 function loadTexture(url: string, color = true, channel = 0, repeat = false) {
   return cached(`${url}|${channel}`, async () => {
-    const texture = await textureLoader.loadAsync(url)
+    const texture = await textureLoader.loadAsync(versioned(url))
     if (repeat) texture.wrapS = texture.wrapT = THREE.RepeatWrapping
     texture.flipY = false // RX3 UVs have their origin at the top left, like glTF
     texture.channel = channel

@@ -62,6 +62,23 @@ def test_second_build_reuses_everything_and_gives_the_same_patch(installed, tmp_
     assert _tree(str(tmp_path / 'three')) == _tree(str(tmp_path / 'one'))
 
 
+def test_converted_faces_are_kept_in_the_cache(installed, tmp_path):
+    """Converting a pack face takes seconds: the second build takes its meshes from the cache."""
+    import fakeface
+    project = Project(str(tmp_path / 'p.sqlite'))
+    project.save('player', fakegame.KEEPER, None, {'face': {'source': 'pack', 'pack': 'x', 'id': 51318}})
+    project.set_player_files(fakegame.KEEPER, fakeface.newer_pack_face())
+    files = catalog.open_game(installed)
+    folder = str(tmp_path / 'cache')
+    first = buildcache.BuildCache(folder)
+    builder.build(files, project, str(tmp_path / 'one'), worker_count=1, cache=first)
+    assert first.misses >= 1
+    second = buildcache.BuildCache(folder)
+    two = builder.build(files, project, str(tmp_path / 'two'), worker_count=1, cache=second)
+    assert second.misses == 0 and two['reused_files'] >= 3  # head, hair and hair LOD
+    assert _tree(str(tmp_path / 'two')) == _tree(str(tmp_path / 'one'))
+
+
 def test_a_change_makes_only_what_it_touches(installed, tmp_path):
     project = _project(tmp_path)
     files = catalog.open_game(installed)

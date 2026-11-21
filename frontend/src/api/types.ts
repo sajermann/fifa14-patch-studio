@@ -10,6 +10,7 @@ export interface Config {
   project_dir?: string | null // where the project lives (null = the default folder)
   build_cores?: number | null // processor cores the build may use (null = all but one)
   build_memory_percent?: number | null // percent of the machine's memory the build may use (null = 50)
+  terms_version?: number | null // version of the first-run notice the user accepted
 }
 
 /** What the build may use on this machine (GET /api/machine); cores / memory_mb null when the system does not tell. */
@@ -33,7 +34,7 @@ export interface PatchStatus {
 
 /** Steps of "Gerar patch" in order (f14mod.builder.BUILD_STEPS). */
 export type BuildStep = 'database' | 'images' | 'texts' | 'files'
-export type BuildItemKind = 'kit' | 'crest' | 'photo' | 'league' | 'flag' | 'language'
+export type BuildItemKind = 'face' | 'kit' | 'crest' | 'photo' | 'league' | 'flag' | 'language'
 
 /** GET /api/patch/progress: the current (or last) build. */
 export interface BuildProgress {
@@ -111,6 +112,17 @@ export interface Status {
   patch?: PatchStatus
   /** the app's folders shown in the Settings (backups: inside the game folder, null without a game) */
   folders?: { project: string; default_project: string; backups: string | null; patch: string; logs: string }
+  /** the first-run screen: nothing else opens while it is required (no usable game, or the notice not accepted) */
+  setup: { required: boolean; reasons: ('game_dir' | 'terms')[]; terms_version: number }
+}
+
+/** POST /api/setup/apply: the first-run choices. */
+export interface SetupRequest {
+  game_dir: string
+  face_pack_dirs: string[]
+  terms_version: number
+  build_cores: number | null
+  build_memory_percent: number | null
 }
 
 export interface Page<T> {
