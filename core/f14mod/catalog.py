@@ -15,14 +15,16 @@ import unicodedata
 from . import fifa14, installer, kitfonts, t3db, teamkits
 from .gamefs import DATABASE, GameFiles
 
-SCHEMA_VERSION = 4  # 2: country names and flags; 3: formations and the kit files of each team; 4: kit print, fonts
+SCHEMA_VERSION = 6  # 2: country names and flags; 3: formations and the kit files of each team; 4: kit print, fonts;
+#                    5: the country's confederation; 6: the country's row and its sound row (audionation)
 LOCALE = 'data/loc/locale.big'
 
 SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE languages (code TEXT PRIMARY KEY);
 CREATE TABLE names (kind TEXT, id INTEGER, key TEXT, lang TEXT, text TEXT, PRIMARY KEY (kind, id, key, lang));
-CREATE TABLE nations (id INTEGER PRIMARY KEY, name TEXT, has_flag INTEGER, search TEXT);
+CREATE TABLE nations (id INTEGER PRIMARY KEY, name TEXT, has_flag INTEGER, search TEXT, confederation INTEGER,
+                      raw TEXT, audio TEXT);
 CREATE TABLE leagues (id INTEGER PRIMARY KEY, db_name TEXT, country_id INTEGER, level INTEGER, has_logo INTEGER,
                       search TEXT, raw TEXT);
 CREATE TABLE teams (id INTEGER PRIMARY KEY, db_name TEXT, overall INTEGER, attack INTEGER, midfield INTEGER,
@@ -42,6 +44,7 @@ CREATE INDEX names_lookup ON names (kind, key, lang, id);
 CREATE INDEX team_players_player ON team_players (player_id);
 CREATE INDEX league_teams_team ON league_teams (team_id);
 CREATE INDEX players_overall ON players (overall);
+CREATE INDEX players_nationality ON players (nationality);
 """
 
 TEAM_KEYS = fifa14.TEAM_NAME_STRINGS     # full, abbr15, abbr10, abbr7, abbr3, commentary
@@ -129,9 +132,12 @@ def build(game_dir: str, path: str, progress=None) -> str:
         con.executemany('INSERT OR REPLACE INTO names VALUES (?,?,?,?,?)', rows)
 
     step('teams', 0.65)
-    con.executemany('INSERT INTO nations VALUES (?,?,?,?)', [
+    audio = {r.get('nationid'): r for r in src.rows('audionation')}
+    con.executemany('INSERT INTO nations VALUES (?,?,?,?,?,?,?)', [
         (nid, src.nation_name(nid), int(files.exists(fifa14.FLAG_PICTURE.format(nid))),
-         ' '.join(sorted({str(nid), fold(src.nation_name(nid))} | search_country.get(nid, set()))))
+         ' '.join(sorted({str(nid), fold(src.nation_name(nid))} | search_country.get(nid, set()))),
+         src.nations[nid].get('confederation'), json.dumps(src.nations[nid], ensure_ascii=False),
+         json.dumps(audio[nid], ensure_ascii=False) if nid in audio else None)
         for nid in src.nations])
     con.executemany('INSERT INTO leagues VALUES (?,?,?,?,?,?,?)', [
         (lid, r.get('leaguename'), r.get('countryid'), r.get('level'), int('logo' in src.league_image_paths(lid)),

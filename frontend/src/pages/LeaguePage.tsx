@@ -29,6 +29,7 @@ import { CountryFlag, Crest, LeagueImage, readPicture } from '@/components/commo
 import { LoadingBlock } from '@/components/layout/LoadingBlock'
 import { useI18n } from '@/i18n'
 import { useOptions, useStatus, useToken } from '@/state/queries'
+import { useConfederationName } from './CountriesPage'
 
 const TABS = ['data', 'countries', 'teams', 'raw'] as const
 /** The league's teams shown on the page (a league can have more: the rest is counted). */
@@ -73,6 +74,7 @@ const sameList = (a: number[], b: number[]) => a.length === b.length && a.every(
 
 export function LeaguePage() {
   const { t } = useI18n()
+  const confederation = useConfederationName()
   const id = Number(useParams().id)
   const token = useToken()
   const navigate = useNavigate()
@@ -200,7 +202,7 @@ export function LeaguePage() {
       <BackButton back={back} />
       <div className="flex flex-wrap justify-between gap-x-4 gap-y-3">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
-          {logo(96, 'size-10 shrink-0')}
+          {logo(128, 'size-20 shrink-0')}
           <h1 className="min-w-0 text-2xl font-semibold break-words">{data.name}</h1>
           <span className="shrink-0 text-sm text-muted-foreground tabular-nums">
             {[data.country, data.level !== null ? t('leagues.level', { level: data.level }) : null, `ID ${data.id}`].filter(Boolean).join(' · ')}
@@ -311,6 +313,7 @@ export function LeaguePage() {
                   <TableRow>
                     <TableHead className="w-16" />
                     <TableHead>{t('col.name')}</TableHead>
+                    <TableHead className="text-right">{t('col.confederation')}</TableHead>
                     <TableHead className="w-28 text-center">{t('col.leagues')}</TableHead>
                     <TableHead className="w-28 text-center">{t('col.id')}</TableHead>
                     <TableHead className="w-28 text-center">{t('roster.inPatch')}</TableHead>
@@ -321,7 +324,7 @@ export function LeaguePage() {
                 <TableBody className={countryRows.isFetching ? 'opacity-70' : undefined}>
                   {countryIds.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                      <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
                         {t('league.noCountries')}
                       </TableCell>
                     </TableRow>
@@ -344,6 +347,7 @@ export function LeaguePage() {
                         {c?.hidden && <HiddenByProjectBadge label={t('countries.hiddenByProject')} />}
                         {!countryOut && hiddenHere && <OutOfPatchBadge label={t('country.outOfPatchHere')} />}
                       </TableCell>
+                      <TableCell className="text-right">{c ? confederation(c.confederation) : '—'}</TableCell>
                       <TableCell className="text-center tabular-nums">{c?.league_count ?? '—'}</TableCell>
                       <TableCell className="text-center tabular-nums">{cid}</TableCell>
                       <TableCell className="text-center">

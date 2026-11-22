@@ -18,17 +18,18 @@ import { EntityIssues } from '@/components/common/form'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api } from '@/api/client'
-import { FillScroll, OriginalBadge, Section } from '@/components/common/detail'
+import { Facts, FillScroll, OriginalBadge, Section } from '@/components/common/detail'
 import { ALL, EditActions, FieldsEditor, NamesGrid, useEntityForm } from '@/components/common/edit'
 import { GameHiddenBadge, HiddenByProjectBadge, HideButton, OutOfPatchBadge, usePendingHide } from '@/components/common/HideButton'
 import { PickerDialog, type PickerItem } from '@/components/common/PickerDialog'
 import { CountryFlag, LeagueImage, readPicture } from '@/components/common/pictures'
 import { LoadingBlock } from '@/components/layout/LoadingBlock'
-import { useI18n } from '@/i18n'
+import { hasMessage, useI18n, type MessageKey } from '@/i18n'
 import { BackButton, useBack, useFrom, useTabParam } from '@/lib/back'
 import { toast } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 import { useStatus, useToken } from '@/state/queries'
+import { useConfederationName } from './CountriesPage'
 
 const TABS = ['data', 'leagues'] as const
 
@@ -78,6 +79,7 @@ function AddLeagueDialog({ open, onOpenChange, chosen, onPick }: { open: boolean
 
 export function CountryPage() {
   const { t } = useI18n()
+  const confederation = useConfederationName()
   const id = Number(useParams().id)
   const token = useToken()
   const navigate = useNavigate()
@@ -182,9 +184,10 @@ export function CountryPage() {
       <BackButton back={back} />
       <div className="flex flex-wrap justify-between gap-x-4 gap-y-3">
         <div className="flex min-w-0 items-center gap-3">
-          {flag(128, 'h-8 w-12 shrink-0')}
+          {flag(256, 'h-16 w-24 shrink-0')}
           <h1 className="min-w-0 text-2xl font-semibold break-words">{data.name}</h1>
           <span className="shrink-0 text-sm text-muted-foreground tabular-nums">ID {data.id}</span>
+          <span className="shrink-0 text-sm text-muted-foreground">{confederation(data.confederation)}</span>
           {!data.is_new && <OriginalBadge edited={data.edited} />}
           {data.game_hidden && <GameHiddenBadge country />}
           {hide.hidden && <OutOfPatchBadge alert label={data.is_new ? undefined : t('countries.hiddenByProject')} />}
@@ -255,6 +258,33 @@ export function CountryPage() {
               ),
             }}
           />
+          {/* read-only for now: what the game has for the country (the Street Studio has no country screen) */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Section title={t('section.details')}>
+              <Facts
+                items={[
+                  [t('col.confederation'), confederation(data.confederation)],
+                  [t('nations.nationalTeam'), data.national_team ? <Link key="n" to={`/teams/${data.national_team.id}`} state={from.state} className="hover:underline">{data.national_team.name}</Link> : '—'],
+                  [t('col.players'), data.player_count],
+                  [t('nations.topTier'), data.top_tier ?? '—'],
+                ]}
+              />
+            </Section>
+            <Section title={t('nations.audio')}>
+              {data.audio ? (
+                <Facts
+                  items={Object.entries(data.audio)
+                    .filter(([k]) => k !== 'nationid')
+                    .map(([k, v]) => {
+                      const key = `audio.${k}`
+                      return [hasMessage(key) ? t(key as MessageKey) : k, v ?? '—'] as [string, React.ReactNode]
+                    })}
+                />
+              ) : (
+                <p className="text-sm text-muted-foreground">{t('nations.noAudio')}</p>
+              )}
+            </Section>
+          </div>
           <NamesGrid
             kind="country"
             columns={[...data.name_keys].reverse()}

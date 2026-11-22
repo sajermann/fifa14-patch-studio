@@ -181,6 +181,10 @@ export interface CountryRow {
   base_flag_id: number
   own_flag: number | null
   league_count: number
+  /** Players whose nationality is this country (the game's and the project's). */
+  player_count: number
+  /** The database's confederation code (1 = none/other, 2 = UEFA, 3 = CAF, 4 = CONMEBOL, 5 = AFC, 6 = OFC, 7 = CONCACAF). */
+  confederation: number | null
   edited: boolean
   /** Hidden by the project (Hide button). */
   hidden: boolean
@@ -194,6 +198,11 @@ export interface CountryDetail extends CountryRow, EditForm {
   original_names: NameTable
   saved_names: NameTable
   leagues: LeagueRow[]
+  /** The game's national team of the country (nations.teamid), if any. */
+  national_team: Ref | null
+  top_tier: number | null
+  /** The country's row of the audionation table (commentary and crowd sound regions); null = none. */
+  audio: Raw | null
 }
 
 export interface Limits {
@@ -215,6 +224,9 @@ export interface TeamRow {
   color: (number | null)[] | null
   /** The kit colors the team has (1 to 3), as [r, g, b]. */
   colors: number[][]
+  /** How many kits the team has (the ones set in the project, the game's and, for a team made from scratch, the
+   * generic ones). */
+  kit_count: number
   has_crest: boolean
   national_of: number | null
   league_id: number | null
@@ -550,6 +562,12 @@ export interface Options {
   languages: string[]
   nations: Ref[]
   teams: Ref[]
+  /** Confederation codes in use (countries filter). */
+  confederations: number[]
+  /** Division levels in use (leagues filter). */
+  levels: number[]
+  /** Countries that are the main country of a league (leagues filter). */
+  league_countries: number[]
 }
 
 /** How the player looks (GET /api/preview/look/<id>, f14mod.preview.look): real = his own face files (head, hair,

@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { HideButton, OutOfPatchBadge, useHide } from '@/components/common/HideButton'
 import { NewPlayerDialog, nameFields, type NewPlayer } from '@/components/player/NewPlayerDialog'
@@ -106,13 +106,13 @@ export function PlayersPage() {
         </TableHeader>
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
           {data?.items.map((p) => (
-            <TableRow key={p.id} className="cursor-pointer text-muted-foreground" onClick={() => navigate(`/players/${p.id}`, from)}>
-              <TableCell onClick={(e) => e.stopPropagation()}>{own(p) && <RowCheckbox selection={selection} value={p.id} />}</TableCell>
+            <TableRow key={p.id} className="text-muted-foreground">
+              <TableCell>{own(p) && <RowCheckbox selection={selection} value={p.id} />}</TableCell>
               <TableCell>
                 <Photo id={p.id} size={64} available={p.has_photo} className="size-8" />
               </TableCell>
               <TableCell data-grow>
-                <span className="font-medium text-foreground">{p.name}</span> {!p.is_new && <OriginalBadge edited={p.edited} />}
+                <Link to={`/players/${p.id}`} state={from.state} className="font-medium text-foreground underline-offset-4 hover:underline">{p.name}</Link> {!p.is_new && <OriginalBadge edited={p.edited} />}
                 {p.hidden && <OutOfPatchBadge />}
               </TableCell>
               <TableCell className="text-center">{p.position_name ?? '—'}</TableCell>

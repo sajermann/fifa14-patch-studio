@@ -1,10 +1,11 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { CreateDialog } from '@/components/common/create'
 import { toast } from '@/lib/notify'
+import { cn } from '@/lib/utils'
 import { useFrom } from '@/lib/back'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
@@ -14,10 +15,10 @@ import { GameHiddenBadge, HiddenByProjectBadge, HideButton, OutOfPatchBadge, use
 import { LeagueImage } from '@/components/common/pictures'
 import { BulkActions, RowCheckbox, SelectAllCheckbox, SelectAllDialog, useListSelection } from '@/components/common/selection'
 import { useI18n } from '@/i18n'
-import { FilterBar, LIST_PAGE, Pager, ScrollTable, SearchInput, SortHead, useListState } from '@/lib/list'
-import { useList } from '@/state/queries'
+import { FilterBar, FilterSelect, LIST_PAGE, Pager, ScrollTable, SearchInput, SortHead, useListState } from '@/lib/list'
+import { useList, useOptions } from '@/state/queries'
 
-const FILTERS = ['q'] as const
+const FILTERS = ['q', 'country', 'level', 'origin', 'status'] as const
 
 export function LeaguesPage() {
   const { t } = useI18n()
@@ -25,6 +26,8 @@ export function LeaguesPage() {
   const from = useFrom({ key: 'nav.leagues' })
   const list = useListState(FILTERS)
   const { data, isFetching } = useList('leagues', list.request, api.leagues)
+  const options = useOptions().data
+  const withLeagues = new Set(options?.league_countries ?? [])
   // the project's items (created, or edited ones of the game) can be picked and deleted in bulk, like in the Street Studio
   const own = (r: { is_new: boolean; edited?: boolean }) => r.is_new || !!r.edited
   const selection = useListSelection((data?.items ?? []).filter(own).map((r) => r.id), data?.own_ids ?? [])
@@ -61,6 +64,39 @@ export function LeaguesPage() {
       </div>
       <FilterBar active={list.active} onClear={list.clear}>
         <SearchInput value={list.values.q} onChange={(v) => list.update({ q: v })} placeholder={t('leagues.search')} />
+        <FilterSelect
+          value={list.values.country}
+          onChange={(v) => list.update({ country: v })}
+          allLabel={t('filter.allCountries')}
+          options={(options?.nations ?? []).filter((n) => withLeagues.has(n.id)).map((n) => ({ value: String(n.id), label: n.name ?? `#${n.id}` }))}
+        />
+        <FilterSelect
+          value={list.values.level}
+          onChange={(v) => list.update({ level: v })}
+          allLabel={t('filter.allLevels')}
+          className="w-36"
+          options={(options?.levels ?? []).map((l) => ({ value: String(l), label: t('filter.level', { level: l }) }))}
+        />
+        <FilterSelect
+          value={list.values.origin}
+          onChange={(v) => list.update({ origin: v })}
+          allLabel={t('list.originAll')}
+          className="w-48"
+          options={[
+            { value: 'project', label: t('list.originProject') },
+            { value: 'original', label: t('list.originOriginal') },
+          ]}
+        />
+        <FilterSelect
+          value={list.values.status}
+          onChange={(v) => list.update({ status: v })}
+          allLabel={t('list.statusAll')}
+          className="w-44"
+          options={[
+            { value: 'visible', label: t('list.statusInGame') },
+            { value: 'hidden', label: t('list.statusHidden') },
+          ]}
+        />
         <BulkActions kind="league" selection={selection} invalidate={['leagues', 'league', 'country', 'countries', 'teams']} />
       </FilterBar>
       <ScrollTable>
@@ -81,13 +117,13 @@ export function LeaguesPage() {
         </TableHeader>
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
           {data?.items.map((l) => (
-            <TableRow key={l.id} className={l.is_new ? 'cursor-pointer' : 'cursor-pointer text-muted-foreground'} onClick={() => navigate(`/leagues/${l.id}`, from)}>
-              <TableCell onClick={(e) => e.stopPropagation()}>{own(l) && <RowCheckbox selection={selection} value={l.id} />}</TableCell>
+            <TableRow key={l.id} className={l.is_new ? undefined : 'text-muted-foreground'}>
+              <TableCell>{own(l) && <RowCheckbox selection={selection} value={l.id} />}</TableCell>
               <TableCell>
                 <LeagueImage id={l.id} size={64} available={!!l.has_logo} className="size-8" />
               </TableCell>
               <TableCell data-grow>
-                <span className={l.hidden ? 'font-medium text-muted-foreground' : 'font-medium text-foreground'}>{l.name}</span> {!l.is_new && <OriginalBadge edited={l.edited} />}
+                <Link to={`/leagues/${l.id}`} state={from.state} className={cn('font-medium underline-offset-4 hover:underline', l.hidden ? 'text-muted-foreground' : 'text-foreground')}>{l.name}</Link> {!l.is_new && <OriginalBadge edited={l.edited} />}
                 {l.game_hidden && <GameHiddenBadge />}
                 {l.hidden && (l.is_new ? <OutOfPatchBadge /> : <HiddenByProjectBadge label={t('leagues.hiddenByProject')} />)}
                 {!l.hidden && l.hidden_by_countries && <HiddenByProjectBadge label={t('leagues.countryHidden')} />}

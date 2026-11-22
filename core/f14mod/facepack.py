@@ -129,7 +129,8 @@ def _photo_path(assets, face_id):
 
 
 def missing_parts(kinds):
-    """The OPTIONAL parts a face does not bring (kinds of FILES, in their order): the app never fills them in."""
+    """The OPTIONAL parts a face does not bring (kinds of FILES, in their order). Only the user fills them in, with
+    the game's generic eyes or hair (facefill); the app never does it on its own."""
     return [k for k in FILES if k not in REQUIRED and k not in kinds]
 
 

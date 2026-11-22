@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
@@ -10,17 +10,29 @@ import { OriginalBadge } from '@/components/common/detail'
 import { GameHiddenBadge, HiddenByProjectBadge, HideButton, OutOfPatchBadge, useHide } from '@/components/common/HideButton'
 import { CountryFlag } from '@/components/common/pictures'
 import { BulkActions, RowCheckbox, SelectAllCheckbox, SelectAllDialog, useListSelection } from '@/components/common/selection'
-import { useI18n } from '@/i18n'
+import { hasMessage, useI18n } from '@/i18n'
 import { useFrom } from '@/lib/back'
 import { FilterBar, FilterSelect, LIST_PAGE, Pager, ScrollTable, SearchInput, SortHead, useListState } from '@/lib/list'
 import { toast } from '@/lib/notify'
 import { cn } from '@/lib/utils'
-import { useList } from '@/state/queries'
+import { useList, useOptions } from '@/state/queries'
 
-const FILTERS = ['q', 'origin', 'status'] as const
+const FILTERS = ['q', 'confederation', 'origin', 'status'] as const
+
+/** Name of a confederation code of the database (same as the extractor's countries list). */
+export function useConfederationName() {
+  const { t } = useI18n()
+  return (code: number | null) => {
+    if (code === null) return '—'
+    const key = `confederation.${code}`
+    return hasMessage(key) ? t(key) : String(code)
+  }
+}
 
 export function CountriesPage() {
   const { t } = useI18n()
+  const confederation = useConfederationName()
+  const options = useOptions().data
   const navigate = useNavigate()
   const qc = useQueryClient()
   const from = useFrom({ key: 'nav.countries' })
@@ -56,6 +68,12 @@ export function CountriesPage() {
       <FilterBar active={list.active} onClear={list.clear}>
         <SearchInput value={list.values.q} onChange={(v) => list.update({ q: v })} placeholder={t('countries.search')} />
         <FilterSelect
+          value={list.values.confederation}
+          onChange={(v) => list.update({ confederation: v })}
+          allLabel={t('filter.allConfederations')}
+          options={(options?.confederations ?? []).map((c) => ({ value: String(c), label: confederation(c) }))}
+        />
+        <FilterSelect
           value={list.values.origin}
           onChange={(v) => list.update({ origin: v })}
           allLabel={t('list.originAll')}
@@ -85,7 +103,9 @@ export function CountriesPage() {
             </TableHead>
             <TableHead className="w-14" />
             <SortHead field="name" label={t('col.name')} state={sortState} />
+            <SortHead field="confederation" label={t('col.confederation')} state={sortState} className="text-right" />
             <SortHead field="league_count" label={t('col.leagues')} state={sortState} className="text-center" />
+            <SortHead field="player_count" label={t('col.players')} state={sortState} className="text-center" />
             <SortHead field="id" label={t('col.id')} state={sortState} className="text-center" />
             <TableHead className="w-28" />
             <TableHead className="w-16" />
@@ -93,17 +113,19 @@ export function CountriesPage() {
         </TableHeader>
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
           {data?.items.map((c) => (
-            <TableRow key={c.id} className={cn('cursor-pointer', !c.is_new && 'text-muted-foreground')} onClick={() => navigate(`/countries/${c.id}`, from)}>
-              <TableCell onClick={(e) => e.stopPropagation()}>{own(c) && <RowCheckbox selection={selection} value={c.id} />}</TableCell>
+            <TableRow key={c.id} className={cn(!c.is_new && 'text-muted-foreground')}>
+              <TableCell>{own(c) && <RowCheckbox selection={selection} value={c.id} />}</TableCell>
               <TableCell>
                 <CountryFlag id={c.flag_id} size={64} version={c.own_flag} available={c.has_flag || c.is_new || c.flag_id !== c.id || !!c.own_flag} className="h-6 w-9" />
               </TableCell>
               <TableCell data-grow>
-                <span className="font-medium text-foreground">{c.name}</span> {!c.is_new && <OriginalBadge edited={c.edited} />}
+                <Link to={`/countries/${c.id}`} state={from.state} className="font-medium text-foreground underline-offset-4 hover:underline">{c.name}</Link> {!c.is_new && <OriginalBadge edited={c.edited} />}
                 {c.game_hidden && <GameHiddenBadge country />}
                 {c.hidden && (c.is_new ? <OutOfPatchBadge /> : <HiddenByProjectBadge label={t('countries.hiddenByProject')} />)}
               </TableCell>
+              <TableCell className="text-right">{confederation(c.confederation)}</TableCell>
               <TableCell className="text-center tabular-nums">{c.league_count}</TableCell>
+              <TableCell className="text-center tabular-nums">{c.player_count}</TableCell>
               <TableCell className="text-center text-muted-foreground tabular-nums">{c.id}</TableCell>
               <TableCell>
                 {!c.game_hidden && (
@@ -121,7 +143,7 @@ export function CountriesPage() {
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>

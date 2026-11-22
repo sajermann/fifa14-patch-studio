@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { NewTeamDialog, type NewTeam } from '@/components/team/NewTeamDialog'
 import { useFrom } from '@/lib/back'
@@ -104,6 +104,7 @@ export function TeamsPage() {
             <SortHead field="league" label={t('col.league')} state={sortState} className="text-right" />
             <SortHead field="overall" label={t('col.overall')} state={sortState} className="text-center" />
             <SortHead field="player_count" label={t('col.players')} state={sortState} className="text-center" />
+            <SortHead field="kit_count" label={t('col.kits')} state={sortState} className="text-center" />
             <TableHead className="text-center">{t('col.colors')}</TableHead>
             <SortHead field="id" label={t('col.id')} state={sortState} className="text-center" />
             <TableHead className="w-28" />
@@ -112,14 +113,14 @@ export function TeamsPage() {
         </TableHeader>
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
           {data?.items.map((tm) => (
-            <TableRow key={tm.id} className={cn('cursor-pointer', !tm.edited && !tm.is_new && 'text-muted-foreground')} onClick={() => navigate(`/teams/${tm.id}`, from)}>
-              <TableCell onClick={(e) => e.stopPropagation()}>{own(tm) && <RowCheckbox selection={selection} value={tm.id} />}</TableCell>
+            <TableRow key={tm.id} className={cn(!tm.edited && !tm.is_new && 'text-muted-foreground')}>
+              <TableCell>{own(tm) && <RowCheckbox selection={selection} value={tm.id} />}</TableCell>
               <TableCell>
                 <Crest id={tm.id} size={64} available={tm.has_crest} version={tm.own_crest} className="size-8" />
               </TableCell>
               <TableCell data-grow>
                 <div className="flex items-center gap-2">
-                  <span className="font-medium text-foreground">{tm.name}</span>
+                  <Link to={`/teams/${tm.id}`} state={from.state} className="font-medium text-foreground underline-offset-4 hover:underline">{tm.name}</Link>
                   {tm.abbr3 && <span className="text-xs text-muted-foreground">{tm.abbr3}</span>}
                   {!tm.is_new && <OriginalBadge edited={tm.edited} />}
                   {tm.hidden && (tm.is_new ? <OutOfPatchBadge /> : <HiddenByProjectBadge label={t('teams.hiddenByProject')} />)}
@@ -131,6 +132,7 @@ export function TeamsPage() {
                 <OverallBadge value={tm.overall} />
               </TableCell>
               <TableCell className="text-center tabular-nums">{tm.player_count}</TableCell>
+              <TableCell className="text-center tabular-nums">{tm.kit_count}</TableCell>
               <TableCell>
                 <span className="flex items-center justify-center gap-1">
                   {tm.colors.map((c, i) => (
@@ -155,7 +157,7 @@ export function TeamsPage() {
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={10} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={11} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>

@@ -219,11 +219,14 @@ def _yes_no(value: Optional[str]):
 
 
 @app.get('/api/leagues')
-def list_leagues(q: str = '', country: Optional[int] = None, sort: Optional[str] = None, dir: Optional[str] = None,
-                 page: int = 1, size: int = queries.DEFAULT_PAGE_SIZE, ids: Optional[str] = None):
+def list_leagues(q: str = '', country: Optional[int] = None, level: Optional[int] = None,
+                 origin: Optional[str] = None, status: Optional[str] = None, sort: Optional[str] = None,
+                 dir: Optional[str] = None, page: int = 1, size: int = queries.DEFAULT_PAGE_SIZE,
+                 ids: Optional[str] = None):
     """`ids` (comma separated) = only these leagues (the list a page is editing)."""
     with db() as con:
-        return queries.leagues(con, lang(), q, sort, dir, page, size, country=country, ids=_id_list(ids))
+        return queries.leagues(con, lang(), q, sort, dir, page, size, country=country, ids=_id_list(ids),
+                               level=level, origin=origin, status=status)
 
 
 def _id_list(ids: Optional[str]) -> Optional[list[int]]:
@@ -272,6 +275,13 @@ def filter_options():
             'teams': [dict(r) for r in con.execute(
                 f"SELECT * FROM (SELECT t.id, {queries._team_name('full')} AS name FROM v_teams t) ORDER BY fold(name)",  # noqa: SLF001
                 {'lang': lang()})],
+            # for the countries and leagues filters: the confederations in use, the division levels in use and the
+            # countries that have a league (the league's main country)
+            'confederations': [r[0] for r in con.execute(
+                'SELECT DISTINCT confederation FROM v_nations WHERE confederation IS NOT NULL ORDER BY 1')],
+            'levels': [r[0] for r in con.execute('SELECT DISTINCT level FROM v_leagues WHERE level IS NOT NULL ORDER BY 1')],
+            'league_countries': [r[0] for r in con.execute(
+                'SELECT DISTINCT country_id FROM v_leagues WHERE country_id IS NOT NULL ORDER BY 1')],
         }
 
 
@@ -404,12 +414,12 @@ def reset_league(lid: int):
 
 @app.get('/api/countries')
 def list_countries(q: str = '', origin: Optional[str] = None, status: Optional[str] = None,
-                   sort: Optional[str] = None, dir: Optional[str] = None, page: int = 1,
+                   confederation: Optional[int] = None, sort: Optional[str] = None, dir: Optional[str] = None, page: int = 1,
                    size: int = queries.DEFAULT_PAGE_SIZE, ids: Optional[str] = None):
     """`ids` (comma separated) = only these countries (the list a page is editing)."""
     with db() as con:
         return queries.countries(con, lang(), q, sort, dir, page, size, origin=origin, status=status,
-                                 ids=_id_list(ids))
+                                 ids=_id_list(ids), confederation=confederation)
 
 
 @app.get('/api/countries/{cid}')

@@ -37,6 +37,10 @@ def test_lists_page_filter_sort(client):
     teams = client.get('/api/teams').json()
     assert teams['total'] == 2
     assert [t['name'] for t in teams['items']] == ['Small Team FC', 'Test Athletic Club']
+    for row in teams['items']:  # the list's kit count follows the rule of the team's Kits tab
+        kits = client.get(f"/api/teams/{row['id']}").json()['kits']
+        assert row['kit_count'] == sum(1 for k in kits if k['config'] is not None or k['default'] is not None)
+    assert next(t for t in teams['items'] if t['id'] == fakegame.TEAM)['kit_count'] > 0
     assert client.get('/api/teams', params={'q': 'athletic'}).json()['total'] == 1
     assert client.get('/api/teams', params={'league': fakegame.PLAIN_LEAGUE}).json()['items'][0]['id'] == \
         fakegame.SMALL_TEAM
@@ -184,6 +188,22 @@ def test_free_country_and_league_crud(client):
     cid = country['id']
     assert country['is_new'] and country['name'] == 'Free Land' and country['saved']['flag_from'] == 54
     assert client.get('/api/countries', params={'q': 'free'}).json()['total'] == 1
+    rows = {x['id']: x for x in client.get('/api/countries', params={'sort': 'player_count'}).json()['items']}
+    assert rows[54]['confederation'] == 1 and rows[54]['player_count'] > 0 and rows[52]['player_count'] == 0
+    assert rows[cid]['player_count'] == 0
+    detail = client.get('/api/countries/54').json()
+    assert detail['confederation'] == 1 and detail['national_team'] is None and detail['audio'] is None
+    assert client.get(f'/api/countries/{cid}').json()['national_team'] is None
+    assert client.get('/api/countries', params={'confederation': 1}).json()['total'] >= 2
+    assert client.get('/api/countries', params={'confederation': 2}).json()['total'] == 0
+    options = client.get('/api/options').json()
+    assert 1 in options['confederations'] and options['levels'] and options['league_countries']
+    level = options['levels'][0]
+    by_level = client.get('/api/leagues', params={'level': level}).json()['items']
+    assert by_level and all(lg['level'] == level for lg in by_level)
+    assert all(not lg['is_new'] for lg in client.get('/api/leagues', params={'origin': 'original'}).json()['items'])
+    assert all(lg['hidden'] or lg['game_hidden']
+               for lg in client.get('/api/leagues', params={'status': 'hidden'}).json()['items'])
     # origin filters: 'project' (created + edited) and 'original'
     assert [x['id'] for x in client.get('/api/countries', params={'origin': 'project'}).json()['items']] == [cid]
     assert cid not in [x['id'] for x in client.get('/api/countries', params={'origin': 'original'}).json()['items']]
