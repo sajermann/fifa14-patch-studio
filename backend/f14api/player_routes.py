@@ -16,7 +16,7 @@ from urllib.parse import quote
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from f14mod import appearance_thumbs, buildcache, builder, faceconv, facepack, fields, fifa14, images, preview
+from f14mod import appearance_thumbs, buildcache, builder, faceconv, facefill, facepack, fields, fifa14, images, preview
 from f14mod.project import BENCH, RESERVE
 
 from . import queries, settings
@@ -33,7 +33,10 @@ def _detail(con, pid: int) -> dict:
         raise ApiError(404, 'not_found')
     saved_face = out['saved'].get('face')
     if saved_face and saved_face.get('source') == 'pack':
-        out['face_stored'] = bool(project().player_files(pid))
+        stored = project().player_files(pid)
+        out['face_stored'] = bool(stored)
+        if stored:  # what the saved face does not bring (the screen lists it every time it is opened)
+            out['face_missing'] = facepack.missing_parts(stored)
     return out
 
 
@@ -312,6 +315,11 @@ def _check_pack(assets: str) -> str:
     raise ApiError(400, 'unknown_pack')
 
 
+def _without_fill(face):
+    """A face choice without its `fill` (the game's eyes / hair): changing it never reads the pack again."""
+    return {k: v for k, v in face.items() if k != 'fill'} if isinstance(face, dict) else face
+
+
 @app.put('/api/players/{pid}')
 def save_player(pid: int, body: PlayerBody):
     """Saves the whole form of a player: fields (only what differs from the game), his face (a pack face's files are
@@ -330,7 +338,11 @@ def save_player(pid: int, body: PlayerBody):
     if face and face['source'] == 'player' and not _has_game_face(face['player']):
         raise ApiError(400, 'unknown_face', str(face['player']))
     if face and face['source'] == 'pack':
-        if face != before or not p.player_files(pid):
+        fill = face.get('fill') or {}
+        if (fill.get('eyes') not in (None, *facefill.eyes_codes(game.files()))
+                or fill.get('hair') not in (None, *facefill.hair_codes(game.files()))):
+            raise ApiError(400, 'unknown_fill')
+        if _without_fill(face) != _without_fill(before) or not p.player_files(pid):
             assets = _check_pack(face['pack'])
             try:
                 files = facepack.read_face(assets, face['id'])
@@ -584,7 +596,9 @@ def player_options():
         for field in preview.FACE_CODES:
             codes[field] = [c for c in codes.get(field, []) if preview.face_codes_allowed(field, c, faces)]
     out = {'codes': codes, 'traits': list(fifa14.TRAITS), 'thumbs': list(appearance_thumbs.FIELDS),
-           'hair_colors': ['#%06x' % c for c in preview.HAIR_COLORS]}
+           'hair_colors': ['#%06x' % c for c in preview.HAIR_COLORS],
+           # the game's generic eyes / hair a face lacking them may be filled in with (facefill)
+           'fill': {'eyes': facefill.eyes_codes(game.files()), 'hair': facefill.hair_codes(game.files())}}
     _options_cache[game.token] = out
     return out
 
@@ -649,7 +663,22 @@ def _as_in_game(files, data: dict) -> dict:
         return out
 
 
-def _face_files(face_pack: Optional[str], face_id: Optional[int], face_stored: Optional[int], in_game: bool = True):
+def _fill_of(fill_eyes: Optional[int], fill_hair: Optional[int]) -> dict:
+    return {k: v for k, v in (('eyes', fill_eyes), ('hair', fill_hair)) if v}
+
+
+def _filled(files, data: dict, fill: dict, hair_color: Optional[int]) -> dict:
+    """The face with the game's generic eyes / hair the user chose over it (hair painted with his hair color)."""
+    if not fill:
+        return data
+    try:
+        return facefill.apply(files, data, fill, facefill.hair_rgb(hair_color))
+    except facefill.FillError as e:
+        raise ApiError(404, 'not_found', str(e))
+
+
+def _face_files(face_pack: Optional[str], face_id: Optional[int], face_stored: Optional[int], in_game: bool = True,
+                fill: Optional[dict] = None, hair_color: Optional[int] = None):
     """The game's files, with the face of a pack or the one kept in the project for a player put under its id.
     in_game: its meshes as the patch takes them (_as_in_game; seconds the first time). The look only asks which
     parts the face has: False there, so the conversion happens while the preview loads the meshes (and shows that
@@ -661,15 +690,23 @@ def _face_files(face_pack: Optional[str], face_id: Optional[int], face_stored: O
             data = facepack.read_face(assets, face_id)
         except facepack.FaceFormatError as e:
             raise ApiError(422, 'face_unreadable', str(e))
+        mark = f':{sorted((fill or {}).items())}:{hair_color}' if fill else ''
+        own = {k: v for k, v in data.items() if k not in facefill.covered(fill)}
         if not in_game:
-            return preview.FaceFiles(files, f'pack:{assets}:{face_id}:raw', face_id, data)
-        return preview.FaceFiles(files, f'pack:{assets}:{face_id}', face_id, _as_in_game(files, data))
+            return preview.FaceFiles(files, f'pack:{assets}:{face_id}:raw{mark}', face_id,
+                                     _filled(files, own, fill or {}, hair_color))
+        return preview.FaceFiles(files, f'pack:{assets}:{face_id}{mark}', face_id,
+                                 _filled(files, _as_in_game(files, own), fill or {}, hair_color))
     if face_stored is not None:
         data = project().player_files(face_stored)
         stamp = hashlib.sha1(b''.join(data.get(k, b'')[:4096] for k in sorted(data))).hexdigest()[:12]
+        mark = f':{sorted((fill or {}).items())}:{hair_color}' if fill else ''
+        own = {k: v for k, v in data.items() if k not in facefill.covered(fill)}
         if not in_game:
-            return preview.FaceFiles(files, f'stored:{face_stored}:{stamp}:raw', face_stored, data)
-        return preview.FaceFiles(files, f'stored:{face_stored}:{stamp}', face_stored, _as_in_game(files, data))
+            return preview.FaceFiles(files, f'stored:{face_stored}:{stamp}:raw{mark}', face_stored,
+                                     _filled(files, own, fill or {}, hair_color))
+        return preview.FaceFiles(files, f'stored:{face_stored}:{stamp}{mark}', face_stored,
+                                 _filled(files, _as_in_game(files, own), fill or {}, hair_color))
     return files
 
 
@@ -697,12 +734,21 @@ def _player_look(pid: int, values: dict, face: Optional[dict]) -> dict:
             raw['headclasscode'], look_id = 0, face['player']
         elif face.get('source') == 'pack' and isinstance(face.get('id'), int):
             saved = project().fields('player', pid).get('face')
-            if saved == face and project().player_files(pid):
-                files, query = _face_files(None, None, pid, in_game=False), f'face_stored={pid}'
+            try:
+                fill = facefill.check_fill(face.get('fill') or {})
+            except facefill.FillError:
+                fill = {}
+            color = raw.get('haircolorcode') if isinstance(raw.get('haircolorcode'), int) else None
+            extra = ''.join(f'&fill_{k}={v}' for k, v in fill.items())
+            if fill and color is not None:
+                extra += f'&hair_color={color}'
+            if _without_fill(saved) == _without_fill(face) and project().player_files(pid):
+                files = _face_files(None, None, pid, in_game=False, fill=fill, hair_color=color)
+                query = f'face_stored={pid}{extra}'
                 raw['headclasscode'], look_id = 0, pid
             else:
-                files = _face_files(face.get('pack'), face['id'], None, in_game=False)
-                query = f"face_pack={quote(face['pack'])}&face_id={face['id']}"
+                files = _face_files(face.get('pack'), face['id'], None, in_game=False, fill=fill, hair_color=color)
+                query = f"face_pack={quote(face['pack'])}&face_id={face['id']}{extra}"
                 raw['headclasscode'], look_id = 0, face['id']
     elif created:
         raw['headclasscode'] = 1
@@ -733,13 +779,15 @@ def preview_look(pid: int):
 
 @app.get('/api/preview/mesh/{part}/{code}.glb')
 def preview_mesh(part: str, code: int, collar: int = 0, real: bool = False, face_pack: Optional[str] = None,
-                 face_id: Optional[int] = None, face_stored: Optional[int] = None):
+                 face_id: Optional[int] = None, face_stored: Optional[int] = None, fill_eyes: Optional[int] = None,
+                 fill_hair: Optional[int] = None, hair_color: Optional[int] = None):
     """A part of the player as GLB (preview.MESHES; `collar` for the jersey); real = head/hair of a player's own face
     (code = his id), with a pack face (`face_pack` + `face_id`) or the one kept for a player (`face_stored`)."""
     if game.state != 'ready':
         raise ApiError(409, 'game_not_ready')
     try:
-        data = preview.mesh_glb(_face_files(face_pack, face_id, face_stored), part, code, collar, real)
+        data = preview.mesh_glb(_face_files(face_pack, face_id, face_stored, fill=_fill_of(fill_eyes, fill_hair),
+                                                 hair_color=hair_color), part, code, collar, real)
     except preview.PreviewError as e:
         raise ApiError(404, 'not_found', str(e))
     return Response(data, media_type='model/gltf-binary', headers={'Cache-Control': 'max-age=3600'})
@@ -747,11 +795,13 @@ def preview_mesh(part: str, code: int, collar: int = 0, real: bool = False, face
 
 @app.get('/api/preview/texture/{name}/{code}.png')
 def preview_texture(name: str, code: int, real: bool = False, face_pack: Optional[str] = None,
-                    face_id: Optional[int] = None, face_stored: Optional[int] = None):
+                    face_id: Optional[int] = None, face_stored: Optional[int] = None, fill_eyes: Optional[int] = None,
+                    fill_hair: Optional[int] = None, hair_color: Optional[int] = None):
     if game.state != 'ready':
         raise ApiError(409, 'game_not_ready')
     try:
-        data = preview.texture_png(_face_files(face_pack, face_id, face_stored), name, code, real)
+        data = preview.texture_png(_face_files(face_pack, face_id, face_stored, fill=_fill_of(fill_eyes, fill_hair),
+                                                    hair_color=hair_color), name, code, real)
     except preview.PreviewError as e:
         raise ApiError(404, 'not_found', str(e))
     return Response(data, media_type='image/png', headers={'Cache-Control': 'max-age=3600'})

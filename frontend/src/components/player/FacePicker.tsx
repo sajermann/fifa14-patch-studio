@@ -3,13 +3,13 @@ import { AlertTriangle, Check, FolderOpen, LoaderCircle, Pencil, Settings, Undo2
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ApiError, api } from '@/api/client'
-import type { FaceChoice, FacePagePack, PackFace, PlayerDetail } from '@/api/types'
+import type { FaceChoice, FaceFill, FacePagePack, FacePart, PackFace, PlayerDetail } from '@/api/types'
 import { CreditsLink } from '@/components/common/CreditsLink'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useI18n, type MessageKey } from '@/i18n'
-import { facePartsText } from '@/lib/issues'
+import { facePartLabel } from '@/lib/issues'
 import { FilterSelect, Pager, SearchInput } from '@/lib/list'
 import { toast } from '@/lib/notify'
 import { cn } from '@/lib/utils'
@@ -50,6 +50,10 @@ export function FacePicker({
   browsing,
   onBrowse,
   onPick,
+  fillOptions,
+  onFill,
+  pickedMissing,
+  onPickedMissing,
 }: {
   player: PlayerDetail
   /** the face chosen on the screen (saved or not) */
@@ -57,6 +61,14 @@ export function FacePicker({
   browsing: BrowsedFace | null
   onBrowse: (face: BrowsedFace | null) => void
   onPick: (face: FaceChoice) => void
+  /** the game's generic eyes / hair a face lacking them may be filled in with (/api/player-options) */
+  fillOptions?: { eyes: number[]; hair: number[] }
+  /** opens the picker of the game's eyes or hair (the Look card shows it in place of this one) */
+  onFill: (group: FillGroup) => void
+  /** parts the face picked on this visit (not saved yet) does not bring: kept by the Look card, which stays mounted
+   * while the pictures of the game's eyes or hair take the place of this picker */
+  pickedMissing: FacePart[] | null
+  onPickedMissing: (parts: FacePart[] | null) => void
 }) {
   const { t } = useI18n()
   const token = useToken()
@@ -107,13 +119,18 @@ export function FacePicker({
     }
   }
 
+  // once the face is saved, the backend tells what it does not bring again (player.face_missing)
   const pick = () => {
     if (!browsing) return
     onPick(browsedChoice(browsing))
+    onPickedMissing('face' in browsing ? (browsing.face.missing ?? []) : null)
     onBrowse(null)
   }
 
   const chosenPack = current?.source === 'pack' ? current : null
+  const savedFace = player.saved.face as FaceChoice | null | undefined
+  const sameAsSaved = !!chosenPack && savedFace?.source === 'pack' && savedFace.pack === chosenPack.pack && savedFace.id === chosenPack.id
+  const currentMissing = !chosenPack ? [] : sameAsSaved && player.face_stored ? (player.face_missing ?? []) : (pickedMissing ?? [])
   const isCurrent = (f: PackFace & { folder: string }) => !!chosenPack && chosenPack.id === f.id && chosenPack.pack === f.folder
   const isBrowsed = (f: PackFace & { folder: string }) => !!browsing && 'folder' in browsing && browsing.folder === f.folder && browsing.face.id === f.id
   const goToSettings = (label: string) => (
@@ -176,6 +193,20 @@ export function FacePicker({
             </>
           )}
         </div>
+      )}
+      {chosenPack && (!!currentMissing.length || !!chosenPack.fill) && (
+        <MissingParts
+          parts={currentMissing}
+          fill={chosenPack.fill}
+          options={fillOptions}
+          onFill={onFill}
+          onClear={(group) => {
+            const { fill, ...rest } = chosenPack
+            const next = { ...fill }
+            delete next[group]
+            onPick(Object.keys(next).length ? { ...rest, fill: next } : rest)
+          }}
+        />
       )}
 
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -313,12 +344,7 @@ export function FacePicker({
               </span>{' '}
               {t('faces.viewingRest')}
             </p>
-            {'face' in browsing && !!browsing.face.missing?.length && (
-              <p className="mt-1 flex gap-1.5 text-xs text-amber-700 dark:text-amber-400">
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-                {t('faces.missingParts', { parts: facePartsText(t, browsing.face.missing) })}
-              </p>
-            )}
+            {'face' in browsing && !!browsing.face.missing?.length && <MissingParts parts={browsing.face.missing} className="mt-2" />}
           </div>
           <Button size="sm" onClick={pick}>
             <Check /> {t('faces.use')}
@@ -339,6 +365,95 @@ export function FacePicker({
           setPickingPlayer(false)
         }}
       />
+    </div>
+  )
+}
+
+export type FillGroup = keyof FaceFill
+
+/** parts: what the group puts in (the hair replaces all three files); offeredFor: the missing parts the button
+ * shows for (a face lacking only the hair seen from afar keeps its own hair: no button). */
+const FILL_GROUPS: { key: FillGroup; parts: FacePart[]; offeredFor: FacePart[]; button: MessageKey; chosen: MessageKey }[] = [
+  { key: 'eyes', parts: ['eyes'], offeredFor: ['eyes'], button: 'faces.fillEyesButton', chosen: 'faces.fillEyesChosen' },
+  { key: 'hair', parts: ['hair', 'hair_textures', 'hairlod'], offeredFor: ['hair', 'hair_textures'], button: 'faces.fillHairButton', chosen: 'faces.fillHairChosen' },
+]
+
+/** The optional parts a face does not bring, one line each (the screen shows it for the face being looked at and for
+ * the chosen one, saved or not). For the chosen face it also offers the game's generic eyes and hair for what is
+ * missing (the project keeps only their codes; the files are read from the game folder when the patch is built). */
+function MissingParts({
+  parts,
+  fill,
+  options,
+  onFill,
+  onClear,
+  className,
+}: {
+  parts: readonly FacePart[]
+  fill?: FaceFill
+  options?: { eyes: number[]; hair: number[] }
+  onFill?: (group: FillGroup) => void
+  onClear?: (group: FillGroup) => void
+  className?: string
+}) {
+  const { t } = useI18n()
+  const covered = FILL_GROUPS.filter((g) => fill?.[g.key])
+  const left = parts.filter((p) => !covered.some((g) => g.parts.includes(p)))
+  const offered = onFill && options ? FILL_GROUPS.filter((g) => !fill?.[g.key] && g.offeredFor.some((p) => left.includes(p)) && options[g.key].length) : []
+  return (
+    <div className={cn('flex flex-col gap-2', className)}>
+      {!!left.length && (
+        <div className="flex gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+          <div className="min-w-0">
+            <p className="font-medium">{t('faces.missingTitle')}</p>
+            <ul className="list-inside list-disc">
+              {left.map((p) => (
+                <li key={p}>{facePartLabel(t, p)}</li>
+              ))}
+            </ul>
+            {left.includes('eyes') && <p className="mt-0.5 opacity-80">{t('faces.missingHintEyes')}</p>}
+            {left.some((p) => p !== 'eyes') && <p className="mt-0.5 opacity-80">{t('faces.missingHintHair')}</p>}
+            {!!offered.length && (
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {offered.map((g) => (
+                  <Button key={g.key} variant="outline" size="sm" onClick={() => onFill?.(g.key)}>
+                    {t(g.button)}
+                  </Button>
+                ))}
+              </div>
+            )}
+            {offered.some((g) => g.key === 'hair') && <p className="mt-1.5 opacity-80">{t('faces.fillHairWarning')}</p>}
+          </div>
+        </div>
+      )}
+      {!!covered.length && (
+        <div className="flex gap-1.5 rounded-md border p-2 text-xs">
+          <Check className="mt-0.5 size-3.5 shrink-0 text-primary" />
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">{t('faces.fillTitle')}</p>
+            <ul className="mt-1 flex flex-col gap-1">
+              {covered.map((g) => (
+                <li key={g.key} className="flex flex-wrap items-center gap-1.5">
+                  <span className="min-w-0 flex-1">{t(g.chosen, { n: (options?.[g.key].indexOf(fill?.[g.key] ?? -1) ?? -1) + 1 || fill?.[g.key] || 0 })}</span>
+                  {onFill && (
+                    <Button variant="ghost" size="sm" onClick={() => onFill(g.key)}>
+                      {t('faces.fillChange')}
+                    </Button>
+                  )}
+                  {onClear && (
+                    <Button variant="ghost" size="sm" onClick={() => onClear(g.key)}>
+                      {t('faces.fillRemove')}
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {fill?.hair && <p className="mt-1 text-amber-700 dark:text-amber-400">{t('faces.fillHairWarning')}</p>}
+            <p className="mt-1 text-muted-foreground">{t('faces.fillGameNote')}</p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

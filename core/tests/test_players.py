@@ -6,7 +6,7 @@ import os
 
 import fakegame
 import pytest
-from PIL import Image
+from PIL import Image, ImageStat
 
 from f14mod import builder, catalog, facepack, fields, fifa14, t3db
 from f14mod.project import BENCH, Project
@@ -194,3 +194,70 @@ def test_face_pack_reader(tmp_path):
     manifest, warnings = facepack.read_manifest(assets, str(tmp_path))
     assert manifest == {77: {'name': 'Someone', 'credits': 'Maker'}} and warnings == []
     assert set(facepack.read_face(assets, 77)) == {'head', 'face', 'hair'}
+
+
+# ---- a face that lacks parts, filled in with the game's generic eyes and hair (facefill)
+
+def _fill_project(tmp_path, fill, color=None):
+    project = Project(str(tmp_path / 'p.sqlite'))
+    face = {'source': 'pack', 'pack': 'x', 'id': 51318, **({'fill': fill} if fill else {})}
+    values = {'face': face, **({'haircolorcode': color} if color is not None else {})}
+    project.save('player', fakegame.KEEPER, None, values)
+    project.set_player_files(fakegame.KEEPER, {'head': b'RX3l head', 'face': b'RX3l face', 'hair_textures': b'RX3l old'})
+    return project
+
+
+def test_face_fill_is_checked():
+    assert fields.check_face({'source': 'pack', 'pack': 'x', 'id': 1, 'fill': {'eyes': 5, 'hair': 12}})['fill'] == {'eyes': 5, 'hair': 12}
+    assert 'fill' not in fields.check_face({'source': 'pack', 'pack': 'x', 'id': 1, 'fill': {}})
+    assert 'fill' not in fields.check_face({'source': 'generic', 'fill': {'eyes': 5}})  # only a pack face has one
+    for bad in ({'eyes': 0}, {'eyes': True}, {'hair': 'a'}, {'hair': 99999}, [5]):
+        with pytest.raises(fields.FieldError):
+            fields.check_face({'source': 'pack', 'pack': 'x', 'id': 1, 'fill': bad})
+
+
+def test_the_game_has_generic_parts_to_fill_with(installed):
+    from f14mod import facefill
+    files = catalog.open_game(installed)
+    assert facefill.eyes_codes(files) == [fakegame.GENERIC_EYES]
+    assert facefill.hair_codes(files) == [fakegame.GENERIC_HAIR]
+    assert facefill.covered({'eyes': 1, 'hair': 2}) == {'eyes', 'hair', 'hair_textures', 'hairlod'}
+
+
+def test_fill_brings_the_games_eyes_and_paints_the_hair(installed, tmp_path):
+    from f14mod import facefill, preview, rx3
+    project = _fill_project(tmp_path, {'eyes': fakegame.GENERIC_EYES, 'hair': fakegame.GENERIC_HAIR}, color=7)
+    _summary, _tables, patch_dir = _build(installed, tmp_path, project)
+    files = catalog.open_game(installed)
+    made = lambda kind: _patch_file(patch_dir, fifa14.PLAYER_FACE_FILES[kind].format(fakegame.KEEPER))  # noqa: E731
+    game = lambda path: files.read(path)  # noqa: E731
+    assert made('eyes') == game(facefill.EYES_PATH.format(fakegame.GENERIC_EYES))
+    assert made('hair') == game(facefill.HAIR_PATHS['hair'].format(fakegame.GENERIC_HAIR))
+    assert made('hairlod') == game(facefill.HAIR_PATHS['hairlod'].format(fakegame.GENERIC_HAIR))
+    assert made('head') == b'RX3l head' and made('face') == b'RX3l face'
+    # the pack's own hair texture gives way to the game's, painted with his hair color (the game's table)
+    original = game(facefill.HAIR_PATHS['hair_textures'].format(fakegame.GENERIC_HAIR))
+    painted = made('hair_textures')
+    assert painted != original and len(painted) == len(original) and painted != b'RX3l old'
+    before, after = (rx3.to_image(d, rx3.by_name(d, 'hair_cm')).convert('RGBA') for d in (original, painted))
+    r, g, b, _a = ImageStat.Stat(after).mean
+    want = preview.HAIR_COLORS[7]
+    assert abs(r - (want >> 16)) < 25 and abs(g - ((want >> 8) & 255)) < 25 and abs(b - (want & 255)) < 25
+    assert after.getchannel('A').tobytes() == before.getchannel('A').tobytes()  # the game's alpha is kept
+
+
+def test_fill_only_the_eyes_keeps_the_pack_hair(installed, tmp_path):
+    from f14mod import facefill
+    project = _fill_project(tmp_path, {'eyes': fakegame.GENERIC_EYES})
+    _summary, _tables, patch_dir = _build(installed, tmp_path, project)
+    made = lambda kind: _patch_file(patch_dir, fifa14.PLAYER_FACE_FILES[kind].format(fakegame.KEEPER))  # noqa: E731
+    assert made('eyes') == catalog.open_game(installed).read(facefill.EYES_PATH.format(fakegame.GENERIC_EYES))
+    assert made('hair_textures') == b'RX3l old'  # the pack's own, as it was
+    assert not os.path.exists(os.path.join(patch_dir, *fifa14.PLAYER_FACE_FILES['hair'].format(fakegame.KEEPER).split('/')))
+
+
+def test_fill_with_a_part_the_game_lacks_stops_the_build(installed, tmp_path):
+    project = _fill_project(tmp_path, {'eyes': 6})
+    with pytest.raises(builder.BuildError) as e:
+        _build(installed, tmp_path, project)
+    assert e.value.code == 'player_face_fill'

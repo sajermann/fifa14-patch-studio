@@ -26,7 +26,7 @@ import re
 
 from PIL import Image
 
-from . import bh, buildcache, faceconv, fields, fifa14, flags, images, t3db, teamkits, workers
+from . import bh, buildcache, facefill, faceconv, fields, fifa14, flags, images, t3db, teamkits, workers
 from .big import BigArchive, normalize, rebuild
 from .dbedit import Database, LanguageStrings, Table
 from .gamefs import DATABASE, GameFiles
@@ -729,7 +729,8 @@ def write_player_files(files: GameFiles, db: Database, project: Project, builder
     """The head of every player whose face the user chose (headclasscode 0 = his own face files, named after his id:
     copied from another game player or from the pack face kept in the project; 1 = the generic head of his look
     codes) and the photo of every player with a picture (heads/p<id>.dds). A part the chosen face does not bring is
-    removed (PatchBuilder.remove), never left to the game's file of that id."""
+    removed (PatchBuilder.remove), never left to the game's file of that id; unless the user filled it in with the
+    game's generic eyes or hair (facefill: the face's `fill`, put as the game has them, the hair painted)."""
     players = db.table('players')
     rows = {players.get(r, 'playerid'): r for r in players.records}
     has_class = _has(players, 'headclasscode')
@@ -750,18 +751,29 @@ def write_player_files(files: GameFiles, db: Database, project: Project, builder
         own = {kind: data for kind, data in own.items() if data is not None and kind in fifa14.PLAYER_FACE_FILES}
         if not all(kind in own for kind in fifa14.FACE_REQUIRED):
             raise BuildError('player_face_missing', str(pid))
+        filled: dict[str, bytes] = {}  # the game's generic eyes / hair the user chose for the parts the pack lacks
+        if face['source'] == 'pack' and face.get('fill'):
+            try:
+                color = players.get(row, 'haircolorcode') if _has(players, 'haircolorcode') else None
+                filled = facefill.parts(files, face['fill'], facefill.hair_rgb(color))
+            except facefill.FillError as e:
+                raise BuildError('player_face_fill', f'{pid}: {e}') from e
         if face['source'] != 'player' or face['player'] != pid:
             for kind, path in fifa14.PLAYER_FACE_FILES.items():
-                if kind in own:
+                if kind in filled:  # the game's own files are already in FIFA 14's format: never converted
+                    builder.put(path.format(pid), filled[kind])
+                elif kind in own:
                     builder.put(path.format(pid), own[kind])
                 else:  # never the part the game has under his id (another face's): the face goes without it
                     builder.remove(path.format(pid))
-            if face['source'] != 'player' and faceconv.face_needs_conversion(own):
+            convertible = {k: v for k, v in own.items() if k not in filled}
+            if face['source'] != 'player' and faceconv.face_needs_conversion(convertible):
                 if template is None:
                     template = _face_template(files)
                 builder.later('face', builder.name('player', pid, project),
-                              builder.key('face', ('faceconv',), pid, *[x for k in sorted(own) for x in (k, own[k])]),
-                              functools.partial(_converted_face, template, pid, own))
+                              builder.key('face', ('faceconv',), pid,
+                                          *[x for k in sorted(convertible) for x in (k, convertible[k])]),
+                              functools.partial(_converted_face, template, pid, convertible))
         if has_class:
             players.set(row, 'headclasscode', 0)
         counts['faces'] += 1

@@ -79,7 +79,7 @@ def _players():
             # traits: flair (trait1 bit 14) for the star; trait2 bit 12 is one the app does not know (kept)
             'trait1': 1 << 14 if pid == STAR else 0, 'trait2': 1 << 12, 'headclasscode': 0 if pid == STAR else 1,
             # appearance codes outside any short list: they must go exactly as they are
-            'headtypecode': 2500 + pid % 7, 'hairtypecode': 30 + pid % 5, 'skintonecode': 1 + pid % 10,
+            'headtypecode': 2500 + pid % 7, 'hairtypecode': 30 + pid % 5, 'haircolorcode': 3, 'skintonecode': 1 + pid % 10,
             **{attr: overall for attr in ('acceleration', 'sprintspeed', 'finishing', 'shortpassing', 'dribbling',
                                           'ballcontrol', 'standingtackle', 'interceptions', 'strength',
                                           'stamina', 'gkdiving', 'gkhandling', 'gkpositioning', 'gkreflexes')}})
@@ -277,6 +277,38 @@ def kit_rx3(color):
     return b'RX3l' + b'\0' * 8 + struct.pack('<I', len(sections)) + table + body
 
 
+GENERIC_EYES, GENERIC_HAIR = 5, 12  # the game's generic eyes color and hair style the face fill tests use
+
+
+def hair_textures_rx3():
+    """RX3l with hair_cm (8x8 DXT5 with 2 mips, grey with an alpha ramp) and hair_coeff, as the game's generic hair."""
+    def dxt5(size, mips):
+        from PIL import Image
+        out = b''
+        for m in range(mips):
+            n = max(4, size >> m)
+            img = Image.new('RGBA', (n, n), (128, 128, 128, 0))
+            for i in range(n):
+                for j in range(n):
+                    img.putpixel((i, j), (100 + 20 * ((i + j) % 3), 130, 130, 10 + 12 * ((i * j) % 7)))
+            buf = io.BytesIO()
+            img.save(buf, 'DDS', pixel_format='DXT5')
+            raw = buf.getvalue()[128:]
+            out += struct.pack('<IIII', 0, 0, len(raw), 0) + raw
+        return struct.pack('<IBBBBHHHH', 0, 0, 2, 0, 0, size, size, 0, mips) + out
+
+    items = ('hair_coeff.Raster', 'hair_cm.Raster')
+    names = struct.pack('<IIII', 0, len(items), 0, 0) + b''.join(
+        struct.pack('<II', 0, len(n.encode()) + 1) + n.encode() + b'\0' for n in items)
+    sections = [(TEXTURE_SECTION, dxt5(8, 2)), (TEXTURE_SECTION, dxt5(8, 2)), (NAMES_SECTION, names)]
+    off = 16 + 16 * len(sections)
+    table, body = b'', b''
+    for kind, blob in sections:
+        table += struct.pack('<IIII', kind, off + len(body), len(blob), 0)
+        body += blob
+    return b'RX3l' + b'\0' * 8 + struct.pack('<I', len(sections)) + table + body
+
+
 def mesh_rx3(name):
     """RX3l with one triangle (positions in cm and UVs), named like the game's '<name>_.FxRenderableSimple'."""
     from f14mod.rx3mesh import DECL, INDICES, NAMES, VERTICES
@@ -354,7 +386,12 @@ def build(root):
     for game_path, blob in (('body/shorts_1_0.rx3', mesh_rx3('shorts')), ('body/skin_4_textures.rx3', kit_rx3((180, 120, 90))),
                            ('faces/face_0_1_0_0_0_0_0_0_4_textures.rx3', kit_rx3((200, 150, 120))),
                            # a second generic face: only these values of the face codes can be picked
-                           ('faces/face_0_1_0_2_1_3_5_2_8_textures.rx3', kit_rx3((90, 60, 40)))):
+                           ('faces/face_0_1_0_2_1_3_5_2_8_textures.rx3', kit_rx3((90, 60, 40))),
+                           # the generic eyes and hair a face lacking them may be filled in with
+                           (f'heads/eyes_{GENERIC_EYES}_1_textures.rx3', kit_rx3((40, 120, 60))),
+                           (f'hair/hair_{GENERIC_HAIR}_1_0.rx3', mesh_rx3('hair')),
+                           (f'hair/hair_{GENERIC_HAIR}_1_textures.rx3', hair_textures_rx3()),
+                           (f'hairlod/hairlod_{GENERIC_HAIR}_1_0.rx3', mesh_rx3('hairlod'))):
         path = os.path.join(data, 'sceneassets', *game_path.split('/'))
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'wb') as f:

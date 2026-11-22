@@ -4,7 +4,7 @@ rem   backend: uvicorn with --reload on http://localhost:8773, in its own window
 rem   frontend: Vite dev server on http://localhost:5177 (proxies /api to 8773), opened in the browser
 rem Close both windows (or Ctrl+C) to stop.
 cd /d "%~dp0backend"
-python -c "import fastapi, uvicorn, PIL, numpy" 2>nul || python -m pip install -r requirements.txt
+python -c "import fastapi, uvicorn, numpy, PIL; assert tuple(int(x) for x in PIL.__version__.split('.')[:2]) >= (11, 2)" 2>nul || python -m pip install -r requirements.txt
 if not exist "%~dp0frontend\node_modules" (
   pushd "%~dp0frontend"
   call npm install

@@ -256,11 +256,17 @@ export type NameTable = Record<string, Record<string, string>>
 export type FieldKind = 'int' | 'select' | 'text' | 'date' | 'color' | 'nation' | 'nations' | 'team' | 'roster' | 'position' | 'code' | 'traits' | 'face'
 export type FieldValue = string | number | number[] | string[] | FaceChoice | null
 
+/** The game's generic eyes / hair a pack face lacking them is filled in with (codes of the game's files; the hair is painted with his hair color). */
+export interface FaceFill {
+  eyes?: number
+  hair?: number
+}
+
 /** Where a player's head comes from (field `face`; none = his own: his real face when the game has one). */
 export type FaceChoice =
   | { source: 'generic' }
   | { source: 'player'; player: number }
-  | { source: 'pack'; pack: string; id: number; pack_name?: string; part?: string; name?: string; credits?: string; credits_url?: string }
+  | { source: 'pack'; pack: string; id: number; pack_name?: string; part?: string; name?: string; credits?: string; credits_url?: string; fill?: FaceFill }
 
 /** One editable value of a database row (backend f14mod.fields). */
 export interface FieldSpec {
@@ -466,6 +472,8 @@ export interface PlayerDetail extends EditForm {
   game_face: boolean
   /** The pack face chosen has its files kept in the project. */
   face_stored?: boolean
+  /** Optional parts the saved pack face does not bring (only with `face_stored`). */
+  face_missing?: FacePart[]
   is_new: boolean
   /** A created player: the player whose values he started from. */
   template: number | null
@@ -484,6 +492,8 @@ export interface PlayerOptions {
   /** codes with pictures (front view of the generic head / hair) */
   thumbs: string[]
   hair_colors: string[]
+  /** generic eyes and hair styles the game has files of (what a face lacking them can be filled in with) */
+  fill?: { eyes: number[]; hair: number[] }
 }
 
 export interface FacePackPart {

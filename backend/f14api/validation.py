@@ -7,7 +7,7 @@ differs from what the screen shows. Entities left out of the patch (Hide) are no
 import json
 import sqlite3
 
-from f14mod import facepack, fifa14
+from f14mod import facefill, facepack, fifa14
 from f14mod.builder import STARTERS
 
 from . import queries
@@ -152,8 +152,9 @@ def _players(con, out, hidden, created, saved):
                 not all(k in files.get(pid, ()) for k in fifa14.FACE_REQUIRED):
             out.append(_issue('face_missing', 'error', 'player', pid, 'face'))
         elif isinstance(face, dict) and face.get('source') == 'pack' and \
-                (parts := facepack.missing_parts(files.get(pid, ()))):
-            # the app never fills a part in (nor the preview): the pack has to bring the whole face
+                (parts := [k for k in facepack.missing_parts(files.get(pid, ()))
+                           if k not in facefill.covered(face.get('fill'))]):
+            # a part the pack lacks goes out without it, unless the user filled it with the game's (facefill)
             out.append(_issue('face_incomplete', 'warning', 'player', pid, 'face', parts=parts))
 
 

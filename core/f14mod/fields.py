@@ -13,7 +13,7 @@ The overall ratings are not here: the game computes them from the attributes (pl
 import datetime
 from dataclasses import asdict, dataclass
 
-from . import fifa14
+from . import facefill, fifa14
 
 NAME_FIELDS = {'name.first': 'firstnameid', 'name.last': 'lastnameid', 'name.common': 'commonnameid',
                'name.jersey': 'playerjerseynameid'}
@@ -305,4 +305,11 @@ def check_face(value) -> dict:
         out[key] = v
     if out['source'] == 'pack':
         out.update({k: str(value[k])[:200] for k in FACE_TEXTS if isinstance(value.get(k), str) and value[k]})
+        if value.get('fill') is not None:  # the game's generic eyes / hair for the parts the pack lacks
+            try:
+                fill = facefill.check_fill(value['fill'])
+            except facefill.FillError:
+                raise FieldError('bad_value', 'face') from None
+            if fill:
+                out['fill'] = fill
     return out

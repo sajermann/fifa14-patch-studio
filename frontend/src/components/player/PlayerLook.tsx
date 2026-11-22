@@ -3,7 +3,7 @@ import { Dices, Eraser, LoaderCircle, User } from 'lucide-react'
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import type { PlayerTeamBody } from '@/api/client'
 import { api } from '@/api/client'
-import type { FaceChoice, FieldValue, PlayerDetail, PlayerOptions } from '@/api/types'
+import type { FaceChoice, FacePart, FieldValue, PlayerDetail, PlayerOptions } from '@/api/types'
 import { ThumbnailField, ThumbnailPicker } from '@/components/common/AppearanceThumbnails'
 import { Stepper } from '@/components/common/form'
 import { useFieldLabel } from '@/components/common/edit'
@@ -13,7 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useI18n, type MessageKey } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useToken } from '@/state/queries'
-import { FacePicker, browsedChoice, type BrowsedFace } from './FacePicker'
+import { FacePicker, browsedChoice, type BrowsedFace, type FillGroup } from './FacePicker'
 import type { PendingPhoto } from './PlayerPhoto'
 
 const KitPreview = lazy(() => import('@/components/team/KitPreview')) // three.js only loads on this tab
@@ -79,9 +79,14 @@ export function PlayerLook({
   // the pictures of a code in place of this card: the clicked one shows in the preview until Apply or Cancel
   const [picking, setPicking] = useState<{ code: string; start: number | undefined; value: number | undefined } | null>(null)
   const [browsing, setBrowsing] = useState<BrowsedFace | null>(null)
+  // the game's eyes / hair being picked for a face that lacks them (in place of this card, like a code's pictures)
+  const [fillPicking, setFillPicking] = useState<{ group: FillGroup; start: number | undefined; value: number | undefined } | null>(null)
+  const [pickedMissing, setPickedMissing] = useState<FacePart[] | null>(null)
   useEffect(() => {
     setPicking(null)
     setBrowsing(null)
+    setFillPicking(null)
+    setPickedMissing(null)
   }, [player.id])
   // touching a face option shows the Face view, a body option the Body view
   const [viewRequest, setViewRequest] = useState<{ view: View; seq: number }>()
@@ -124,7 +129,15 @@ export function PlayerLook({
   }
 
   // the preview: the screen's values, with the face being looked at
-  const shownFace = browsing ? browsedChoice(browsing) : generic ? { source: 'generic' as const } : face
+  const packFace = face?.source === 'pack' ? face : null
+  const previewFill = fillPicking && packFace && fillPicking.value !== undefined ? { ...packFace.fill, [fillPicking.group]: fillPicking.value } : packFace?.fill
+  const shownFace = browsing
+    ? browsedChoice(browsing)
+    : generic
+      ? { source: 'generic' as const }
+      : packFace && previewFill
+        ? { ...packFace, fill: previewFill }
+        : face
   const lookCodes = [...FACE_CODES, ...BODY_CODES, ...KIT_CODES, 'height', 'preferredposition1']
   const lookValues = Object.fromEntries(lookCodes.filter((k) => effective[k] !== undefined).map((k) => [k, effective[k]]))
   const look = useQuery({
@@ -168,7 +181,23 @@ export function PlayerLook({
         className="order-3 w-[420px] max-w-full xl:order-1 xl:h-(--look-height) xl:shrink-0"
       >
         <Card className="h-full">
-          {picking ? (
+          {fillPicking && packFace && options?.fill ? (
+            <ThumbnailPicker
+              key={`fill-${fillPicking.group}`}
+              code={fillPicking.group === 'eyes' ? 'eyecolorcode' : 'hairtypecode'}
+              title={t(fillPicking.group === 'eyes' ? 'faces.fillPickEyes' : 'faces.fillPickHair')}
+              options={options.fill[fillPicking.group]}
+              value={fillPicking.value}
+              variant={fillPicking.group === 'hair' ? numberOf('haircolorcode') : 0}
+              changed={fillPicking.value !== fillPicking.start}
+              onSelect={(value) => setFillPicking({ ...fillPicking, value })}
+              onApply={() => {
+                if (fillPicking.value !== undefined) setField('face', { ...packFace, fill: { ...packFace.fill, [fillPicking.group]: fillPicking.value } } as FieldValue)
+                setFillPicking(null)
+              }}
+              onCancel={() => setFillPicking(null)}
+            />
+          ) : picking ? (
             <ThumbnailPicker
               key={picking.code}
               code={picking.code}
@@ -231,6 +260,14 @@ export function PlayerLook({
                       setBrowsing(b)
                     }}
                     onPick={(f) => setField('face', f as FieldValue)}
+                    pickedMissing={pickedMissing}
+                    onPickedMissing={setPickedMissing}
+                    fillOptions={options?.fill}
+                    onFill={(group) => {
+                      showView('face')
+                      const start = packFace?.fill?.[group]
+                      setFillPicking({ group, start, value: start ?? options?.fill?.[group][0] })
+                    }}
                   />
                 </CardContent>
               )}

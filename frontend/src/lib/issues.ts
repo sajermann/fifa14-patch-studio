@@ -1,9 +1,14 @@
 import type { ProjectIssue } from '@/api/types'
 import { hasMessage, type MessageKey, type TFunction } from '@/i18n'
 
+/** One part of a face in the interface language ("eyes"). */
+export function facePartLabel(t: TFunction, part: string) {
+  return hasMessage(`faces.part.${part}`) ? t(`faces.part.${part}` as MessageKey) : part
+}
+
 /** The parts of a face in the interface language, joined ("eyes, hair (3D model)"). */
 export function facePartsText(t: TFunction, parts: readonly string[]) {
-  return parts.map((p) => (hasMessage(`faces.part.${p}`) ? t(`faces.part.${p}` as MessageKey) : p)).join(', ')
+  return parts.map((p) => facePartLabel(t, p)).join(', ')
 }
 
 /** Validation message in the interface language (by code + params), else the code. */
