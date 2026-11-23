@@ -45,15 +45,17 @@ export function FillScroll({ children, className, reserve }: { children: ReactNo
 }
 
 /** A card: title, optional description and action (top right), then the content. */
-export function Section({ title, description, children, action, className }: { title: ReactNode; description?: ReactNode; children: ReactNode; action?: ReactNode; className?: string }) {
+/** A card with a title. `scroll`: the card takes the height it is given and its content scrolls inside it (as in the
+ * extractor). */
+export function Section({ title, description, children, action, className, scroll }: { title: ReactNode; description?: ReactNode; children: ReactNode; action?: ReactNode; className?: string; scroll?: boolean }) {
   return (
-    <Card className={className}>
+    <Card className={cn(scroll && 'flex min-h-0 flex-col', className)}>
       <CardHeader>
         <CardTitle>{title}</CardTitle>
         {description && <CardDescription>{description}</CardDescription>}
         {action && <CardAction>{action}</CardAction>}
       </CardHeader>
-      <CardContent>{children}</CardContent>
+      <CardContent className={scroll ? 'min-h-0 flex-1 overflow-auto' : undefined}>{children}</CardContent>
     </Card>
   )
 }

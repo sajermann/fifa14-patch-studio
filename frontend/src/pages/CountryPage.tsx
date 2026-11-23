@@ -18,7 +18,7 @@ import { EntityIssues } from '@/components/common/form'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api } from '@/api/client'
-import { Facts, FillScroll, OriginalBadge, Section } from '@/components/common/detail'
+import { Facts, FillScroll, OriginalBadge, RawTable, Section } from '@/components/common/detail'
 import { ALL, EditActions, FieldsEditor, NamesGrid, useEntityForm } from '@/components/common/edit'
 import { GameHiddenBadge, HiddenByProjectBadge, HideButton, OutOfPatchBadge, usePendingHide } from '@/components/common/HideButton'
 import { PickerDialog, type PickerItem } from '@/components/common/PickerDialog'
@@ -31,7 +31,7 @@ import { cn } from '@/lib/utils'
 import { useStatus, useToken } from '@/state/queries'
 import { useConfederationName } from './CountriesPage'
 
-const TABS = ['data', 'leagues'] as const
+const TABS = ['data', 'leagues', 'raw'] as const
 
 /** The flag picture chosen (or removed) but not saved yet: Save sends it with the rest of the form. */
 type PendingFlag = { data: string; url: string } | 'remove' | null
@@ -216,6 +216,7 @@ export function CountryPage() {
           <TabsTrigger value="leagues">
             {t('col.leagues')} ({leagueIds.length})
           </TabsTrigger>
+          <TabsTrigger value="raw">{t('tab.raw')}</TabsTrigger>
         </TabsList>
         <TabsContent value="data" className="space-y-4">
           <FieldsEditor
@@ -372,6 +373,17 @@ export function CountryPage() {
               </Table>
             </FillScroll>
           </Section>
+        </TabsContent>
+        {/* the game's rows, read-only (as the extractor's country) */}
+        <TabsContent value="raw" className="space-y-4">
+          <Section title={t('section.rawRow', { table: 'nations' })}>
+            <RawTable raw={data.raw} />
+          </Section>
+          {data.audio && (
+            <Section title={t('section.rawRow', { table: 'audionation' })}>
+              <RawTable raw={data.audio} />
+            </Section>
+          )}
         </TabsContent>
       </Tabs>
       <AddLeagueDialog open={adding} onOpenChange={setAdding} chosen={leagueIds} onPick={(lid) => setLeagues([...leagueIds, lid])} />

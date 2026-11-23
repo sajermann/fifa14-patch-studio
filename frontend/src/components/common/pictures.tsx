@@ -42,6 +42,11 @@ export function CountryFlag({ id, size = 64, className, available, version, game
   return <GameImage url={url} alt="" className={className} available={available} fallback={<Flag className="size-1/2" />} />
 }
 
+/** A menu picture of a stadium (`variant` = which of the game's pictures). */
+export function StadiumImage({ id, variant, size, className }: { id: number; variant: number; size?: number; className?: string }) {
+  return <GameImage url={`/api/image/stadium/${id}/${variant}${size ? `?size=${size}` : ''}`} alt="" className={className} fallback={<ImageOff className="size-1/3" />} />
+}
+
 /** Reads a picture file the user chose as base64 (without the data: prefix). */
 export function readPicture(file: File): Promise<string> {
   return new Promise((resolve, reject) => {

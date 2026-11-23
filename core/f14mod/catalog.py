@@ -15,8 +15,9 @@ import unicodedata
 from . import fifa14, installer, kitfonts, t3db, teamkits
 from .gamefs import DATABASE, GameFiles
 
-SCHEMA_VERSION = 6  # 2: country names and flags; 3: formations and the kit files of each team; 4: kit print, fonts;
-#                    5: the country's confederation; 6: the country's row and its sound row (audionation)
+SCHEMA_VERSION = 7  # 2: country names and flags; 3: formations and the kit files of each team; 4: kit print, fonts;
+#                    5: the country's confederation; 6: the country's row and its sound row (audionation);
+#                    7: stadiums (rows, names, files) and the teams' stadium links
 LOCALE = 'data/loc/locale.big'
 
 SCHEMA = """
@@ -39,6 +40,9 @@ CREATE TABLE formations (team_id INTEGER, formation_id INTEGER, generic INTEGER,
                          positions TEXT, PRIMARY KEY (team_id, formation_id));
 CREATE TABLE team_kits (team_id INTEGER, kind INTEGER, PRIMARY KEY (team_id, kind));
 CREATE TABLE kit_print (team_id INTEGER, kind INTEGER, print TEXT, PRIMARY KEY (team_id, kind));
+CREATE TABLE stadiums (id INTEGER PRIMARY KEY, name TEXT, raw TEXT);
+CREATE TABLE team_stadiums (team_id INTEGER, stadium_id INTEGER, custom_name TEXT, PRIMARY KEY (team_id, stadium_id));
+CREATE TABLE stadium_files (stadium_id INTEGER, kind TEXT, variant INTEGER, path TEXT PRIMARY KEY);
 CREATE TABLE kit_fonts (kind TEXT, font INTEGER, color INTEGER, name TEXT, ink TEXT, PRIMARY KEY (kind, font, color));
 CREATE INDEX names_lookup ON names (kind, key, lang, id);
 CREATE INDEX team_players_player ON team_players (player_id);
@@ -50,6 +54,7 @@ CREATE INDEX players_nationality ON players (nationality);
 TEAM_KEYS = fifa14.TEAM_NAME_STRINGS     # full, abbr15, abbr10, abbr7, abbr3, commentary
 LEAGUE_KEYS = fifa14.LEAGUE_NAME_STRINGS  # full, abbr15, abbr, trophy, trophy_abbr15
 COUNTRY_KEYS = fifa14.COUNTRY_NAME_STRINGS  # full, abbr3
+STADIUM_KEYS = fifa14.STADIUM_NAME_STRINGS  # full
 
 
 def fold(text) -> str:
@@ -118,13 +123,14 @@ def build(game_dir: str, path: str, progress=None) -> str:
     search_team: dict[int, set[str]] = {}
     search_league: dict[int, set[str]] = {}
     search_country: dict[int, set[str]] = {}
-    prefixes = tuple(TEAM_KEYS.values()) + tuple(LEAGUE_KEYS.values()) + tuple(COUNTRY_KEYS.values())
+    prefixes = (tuple(TEAM_KEYS.values()) + tuple(LEAGUE_KEYS.values()) + tuple(COUNTRY_KEYS.values())
+                + tuple(STADIUM_KEYS.values()))
     for i, lang in enumerate(langs):
         step(f'language {lang}', 0.1 + 0.5 * i / max(1, len(langs)))
         strings = _language_strings(files, lang, prefixes)
         rows = []
         for kind, table, search in (('team', TEAM_KEYS, search_team), ('league', LEAGUE_KEYS, search_league),
-                                    ('country', COUNTRY_KEYS, search_country)):
+                                    ('country', COUNTRY_KEYS, search_country), ('stadium', STADIUM_KEYS, {})):
             for oid, names in _split_names(strings, table).items():
                 for k, text in names.items():
                     rows.append((kind, oid, k, lang, text))
@@ -153,6 +159,22 @@ def build(game_dir: str, path: str, progress=None) -> str:
         for tid, r in src.teams.items()])
     con.executemany('INSERT OR IGNORE INTO league_teams VALUES (?,?)',
                     [(lid, tid) for lid, tids in src.league_teams.items() for tid in tids])
+    # stadiums: the rows, each team's links (with the name the team gives its stadium) and the stadium files
+    con.executemany('INSERT OR IGNORE INTO stadiums VALUES (?,?,?)', [
+        (r['stadiumid'], r.get('name'), json.dumps(r, ensure_ascii=False)) for r in src.rows('stadiums')])
+    custom = {r.get('teamid'): r.get('stadiumcustomname') for r in src.rows('stadiumassignments')
+              if r.get('stadiumcustomname')}
+    con.executemany('INSERT OR IGNORE INTO team_stadiums VALUES (?,?,?)', [
+        (r['teamid'], r['stadiumid'], custom.get(r['teamid'])) for r in src.rows('teamstadiumlinks')])
+    stadium_files = []
+    for folder in fifa14.STADIUM_FOLDERS:
+        for game_path in files.list(folder):
+            if m := fifa14.STADIUM_SCENE.match(game_path) or fifa14.STADIUM_CROWD.match(game_path):
+                stadium_files.append((int(m.group(1)), 'scene', None, game_path))
+            for size, pattern in fifa14.STADIUM_PICTURES.items():
+                if m := pattern.match(game_path):
+                    stadium_files.append((int(m.group(1)), size, int(m.group(2)), game_path))
+    con.executemany('INSERT OR IGNORE INTO stadium_files VALUES (?,?,?,?)', stadium_files)
 
     step('players', 0.8)
     photos = {p for p in files.list('data/ui/imgassets/heads/')}

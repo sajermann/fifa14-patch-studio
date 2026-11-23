@@ -430,7 +430,11 @@ def _tables():
             # a name edited in the database wins over the name table
             'editedplayernames': [{'playerid': KEEPER, 'firstname': 'Edited', 'surname': 'Keeper',
                                    'commonname': '', 'playerjerseyname': 'EDITED'}],
-            'teamstadiumlinks': [{'teamid': TEAM, 'stadiumid': 3}], 'formations': _formations()}
+            'teamstadiumlinks': [{'teamid': TEAM, 'stadiumid': 3}], 'formations': _formations(),
+            'stadiums': [{'stadiumid': 3, 'name': 'Test Ground', 'capacity': 12345, 'yearbuilt': 1901,
+                          'countrycode': 54, 'hometeamid': TEAM, 'timeofday1': 1, 'timeofday2': 3, 'timeofday3': 5,
+                          'timeofday4': 5, 'tod1weather': 3, 'tod2weather': 1, 'tod3weather': 0, 'tod4weather': 0}],
+            'stadiumassignments': [{'teamid': TEAM, 'stadiumcustomname': 'Custom Park'}]}
 
 
 def number_font_rx3(color):

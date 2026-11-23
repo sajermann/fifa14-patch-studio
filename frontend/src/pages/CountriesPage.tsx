@@ -77,7 +77,6 @@ export function CountriesPage() {
           value={list.values.origin}
           onChange={(v) => list.update({ origin: v })}
           allLabel={t('list.originAll')}
-          className="w-48"
           options={[
             { value: 'project', label: t('list.originProject') },
             { value: 'original', label: t('list.originOriginal') },
@@ -87,7 +86,6 @@ export function CountriesPage() {
           value={list.values.status}
           onChange={(v) => list.update({ status: v })}
           allLabel={t('list.statusAll')}
-          className="w-44"
           options={[
             { value: 'visible', label: t('list.statusInGame') },
             { value: 'hidden', label: t('list.statusHidden') },

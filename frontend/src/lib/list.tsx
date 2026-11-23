@@ -52,7 +52,7 @@ export function useListState<K extends string>(filters: readonly K[]) {
 }
 
 /** Search box that writes to the URL a moment after typing stops. */
-export function SearchInput({ value, onChange, placeholder, className = 'w-60' }: { value: string; onChange: (v: string) => void; placeholder: string; className?: string }) {
+export function SearchInput({ value, onChange, placeholder, className = 'w-64' }: { value: string; onChange: (v: string) => void; placeholder: string; className?: string }) {
   const [text, setText] = useState(value)
   useEffect(() => setText(value), [value])
   useEffect(() => {

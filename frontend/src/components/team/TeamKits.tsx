@@ -429,7 +429,7 @@ function KitCard({
   const defaultLabel = extra && !kit.default ? t('kit.chooseSource') : kit.default === 'generic' ? t(kit.kind === 2 ? 'kit.defaultKeeper' : 'kit.defaultGeneric') : kit.default === 'game' ? t(team.is_new ? 'kit.defaultCopied' : 'kit.defaultGame') : t('kit.none')
   const removedExtra = extra && !!pending && !pending.config && !kit.default
   return (
-    <div className="space-y-4 rounded-lg border p-4">
+    <div className={cn('space-y-4 rounded-lg border p-4', previewed && 'ring-2 ring-primary/50')}>
       <div className="flex items-center justify-between gap-2">
         <p className="font-medium">
           {kindLabel(kit.kind)}

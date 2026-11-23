@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus } from 'lucide-react'
+import { Plus, ScanFace } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
@@ -17,7 +17,7 @@ import { useI18n } from '@/i18n'
 import { FilterBar, FilterSelect, LIST_PAGE, Pager, ScrollTable, SearchInput, SortHead, useListState } from '@/lib/list'
 import { useList, useOptions } from '@/state/queries'
 
-const FILTERS = ['q', 'position', 'origin'] as const
+const FILTERS = ['q', 'position', 'team', 'face', 'origin'] as const
 
 export function PlayersPage() {
   const { t } = useI18n()
@@ -67,17 +67,30 @@ export function PlayersPage() {
           value={list.values.position}
           onChange={(v) => list.update({ position: v })}
           allLabel={t('filter.allPositions')}
-          className="w-40"
           options={(options?.positions ?? []).map((p) => ({
             value: String(p.id),
             label: p.name,
           }))}
         />
         <FilterSelect
+          value={list.values.team}
+          onChange={(v) => list.update({ team: v })}
+          allLabel={t('filter.allTeams')}
+          options={(options?.teams ?? []).map((tm) => ({ value: String(tm.id), label: tm.name }))}
+        />
+        <FilterSelect
+          value={list.values.face}
+          onChange={(v) => list.update({ face: v })}
+          allLabel={t('filter.faceAny')}
+          options={[
+            { value: 'yes', label: t('filter.faceYes') },
+            { value: 'no', label: t('filter.faceNo') },
+          ]}
+        />
+        <FilterSelect
           value={list.values.origin}
           onChange={(v) => list.update({ origin: v })}
           allLabel={t('list.originAll')}
-          className="w-44"
           options={[
             { value: 'project', label: t('list.originProject') },
             { value: 'original', label: t('list.originOriginal') },
@@ -93,13 +106,12 @@ export function PlayersPage() {
             </TableHead>
             <TableHead className="w-12" />
             <SortHead field="name" label={t('col.name')} state={sortState} />
-            <SortHead field="position" label={t('col.position')} state={sortState} className="text-center" />
+            <SortHead field="team" label={t('col.team')} state={sortState} className="text-right" />
             <SortHead field="overall" label={t('col.overall')} state={sortState} className="text-center" />
-            <SortHead field="potential" label={t('col.potential')} state={sortState} className="text-center" />
-            <SortHead field="team" label={t('col.team')} state={sortState} />
+            <SortHead field="position" label={t('col.position')} state={sortState} className="text-center" />
+            <SortHead field="birthdate" label={t('col.birthdate')} state={sortState} className="text-center" />
+            <SortHead field="id" label={t('col.id')} state={sortState} className="text-center" />
             <TableHead>{t('col.nationality')}</TableHead>
-            <SortHead field="birthdate" label={t('col.birthdate')} state={sortState} />
-            <SortHead field="id" label={t('col.id')} state={sortState} />
             <TableHead className="w-28" />
             <TableHead className="w-16" />
           </TableRow>
@@ -112,20 +124,21 @@ export function PlayersPage() {
                 <Photo id={p.id} size={64} available={p.has_photo} className="size-8" />
               </TableCell>
               <TableCell data-grow>
-                <Link to={`/players/${p.id}`} state={from.state} className="font-medium text-foreground underline-offset-4 hover:underline">{p.name}</Link> {!p.is_new && <OriginalBadge edited={p.edited} />}
-                {p.hidden && <OutOfPatchBadge />}
+                <span className="inline-flex items-center gap-2">
+                  <Link to={`/players/${p.id}`} state={from.state} className="font-medium text-foreground underline-offset-4 hover:underline">{p.name}</Link>
+                  {p.has_face && <ScanFace className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-label={t('squad.hasFace')} />}
+                  {!p.is_new && <OriginalBadge edited={p.edited} />}
+                  {p.hidden && <OutOfPatchBadge />}
+                </span>
               </TableCell>
-              <TableCell className="text-center">{p.position_name ?? '—'}</TableCell>
+              <TableCell className="text-right">{p.team ?? '—'}</TableCell>
               <TableCell className="text-center">
                 <OverallBadge value={p.overall} />
               </TableCell>
-              <TableCell className="text-center">
-                <OverallBadge value={p.potential} />
-              </TableCell>
-              <TableCell>{p.team ?? '—'}</TableCell>
+              <TableCell className="text-center">{p.position_name ?? '—'}</TableCell>
+              <TableCell className="text-center tabular-nums">{p.birthdate ?? '—'}</TableCell>
+              <TableCell className="text-center text-muted-foreground tabular-nums">{p.id}</TableCell>
               <TableCell>{p.nationality_name ?? '—'}</TableCell>
-              <TableCell className="tabular-nums">{p.birthdate ?? '—'}</TableCell>
-              <TableCell className="text-muted-foreground tabular-nums">{p.id}</TableCell>
               <TableCell>
                 {p.is_new && (
                   <HideButton
@@ -144,7 +157,7 @@ export function PlayersPage() {
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={12} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={11} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>

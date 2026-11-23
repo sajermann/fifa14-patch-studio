@@ -25,6 +25,7 @@ import { TeamCrest } from '@/components/team/TeamCrest'
 import { TeamKits } from '@/components/team/TeamKits'
 import { TeamLeagues } from '@/components/team/TeamLeagues'
 import { TeamSquad } from '@/components/team/TeamSquad'
+import { TeamStadiums } from '@/components/team/TeamStadiums'
 import { RESERVE, type PendingKit, type PendingPicture } from '@/components/team/pending'
 import { LoadingBlock } from '@/components/layout/LoadingBlock'
 import { useI18n } from '@/i18n'
@@ -32,7 +33,7 @@ import { BackButton, useBack, useFrom, useTabParam } from '@/lib/back'
 import { toast } from '@/lib/notify'
 import { useToken } from '@/state/queries'
 
-const TABS = ['data', 'crest', 'kits', 'leagues', 'roster', 'raw'] as const
+const TABS = ['data', 'crest', 'kits', 'leagues', 'roster', 'stadium', 'raw'] as const
 
 const sameIds = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => v === b[i])
 const sameSet = (a: number[], b: number[]) => a.length === b.length && a.every((v) => b.includes(v))
@@ -129,9 +130,9 @@ export function TeamPage() {
         {/* one line like the league and country headers: crest, name, leagues · ID, badges */}
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           {crestUrl ? (
-            <img src={crestUrl} alt="" className="size-10 shrink-0 object-contain" />
+            <img src={crestUrl} alt="" className="size-24 shrink-0 object-contain" />
           ) : (
-            <Crest id={team.id} size={96} available={team.has_crest || team.is_new} version={team.own_crest} className="size-10 shrink-0" />
+            <Crest id={team.id} size={256} available={team.has_crest || team.is_new} version={team.own_crest} className="size-24 shrink-0" />
           )}
           <h1 className="min-w-0 text-2xl font-semibold break-words">{team.name}</h1>
           <span className="shrink-0 text-sm text-muted-foreground tabular-nums">
@@ -173,13 +174,16 @@ export function TeamPage() {
         <TabsList>
           <TabsTrigger value="data">{t('team.tab.data')}</TabsTrigger>
           <TabsTrigger value="crest">{t('team.tab.crest')}</TabsTrigger>
-          <TabsTrigger value="kits">{t('team.tab.kits')}</TabsTrigger>
+          <TabsTrigger value="kits">
+            {t('team.tab.kits')} ({team.kits.filter((k) => k.config || k.default).length})
+          </TabsTrigger>
           <TabsTrigger value="leagues">
             {t('col.leagues')} ({leagueIds.length})
           </TabsTrigger>
           <TabsTrigger value="roster">
             {t('team.tab.roster')} ({squad.length})
           </TabsTrigger>
+          <TabsTrigger value="stadium">{t('tab.stadium')}</TabsTrigger>
           <TabsTrigger value="raw">{t('tab.raw')}</TabsTrigger>
         </TabsList>
         <TabsContent value="data" className="space-y-4">
@@ -242,6 +246,9 @@ export function TeamPage() {
             setField={entity.setField}
             linkState={from.state}
           />
+        </TabsContent>
+        <TabsContent value="stadium">
+          <TeamStadiums stadiums={team.stadiums} customName={team.stadium_custom_name} />
         </TabsContent>
         <TabsContent value="raw">
           <Section title={t('tab.raw')}>

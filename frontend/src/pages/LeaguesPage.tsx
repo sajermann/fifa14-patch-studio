@@ -74,14 +74,12 @@ export function LeaguesPage() {
           value={list.values.level}
           onChange={(v) => list.update({ level: v })}
           allLabel={t('filter.allLevels')}
-          className="w-36"
           options={(options?.levels ?? []).map((l) => ({ value: String(l), label: t('filter.level', { level: l }) }))}
         />
         <FilterSelect
           value={list.values.origin}
           onChange={(v) => list.update({ origin: v })}
           allLabel={t('list.originAll')}
-          className="w-48"
           options={[
             { value: 'project', label: t('list.originProject') },
             { value: 'original', label: t('list.originOriginal') },
@@ -91,7 +89,6 @@ export function LeaguesPage() {
           value={list.values.status}
           onChange={(v) => list.update({ status: v })}
           allLabel={t('list.statusAll')}
-          className="w-44"
           options={[
             { value: 'visible', label: t('list.statusInGame') },
             { value: 'hidden', label: t('list.statusHidden') },

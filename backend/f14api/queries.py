@@ -4,7 +4,7 @@ import json
 import math
 import sqlite3
 
-from f14mod import catalog, fields, fifa14
+from f14mod import catalog, fields, fifa14, stadium3d
 from f14mod.overall import compute_overall
 from f14mod.teamkits import MASKS, MODEL_TEAM
 
@@ -150,6 +150,14 @@ def _league_name(alias: str = 'l', key: str = 'full') -> str:
 def _saved(kind: str, alias: str, field: str) -> str:
     """SQL for one saved field of the project (the value as SQL text/number)."""
     return f"(SELECT json_extract(value, '$') FROM p.fields WHERE kind = '{kind}' AND id = {alias}.id "            f"AND field = '{field}')"
+
+
+def _real_face(alias: str) -> str:
+    """SQL, 1 when the player has a real face: the one the project gave him (a pack's or another player's), else the
+    game's own one (a generic face = 0)."""
+    return (f"CASE (SELECT json_extract(value, '$.source') FROM p.fields WHERE kind = 'player' AND id = {alias}.id "
+            f"AND field = 'face') WHEN 'pack' THEN 1 WHEN 'player' THEN 1 WHEN 'generic' THEN 0 "
+            f"ELSE ({alias}.is_new = 0 AND json_extract({alias}.raw, '$.headclasscode') = 0) END")
 
 
 def _edited(kind: str, alias: str) -> str:
@@ -335,13 +343,13 @@ def teams(con, lang: str, q='', league: int | None = None, edited: bool | None =
 
 def players(con, lang: str, q='', team: int | None = None, position: int | None = None, sort=None, direction=None,
             page=1, size=DEFAULT_PAGE_SIZE, origin: str | None = None, status: str | None = None,
-            face: bool = False) -> dict:
+            face: str | None = None) -> dict:
     params: dict = {'lang': lang}
     club = '(SELECT MIN(tp.team_id) FROM v_team_players tp JOIN v_teams x ON x.id = tp.team_id ' \
            'WHERE tp.player_id = pl.id AND x.national_of IS NULL)'
     select = f"""SELECT pl.id, {_player_name()} AS name, pl.overall, pl.potential, pl.position, pl.birthdate, pl.height,
                  pl.nationality, (SELECT {_country_name()} FROM v_nations n WHERE n.id = pl.nationality) AS nationality_name,
-                 pl.has_photo, {club} AS team_id,
+                 pl.has_photo, {_real_face('pl')} AS has_face, {club} AS team_id,
                  (SELECT {_team_name('abbr15')} FROM v_teams t WHERE t.id = {club}) AS team,
                  {_edited('player', 'pl')} AS edited, pl.is_new, {_flag('hidden', 'player', 'pl')} AS hidden,
                  pl.raw, pl.search || ' ' || fold({_player_name()}) AS search_all
@@ -359,8 +367,8 @@ def players(con, lang: str, q='', team: int | None = None, position: int | None 
         where.append('is_new = 0')
     if status == 'edited':
         where.append('edited = 1')
-    if face:  # only the players with their own face in the game
-        where.append("is_new = 0 AND json_extract(raw, '$.headclasscode') = 0")
+    if face in ('yes', 'no'):  # with / without a real face (the game's, a pack's or another player's)
+        where.append(f"has_face = {1 if face == 'yes' else 0}")
     if q.strip():
         where.append(_search('search_all', q, params))
     sorts = {'name': 'fold(name)', 'id': 'id', 'overall': 'overall', 'potential': 'potential',
@@ -370,7 +378,7 @@ def players(con, lang: str, q='', team: int | None = None, position: int | None 
         r.pop('search', None)
         r.pop('search_all', None)
         r.pop('raw', None)
-        for key in ('has_photo', 'edited', 'is_new', 'hidden'):
+        for key in ('has_photo', 'has_face', 'edited', 'is_new', 'hidden'):
             r[key] = bool(r[key])
         r['position_name'] = fifa14.position_name(r['position'])
     return out
@@ -422,6 +430,7 @@ def team(con, lang: str, tid: int) -> dict | None:
                   COALESCE({_saved('player', 'pl', 'name.jersey')}, pl.jersey_name, {_saved('player', 'pl', 'name.last')},
                            pl.last, pl.name) AS back_name,
                   pl.has_photo, pl.is_new, {_edited('player', 'pl')} AS edited, tp.ord, tp.hidden,
+                  {_real_face('pl')} AS has_face,
                   {_flag('hidden', 'player', 'pl')} AS player_hidden
            FROM v_team_players tp JOIN v_players pl ON pl.id = tp.player_id WHERE tp.team_id = ?
            ORDER BY tp.ord, tp.position, pl.overall DESC""", (tid,))]
@@ -429,6 +438,8 @@ def team(con, lang: str, tid: int) -> dict | None:
         r['position_name'] = fifa14.position_name(r['position'])
         r['link_position_name'] = fifa14.position_name(r['link_position'])
         r['has_photo'] = bool(r['has_photo'])
+        # a real face: the one the project gave him (a pack's or another player's), else the game's own one
+        r['has_face'] = bool(r['has_face'])
         r['is_new'] = bool(r['is_new'])
         r['edited'] = bool(r['edited'])
         r['hidden'] = bool(r['hidden'])
@@ -444,9 +455,17 @@ def team(con, lang: str, tid: int) -> dict | None:
     copied = bool(source['copy']) if source else not head['is_new']
     look_from = template if copied else None  # where the crest and kits come from when the user set none
     form = _form(con, 'team', tid, raw)
+    # the stadium: the game's links of the team (a created team gets the first one of the team it starts from)
+    stadium_of = tid if not head['is_new'] else template
+    stadium_links = [dict(r) for r in con.execute(
+        'SELECT stadium_id, custom_name FROM team_stadiums WHERE team_id = ? ORDER BY stadium_id', (stadium_of,))]
+    if head['is_new']:
+        stadium_links = stadium_links[:1]
     own = con.execute('SELECT base FROM formations WHERE team_id = ? AND generic = 0', (template,)).fetchone()
     form['values']['formation'] = own['base'] if own else None
     return {**head, 'db_name': row['db_name'], 'name_keys': TEAM_NAME_KEYS, 'languages': languages(con),
+            'stadium_ids': [r['stadium_id'] for r in stadium_links],
+            'stadium_custom_name': next((r['custom_name'] for r in stadium_links if r['custom_name']), None),
             'original_names': {} if head['is_new'] else _names(con, 'team', tid), 'saved_names': saved,
             'roster': roster, 'roster_changed': con.execute(
                 'SELECT 1 FROM p.team_rosters_set WHERE team_id = ?', (tid,)).fetchone() is not None,
@@ -629,6 +648,58 @@ def player(con, lang: str, pid: int) -> dict | None:
     }
 
 
+def stadium(con, lang: str, sid: int, files) -> dict | None:
+    """One stadium of the game, read-only (the same data as the extractor's stadium screen): names, capacity, year,
+    country, home team, the times of day and weather it allows, its menu pictures and scene files (`files` = the game's
+    files, to say where each one is and which times of day the 3D preview can show)."""
+    row = con.execute('SELECT id, name, raw FROM stadiums WHERE id = ?', (sid,)).fetchone()
+    if row is None:
+        return None
+    raw = json.loads(row['raw'] or '{}')
+    names = {'database': row['name'] or ''}
+    full = con.execute("SELECT text FROM names WHERE kind = 'stadium' AND id = ? AND key = 'full' AND lang IN (?, ?) "
+                       'ORDER BY lang = ? DESC LIMIT 1', (sid, lang, FALLBACK_LANG, lang)).fetchone()
+    if full:
+        names['full'] = full[0]
+    names = {k: v for k, v in names.items() if v}
+    country_id = raw.get('countrycode')
+    country = con.execute(f'SELECT {_country_name()} FROM v_nations n WHERE n.id = :id',
+                          {'lang': lang, 'id': country_id}).fetchone() if country_id else None
+    home_id = raw.get('hometeamid')
+    home = con.execute(f'SELECT t.id, {_team_name("full")} AS name FROM v_teams t WHERE t.id = :id',
+                       {'lang': lang, 'id': home_id}).fetchone() if isinstance(home_id, int) and home_id > 0 else None
+    pictures: dict[str, list[int]] = {}
+    scene = []
+    for r in con.execute('SELECT kind, variant, path FROM stadium_files WHERE stadium_id = ? ORDER BY path', (sid,)):
+        if r['kind'] == 'scene':
+            scene.append(r['path'])
+        else:
+            pictures.setdefault(r['kind'], []).append(r['variant'])
+    return {
+        'id': sid,
+        'name': names.get('database') or names.get('full') or f'#{sid}',
+        'names': names,
+        'capacity': raw.get('capacity'),
+        'year_built': raw.get('yearbuilt'),
+        'country_id': country_id,
+        'country': country[0] if country else None,
+        'home_team': dict(home) if home else None,
+        'team_count': con.execute('SELECT COUNT(*) FROM team_stadiums WHERE stadium_id = ?', (sid,)).fetchone()[0],
+        'conditions': fifa14.stadium_conditions(raw),
+        'pictures': sorted(pictures.get('large') or pictures.get('small') or []),
+        'files': [{'path': p, 'where': files.where(p)} for p in scene],
+        'times': stadium3d.available(files, sid),  # 3D preview: 1 = day, 3 = night
+        'raw': raw,
+    }
+
+
+def stadium_picture_path(con, sid: int, variant: int) -> str | None:
+    """The menu picture file of the stadium's variant (the large one when the game has it)."""
+    found = con.execute("SELECT path FROM stadium_files WHERE stadium_id = ? AND variant = ? AND kind IN ('large', 'small') "
+                        "ORDER BY kind = 'large' DESC LIMIT 1", (sid, variant)).fetchone()
+    return found[0] if found else None
+
+
 def free_player_id(con, taken=frozenset()) -> int:
     """The first player id from fifa14.FIRST_FREE_PLAYER the game and the project do not use (`taken`: ids that have
     files in the game, e.g. a face or a photo)."""
@@ -723,10 +794,17 @@ def country(con, lang: str, cid: int) -> dict | None:
     # the game's row and sound row (read-only for now; a created country has the game's model row only in the patch)
     stored = con.execute('SELECT raw, audio FROM nations WHERE id = ?', (cid,)).fetchone()
     raw = json.loads(stored['raw'] or '{}') if stored else {}
+    if head['is_new']:  # the row the patch writes for it (builder.add_created): the model country's, with its own id
+        model = con.execute('SELECT raw FROM nations ORDER BY id = ? DESC, rowid LIMIT 1',  # else the first row
+                            (fifa14.TEMPLATE_NATION,)).fetchone()
+        full = _project_names(con, 'country', cid).get('full') or {}
+        name = full.get('*') or full.get('eng_us') or next(iter(full.values()), '') or f'Country {cid}'
+        raw = {**json.loads(model['raw'] or '{}'), 'nationid': cid, 'nationname': name[:44], 'top_tier': 0,
+               'teamid': -1} if model else {}
     team_id = raw.get('teamid')
     team = con.execute(f'SELECT t.id, {_team_name("full")} AS name FROM v_teams t WHERE t.id = :id',
                        {'lang': lang, 'id': team_id}).fetchone() if isinstance(team_id, int) and team_id >= 0 else None
-    head = {**head, 'national_team': dict(team) if team else None, 'top_tier': raw.get('top_tier'),
+    head = {**head, 'national_team': dict(team) if team else None, 'top_tier': raw.get('top_tier'), 'raw': raw,
             'audio': json.loads(stored['audio']) if stored and stored['audio'] else None}
     return {**head, 'name_keys': COUNTRY_NAME_KEYS, 'languages': languages(con),
             'original_names': {} if head['is_new'] else _names(con, 'country', cid),

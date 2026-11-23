@@ -37,6 +37,15 @@ def test_lists_page_filter_sort(client):
     teams = client.get('/api/teams').json()
     assert teams['total'] == 2
     assert [t['name'] for t in teams['items']] == ['Small Team FC', 'Test Athletic Club']
+    team = client.get(f'/api/teams/{fakegame.TEAM}').json()  # the stadium tab (read-only)
+    stadium, = team['stadiums']
+    assert stadium['id'] == 3 and stadium['name'] == 'Test Ground' and stadium['capacity'] == 12345
+    assert stadium['home_team']['id'] == fakegame.TEAM and team['stadium_custom_name'] == 'Custom Park'
+    assert stadium['conditions'] == [{'time_of_day': 1, 'rain': True, 'snow': True},
+                                     {'time_of_day': 3, 'rain': True, 'snow': False}]
+    assert stadium['times'] == [] and stadium['pictures'] == []  # no stadium files in the fake game
+    assert client.get('/api/preview/stadium/3.glb').status_code == 404
+    assert client.get('/api/image/stadium/3/1').status_code == 404
     for row in teams['items']:  # the list's kit count follows the rule of the team's Kits tab
         kits = client.get(f"/api/teams/{row['id']}").json()['kits']
         assert row['kit_count'] == sum(1 for k in kits if k['config'] is not None or k['default'] is not None)
@@ -193,7 +202,11 @@ def test_free_country_and_league_crud(client):
     assert rows[cid]['player_count'] == 0
     detail = client.get('/api/countries/54').json()
     assert detail['confederation'] == 1 and detail['national_team'] is None and detail['audio'] is None
-    assert client.get(f'/api/countries/{cid}').json()['national_team'] is None
+    made = client.get(f'/api/countries/{cid}').json()
+    assert made['national_team'] is None
+    # its database row is the one the patch writes: the model country's, with its own id and name
+    assert made['raw']['nationid'] == cid and made['raw']['nationname'] == 'Free Land' and made['raw']['teamid'] == -1
+    assert detail['raw']['nationid'] == 54
     assert client.get('/api/countries', params={'confederation': 1}).json()['total'] >= 2
     assert client.get('/api/countries', params={'confederation': 2}).json()['total'] == 0
     options = client.get('/api/options').json()
@@ -628,3 +641,21 @@ def test_face_folder_with_several_packs_is_named_after_the_folder(client, tmp_pa
         (versions / name / 'faces').mkdir()
     packs = client.post('/api/facepacks/check', json={'folders': [str(versions)]}).json()['packs']
     assert sorted(p['name'] for p in packs) == ['others / one', 'others / two']
+
+
+def test_squad_marks_real_faces(client):
+    """The squad's face icon: the game's own face, or the one the project gives a player (a copy of another's)."""
+    copy = client.post('/api/players', json={'fields': {'name.common': 'Copy'}, 'template': fakegame.STAR,
+                                             'team': fakegame.TEAM})
+    assert copy.status_code == 200, copy.text
+    made = client.post('/api/players', json={'fields': {'name.common': 'Plain'}, 'team': fakegame.TEAM}).json()
+    faces = {r['id']: r['has_face'] for r in client.get(f'/api/teams/{fakegame.TEAM}').json()['roster']}
+    assert faces[copy.json()['id']] is True  # a created player with another player's face
+    assert faces[made['id']] is False  # a generic face
+    assert faces.get(fakegame.STAR, True) is True
+    # the players list's face filter follows the same rule
+    real = {r['id'] for r in client.get('/api/players', params={'face': 'yes', 'size': 200}).json()['items']}
+    plain = {r['id'] for r in client.get('/api/players', params={'face': 'no', 'size': 200}).json()['items']}
+    assert copy.json()['id'] in real and made['id'] in plain and not real & plain
+    for pid in (copy.json()['id'], made['id']):  # the other tests count on the ids from 300001
+        assert client.delete(f'/api/players/{pid}').status_code == 200

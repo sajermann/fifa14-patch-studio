@@ -192,6 +192,26 @@ export interface CountryRow {
   game_hidden: boolean
 }
 
+/** One stadium of the game, read-only (GET /api/teams/<id> `stadiums`; the same as the extractor's). */
+export interface StadiumInfo {
+  id: number
+  name: string
+  names: Record<string, string>
+  capacity: number | null
+  year_built: number | null
+  country_id: number | null
+  country: string | null
+  home_team: Ref | null
+  team_count: number
+  /** times of day the match screen offers in this stadium (1 = day, 3 = night) and the weather allowed in each */
+  conditions: { time_of_day: number; rain: boolean; snow: boolean }[]
+  pictures: number[]
+  files: { path: string; where: string | null }[]
+  /** times of day the 3D preview can show (1 = day, 3 = night); empty = no 3D files */
+  times: number[]
+  raw: Raw
+}
+
 export interface CountryDetail extends CountryRow, EditForm {
   name_keys: string[]
   languages: string[]
@@ -203,6 +223,8 @@ export interface CountryDetail extends CountryRow, EditForm {
   top_tier: number | null
   /** The country's row of the audionation table (commentary and crowd sound regions); null = none. */
   audio: Raw | null
+  /** The country's row of the nations table (the game's; empty for a created country). */
+  raw: Raw
 }
 
 export interface Limits {
@@ -253,6 +275,8 @@ export interface PlayerRow {
   nationality: number | null
   nationality_name: string | null
   has_photo: boolean
+  /** A real face: the game's, a pack's or another player's (not a generic one). */
+  has_face: boolean
   team_id: number | null
   team: string | null
   edited: boolean
@@ -312,6 +336,8 @@ export interface RosterRow {
   /** the name printed on the back of the jersey (jersey name, else last name) */
   back_name: string | null
   has_photo: boolean
+  /** the game has the player's own face */
+  has_face: boolean
   is_new: boolean
   edited: boolean
   /** out of the patch in this team only */
@@ -396,6 +422,10 @@ export interface TeamKit {
 
 export interface TeamDetail extends TeamRow, EditForm {
   db_name: string | null
+  /** The team's stadiums (read-only tab) and the name the team gives its stadium. */
+  stadium_ids: number[]
+  stadiums: StadiumInfo[]
+  stadium_custom_name: string | null
   name_keys: string[]
   languages: string[]
   original_names: NameTable

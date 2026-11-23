@@ -146,3 +146,37 @@ def dds(img: Image.Image) -> bytes:
     buf = io.BytesIO()
     img.convert('RGBA').save(buf, 'DDS', pixel_format='DXT5')
     return buf.getvalue()
+
+
+# ---- menu pictures (stadiums) ------------------------------------------------------------------------------------
+
+APT_DATA = b'Apt Data'
+APT_SHAPE_SIZE = 164  # offset of the drawn picture's width and height (two floats) in a one-picture Apt data entry
+
+
+def _big_entries(blob: bytes) -> dict[str, bytes]:
+    """{name: bytes} of a small BIG archive kept in memory (BIGF/BIG4, big-endian index)."""
+    count = struct.unpack('>I', blob[8:12])[0]
+    p, out = 16, {}
+    for _ in range(count):
+        offset, size = struct.unpack('>II', blob[p:p + 8])
+        end = blob.index(b'\0', p + 8)
+        out[blob[p + 8:end].decode('latin1')] = blob[offset:offset + size]
+        p = end + 1
+    return out
+
+
+def apt_picture(blob: bytes) -> Image.Image:
+    """The picture of a menu screen archive (an Apt movie with one texture, e.g. a stadium): its DDS texture, cut to
+    the size the screen draws (the texture is larger; the rest is filler). Raises one of UNREADABLE."""
+    entries = _big_entries(blob)
+    texture = next((d for d in entries.values() if d[:4] == b'DDS '), None)
+    if texture is None:
+        raise ValueError('no texture in the archive')
+    img = decode_dds(texture)
+    data = next((d for d in entries.values() if d.startswith(APT_DATA)), b'')
+    if len(data) >= APT_SHAPE_SIZE + 8:
+        w, h = struct.unpack('<ff', data[APT_SHAPE_SIZE:APT_SHAPE_SIZE + 8])
+        if 0 < w <= img.width and 0 < h <= img.height:
+            img = img.crop((0, 0, round(w), round(h)))
+    return img

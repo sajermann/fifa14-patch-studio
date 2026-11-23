@@ -36,6 +36,30 @@ COUNTRY_NAME_STRINGS = {
     'full': 'NationName_',
     'abbr3': 'nationname_abbr3_',
 }
+STADIUM_NAME_STRINGS = {'full': 'StadiumName_'}
+# stadium files (same layout as the extractor reads): the 3D scene (model, textures by time of day, the variants some
+# patches add per home team), where the crowd sits, and the menu pictures (Apt archives; the number = the variant)
+STADIUM_SCENE = re.compile(r'data/sceneassets/stadium/(?:specific)?stadium_(\d+)[._][^/]*$')
+STADIUM_CROWD = re.compile(r'data/sceneassets/crowdplacement/crowd_(\d+)_[^/]*$')
+STADIUM_PICTURES = {'large': re.compile(r'data/ui/artassets/stadiumsbig/st_(\d+)_(\d+)\.big$'),
+                    'small': re.compile(r'data/ui/artassets/stadium/stadium_(\d+)_(\d+)\.big$')}
+STADIUM_FOLDERS = ('data/sceneassets/stadium/', 'data/sceneassets/crowdplacement/', 'data/ui/artassets/stadiumsbig/',
+                   'data/ui/artassets/stadium/')
+# times of day and weather a stadium allows: four slots (timeofday1..4 + tod1weather..4); time 1 = day, 3 = night,
+# 5 = empty slot; weather is two flags (1 = rain, 2 = snow; 0 = clear sky only)
+STADIUM_SLOTS, STADIUM_NO_TIME, WEATHER_RAIN, WEATHER_SNOW = 4, 5, 1, 2
+
+
+def stadium_conditions(row: dict) -> list[dict]:
+    """[{time_of_day, rain, snow}] of the stadium's used slots (the match screen only offers these)."""
+    out = []
+    for slot in range(1, STADIUM_SLOTS + 1):
+        time = row.get(f'timeofday{slot}')
+        if not isinstance(time, int) or time == STADIUM_NO_TIME:
+            continue
+        weather = row.get(f'tod{slot}weather') or 0
+        out.append({'time_of_day': time, 'rain': bool(weather & WEATHER_RAIN), 'snow': bool(weather & WEATHER_SNOW)})
+    return out
 
 # limits measured in the game and in the database fields
 MAX_NATION_ID = 250        # nations.nationid has 8 bits and the meta allows up to 250

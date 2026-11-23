@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from . import settings  # noqa: I001 - first: it puts the core folder on the path
 
 from f14mod import (buildcache, builder, fields, fifa14, flags, images, install_check, installer, kitprint,  # noqa: E402
-                    preview, teamkits, workers)
+                    preview, stadium3d, teamkits, workers)
 
 from . import diagnostics, dialogs, patch_info, queries, validation  # noqa: E402
 from .state import GameState, Jobs, project  # noqa: E402
@@ -255,7 +255,7 @@ def list_players(q: str = '', team: Optional[int] = None, position: Optional[int
                  size: int = queries.DEFAULT_PAGE_SIZE, origin: Optional[str] = None, status: Optional[str] = None,
                  face: Optional[str] = None):
     with db() as con:
-        return queries.players(con, lang(), q, team, position, sort, dir, page, size, origin, status, face == 'yes')
+        return queries.players(con, lang(), q, team, position, sort, dir, page, size, origin, status, face)
 
 
 @app.get('/api/options')
@@ -300,6 +300,9 @@ def league_detail(lid: int):
 def team_detail(tid: int):
     with db() as con:
         out = queries.team(con, lang(), tid)
+        if out is not None:  # the stadium tab (read-only)
+            files = game.files()
+            out['stadiums'] = [s for s in (queries.stadium(con, lang(), sid, files) for sid in out['stadium_ids']) if s]
     if out is None:
         raise ApiError(404, 'not_found')
     return out
@@ -657,7 +660,7 @@ def limits():
 IMAGE_HEADERS = {'Cache-Control': 'max-age=86400'}
 
 
-def _picture(kind: str, oid: int, path: Optional[str], size: Optional[int]):
+def _picture(kind: str, oid: int, path: Optional[str], size: Optional[int], decode=images.decode_dds):
     if game.state != 'ready':
         raise ApiError(409, 'game_not_ready')
     size = min(max(size, 16), 512) if size else None
@@ -668,7 +671,7 @@ def _picture(kind: str, oid: int, path: Optional[str], size: Optional[int]):
     if data is None:
         raise ApiError(404, 'not_found')
     try:
-        img = images.decode_dds(data)
+        img = decode(data)
         if size:
             img = images.thumbnail(img, size)
         png = images.png(img)
@@ -699,6 +702,37 @@ def crest_image(tid: int, size: Optional[int] = None, game_only: bool = False):
         c2 = team['saved'].get('teamcolor2') or team['values'].get('teamcolor2') or [255, 255, 255]
         return _png_response(teamkits.plain_crest(builder._shown_name(names, 'abbr3'), c1, c2), size)  # noqa: SLF001
     return _picture('crest', tid, fifa14.CREST.format(tid), size)
+
+
+@app.get('/api/image/stadium/{sid}/{variant}')
+def stadium_image(sid: int, variant: int, size: Optional[int] = None):
+    """A menu picture of the stadium (an Apt archive, cut to what the screen draws)."""
+    with db() as con:
+        path = queries.stadium_picture_path(con, sid, variant)
+    return _picture(f'stadium{variant}', sid, path, size, decode=images.apt_picture)
+
+
+_stadium_models: dict = {}  # the last stadiums built in 3D ({(game token, id, time of day): GLB}); big, so few
+STADIUM_MODELS_KEPT = 3
+
+
+@app.get('/api/preview/stadium/{sid}.glb')
+def preview_stadium(sid: int, tod: int = 1):
+    """The stadium in 3D (stadium3d.glb); tod 1 = day textures, 3 = night."""
+    if game.state != 'ready':
+        raise ApiError(409, 'game_not_ready')
+    if tod not in stadium3d.TIMES:
+        raise ApiError(404, 'not_found')
+    key = (game.token, sid, tod)
+    if key not in _stadium_models:
+        try:
+            data = stadium3d.glb(game.files(), sid, tod)
+        except stadium3d.StadiumError as e:
+            raise ApiError(404, 'not_found', str(e))
+        while len(_stadium_models) >= STADIUM_MODELS_KEPT:
+            _stadium_models.pop(next(iter(_stadium_models)))
+        _stadium_models[key] = data
+    return Response(_stadium_models[key], media_type='model/gltf-binary', headers={'Cache-Control': 'no-cache'})
 
 
 @app.get('/api/image/flag/{cid}')

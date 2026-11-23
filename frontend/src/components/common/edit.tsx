@@ -348,7 +348,6 @@ export function NamesGrid({
               {columns.map((key) => (
                 <th key={key} className="px-2 py-2 font-medium">
                   {label(key)}
-                  {limits[key] && <span className="ml-1 text-xs font-normal">({t('names.max', { count: limits[key] })})</span>}
                 </th>
               ))}
             </tr>

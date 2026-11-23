@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { CornerUpLeft, CornerUpRight, Crown, Dices, Goal, Loader2, type LucideIcon, MoveUpRight, Plus, Target, UserMinus } from 'lucide-react'
+import { CornerUpLeft, CornerUpRight, Crown, Dices, Goal, Loader2, type LucideIcon, MoveUpRight, Plus, ScanFace, Target, UserMinus } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ApiError, api } from '@/api/client'
@@ -37,6 +37,7 @@ interface PlayerInfo {
   position: number | null
   position_name: string | null
   has_photo: boolean
+  has_face?: boolean // a real face: from a pack, another player's or the game's own
   is_new: boolean
   edited: boolean
   hidden?: boolean // out of the patch everywhere
@@ -48,6 +49,7 @@ const infoOf = (p: PlayerInfo): PlayerInfo => ({
   position: p.position,
   position_name: p.position_name,
   has_photo: p.has_photo,
+  has_face: p.has_face,
   is_new: p.is_new,
   edited: p.edited,
   hidden: !!p.hidden,
@@ -284,6 +286,7 @@ export function TeamSquad({
                       <Link to={`/players/${r.player}`} state={linkState} className={cn('font-medium underline-offset-4 hover:underline', (r.hidden || overLimit) && 'text-muted-foreground')}>
                         {p?.name ?? `#${r.player}`}
                       </Link>
+                      {p?.has_face && <ScanFace className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-label={t('squad.hasFace')} />}
                       {/* the game's players say original / updated; the ones the user made have no badge */}
                       {!p?.is_new && <OriginalBadge edited={p?.edited} />}
                       {p?.hidden && <OutOfPatchBadge />}
