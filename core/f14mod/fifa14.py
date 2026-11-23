@@ -162,6 +162,26 @@ PLAYER_FACE_FILES = {       # a player's own face (headclasscode 0): every file 
 }
 PHOTO_SIZE = (128, 128)  # heads/p<id>.dds: 128x128 DXT5
 
+# player accessories: accessorycode1-4 + accessorycolourcode1-4 are 4 slots of a list (any order); each code is one
+# thing on one side of the body, checked in the game. Places: where the screen shows them, the codes each can hold.
+ACCESSORY_PLACES = {
+    'ankle_left': (14,), 'ankle_right': (15,),
+    'hands': (16, 18, 19),                     # gloves; 18/19 = a pair of goalkeeper gloves (colour = glove model)
+    'wrist_left': (8, 6, 24, 26, 4),           # band, bandage, wide band, bracelet, watch
+    'wrist_right': (9, 7, 25, 27, 5),
+    'knee_left': (10, 12), 'knee_right': (11, 13),  # tape, knee support
+    'fingers_left': (22,), 'fingers_right': (23,),
+    'hand_left': (28, 30), 'hand_right': (29, 31),  # yellow / red card held in the hand
+    'ear': (2,),                               # earphone
+}
+ACCESSORY_SLOTS = 4
+ACCESSORY_COLOURS = tuple(range(13))           # 13-15 show as white
+ACCESSORY_TEXTURED = (2, 4, 5, 28, 29, 30, 31)  # drawn from their own picture: only colour 0 (others: checkered)
+ACCESSORY_MODEL = (18, 19)                     # the colour picks the glove model
+# kit look codes: the values the game has (the rest show as the first one)
+KIT_CODE_VALUES = {'jerseysleevelengthcode': (0, 1), 'socklengthcode': (0, 1, 2), 'jerseystylecode': (0, 1),
+                   'hasseasonaljersey': (0, 1, 2, 3, 4)}  # hasseasonaljersey only shows in cold / snow matches
+
 DATE_ZERO = datetime.date(1582, 10, 14)  # database dates are days since this day
 SUSPECT_SHARE = 0.20  # a birth date shared by more than this share of the players is a placeholder
 

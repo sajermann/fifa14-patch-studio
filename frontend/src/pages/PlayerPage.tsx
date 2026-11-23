@@ -22,6 +22,7 @@ import { EditActions, FieldsEditor, useEntityForm, useFieldLabel } from '@/compo
 import { HideButton, OutOfPatchBadge, usePendingHide } from '@/components/common/HideButton'
 import { Photo } from '@/components/common/pictures'
 import { EntityIssues, Stepper } from '@/components/common/form'
+import { PlayerAccessories } from '@/components/player/PlayerAccessories'
 import { PlayerLook } from '@/components/player/PlayerLook'
 import { PlayerPhoto, type PendingPhoto } from '@/components/player/PlayerPhoto'
 import { PlayerTeams, sameTeams, savedTeams } from '@/components/player/PlayerTeams'
@@ -229,7 +230,7 @@ export function PlayerPage() {
           />
         </TabsContent>
         <TabsContent value="accessories" className="space-y-4">
-          <CodeGroup player={data} group="accessories" fields={fields} setField={entity.setField} title={t('fieldGroup.accessories')} description={t('look.accessoriesHint')} />
+          <PlayerAccessories player={data} fields={fields} setField={entity.setField} options={options?.accessories} />
           <CodeGroup player={data} group="animations" fields={fields} setField={entity.setField} title={t('fieldGroup.animations')} description={t('code.hint')} />
         </TabsContent>
         <TabsContent value="raw">

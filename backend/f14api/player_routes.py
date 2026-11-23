@@ -589,6 +589,8 @@ def player_options():
         codes['headtypecode'] = heads
     if hairs:
         codes['hairtypecode'] = [0, *hairs]  # 0 = bald
+    for field, values in fifa14.KIT_CODE_VALUES.items():
+        codes[field] = list(values)
     for spec in fields.PLAYER:  # what the database can store (the game has hair files it cannot point to)
         if spec.name in codes:
             codes[spec.name] = [c for c in codes[spec.name] if spec.min <= c <= spec.max]
@@ -598,6 +600,9 @@ def player_options():
             codes[field] = [c for c in codes.get(field, []) if preview.face_codes_allowed(field, c, faces)]
     out = {'codes': codes, 'traits': list(fifa14.TRAITS), 'thumbs': list(appearance_thumbs.FIELDS),
            'hair_colors': ['#%06x' % c for c in preview.HAIR_COLORS],
+           'accessories': {'places': {k: list(v) for k, v in fifa14.ACCESSORY_PLACES.items()},
+                           'slots': fifa14.ACCESSORY_SLOTS, 'colours': list(fifa14.ACCESSORY_COLOURS),
+                           'textured': list(fifa14.ACCESSORY_TEXTURED), 'model': list(fifa14.ACCESSORY_MODEL)},
            # the game's generic eyes / hair a face lacking them may be filled in with (facefill)
            'fill': {'eyes': facefill.eyes_codes(game.files()), 'hair': facefill.hair_codes(game.files())}}
     _options_cache[game.token] = out

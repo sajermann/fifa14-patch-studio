@@ -536,6 +536,18 @@ export interface PlayerOptions {
   hair_colors: string[]
   /** generic eyes and hair styles the game has files of (what a face lacking them can be filled in with) */
   fill?: { eyes: number[]; hair: number[] }
+  /** the accessory codes each place of the body can hold (accessorycode1-4 are slots of a list) */
+  accessories?: AccessoryOptions
+}
+
+export interface AccessoryOptions {
+  places: Record<string, number[]>
+  slots: number
+  colours: number[]
+  /** drawn from their own picture: only colour 0 */
+  textured: number[]
+  /** the colour picks the glove model */
+  model: number[]
 }
 
 export interface FacePackPart {

@@ -156,6 +156,9 @@ def test_face_packs_and_options(client, tmp_path):
     # only the values some face texture of the game has (the rest would show a checkered face)
     assert options['codes']['skintypecode'] == [0, 2] and options['codes']['sideburnscode'] == [0, 1]
     assert options['codes']['facialhaircolorcode'] == [0, 3]
+    # kit codes: only the values the game has; accessories by place of the body
+    assert options['codes']['socklengthcode'] == [0, 1, 2] and options['codes']['jerseysleevelengthcode'] == [0, 1]
+    assert options['accessories']['places']['wrist_left'][0] == 8 and options['accessories']['slots'] == 4
     # only what the database can store (hairtypecode has 7 bits, eyecolorcode 3)
     assert all(c <= 127 for c in options['codes']['hairtypecode']) and all(c <= 8 for c in options['codes']['eyecolorcode'])
     client.put('/api/settings', json={'face_pack_dirs': []})
