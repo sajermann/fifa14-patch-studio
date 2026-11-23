@@ -1,5 +1,5 @@
 import { hasMessage, translate } from '@/i18n'
-import type { BuildProgress, BulkKind, Config, CountryDetail, CountryRow, FaceChoice, FacePackCheck, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, MachineInfo, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, SetupRequest, Status, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook, ProjectIssue } from './types'
+import type { BuildProgress, BulkKind, Config, CountryDetail, CountryRow, FaceChoice, FacePackCheck, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, MachineInfo, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, SetupRequest, Status, StadiumDetail, StadiumRow, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook, ProjectIssue } from './types'
 
 /** Error of the backend; `message` is in the interface language when the app knows its code. */
 export class ApiError extends Error {
@@ -83,6 +83,12 @@ export const api = {
   players: (p: ListParams) => get<Page<PlayerRow>>(`/api/players${query(p)}`),
   options: () => get<Options>('/api/options'),
   league: (id: number) => get<LeagueDetail>(`/api/leagues/${id}`),
+  stadiums: (p: ListParams) => get<Page<StadiumRow>>(`/api/stadiums${query(p)}`),
+  stadium: (id: number) => get<StadiumDetail>(`/api/stadiums/${id}`),
+  saveStadium: (id: number, names: NameTable, fields: Fields) => request<StadiumDetail>('PUT', `/api/stadiums/${id}`, { names, fields }),
+  resetStadium: (id: number) => request<StadiumDetail>('DELETE', `/api/stadiums/${id}/edits`),
+  /** The stadium the team plays in; null = the game's again. */
+  setTeamStadium: (id: number, stadium: number | null) => request<TeamDetail>('PUT', `/api/teams/${id}/stadium`, { stadium }),
   team: (id: number) => get<TeamDetail>(`/api/teams/${id}`),
   saveTeam: (id: number, names: NameTable, fields: Fields) => request<TeamDetail>('PUT', `/api/teams/${id}`, { names, fields }),
   resetTeam: (id: number) => request<TeamDetail>('DELETE', `/api/teams/${id}/edits`),

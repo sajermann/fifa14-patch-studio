@@ -1,15 +1,60 @@
 import { Flag, ImageOff, Shield, User } from 'lucide-react'
 import { useState } from 'react'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { useToken } from '@/state/queries'
 import { cn } from '@/lib/utils'
 
-/** Picture of the loaded game (the URL carries the game's token); a missing or broken file shows `fallback`. */
-function GameImage({ url, alt, className, fallback, available = true }: { url: string; alt: string; className?: string; fallback: React.ReactNode; available?: boolean }) {
+/** The URL of the same picture at its full size (no `size`), for the zoom. */
+function fullSize(url: string) {
+  const [path, query = ''] = url.split('?')
+  const q = new URLSearchParams(query)
+  q.delete('size')
+  const rest = q.toString()
+  return rest ? `${path}?${rest}` : path
+}
+
+/** Picture of the loaded game (the URL carries the game's token); a missing or broken file shows `fallback`. With
+ * `zoom`, a click opens it big in a dialog (the extractor's zoom; off by default here: many pictures sit in buttons). */
+function GameImage({ url, alt, className, fallback, available = true, zoom = false }: { url: string; alt: string; className?: string; fallback: React.ReactNode; available?: boolean; zoom?: boolean }) {
   const token = useToken()
   const [failed, setFailed] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
   const src = `${url}${url.includes('?') ? '&' : '?'}v=${token}`
   if (!available || failed === src) return <span className={cn('inline-flex items-center justify-center text-muted-foreground/50', className)}>{fallback}</span>
-  return <img src={src} alt={alt} loading="lazy" className={cn('object-contain', className)} onError={() => setFailed(src)} />
+  const big = `${fullSize(url)}${fullSize(url).includes('?') ? '&' : '?'}v=${token}`
+  return (
+    <>
+      <img
+        src={src}
+        alt={alt}
+        loading="lazy"
+        className={cn('object-contain', zoom && 'cursor-zoom-in', className)}
+        onError={() => setFailed(src)}
+        onClick={
+          zoom
+            ? (e) => {
+                e.stopPropagation() // a picture inside a clickable row opens itself, not the row
+                setOpen(true)
+              }
+            : undefined
+        }
+      />
+      {zoom && (
+        // React events of the dialog (a portal) still bubble up the component tree: a row around the picture must
+        // not get the clicks of the dialog or of its backdrop
+        <span className="contents" onClick={(e) => e.stopPropagation()}>
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogContent width="picture">
+              <DialogTitle className="sr-only">{alt || 'picture'}</DialogTitle>
+              <div className="flex max-h-[80vh] items-center justify-center overflow-auto rounded bg-[repeating-conic-gradient(#8881_0_25%,transparent_0_50%)] bg-[length:16px_16px]">
+                {open && <img src={big} alt={alt} className="h-[70vh] w-full object-contain" />}
+              </div>
+            </DialogContent>
+          </Dialog>
+        </span>
+      )}
+    </>
+  )
 }
 
 /** A team's crest (`version` = when the user's picture was saved, so a new one is fetched). */
@@ -43,8 +88,8 @@ export function CountryFlag({ id, size = 64, className, available, version, game
 }
 
 /** A menu picture of a stadium (`variant` = which of the game's pictures). */
-export function StadiumImage({ id, variant, size, className }: { id: number; variant: number; size?: number; className?: string }) {
-  return <GameImage url={`/api/image/stadium/${id}/${variant}${size ? `?size=${size}` : ''}`} alt="" className={className} fallback={<ImageOff className="size-1/3" />} />
+export function StadiumImage({ id, variant, size, className, zoom }: { id: number; variant: number; size?: number; className?: string; zoom?: boolean }) {
+  return <GameImage url={`/api/image/stadium/${id}/${variant}${size ? `?size=${size}` : ''}`} alt="" className={className} zoom={zoom} fallback={<ImageOff className="size-1/3" />} />
 }
 
 /** Reads a picture file the user chose as base64 (without the data: prefix). */

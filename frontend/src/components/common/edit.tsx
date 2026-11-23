@@ -30,10 +30,11 @@ export const ALL = '*'
 export type Fields = Record<string, FieldValue>
 
 /** Longest text the game shows for each name (the others have no fixed limit). */
-export const NAME_LIMITS: Record<'team' | 'league' | 'country', Record<string, number | undefined>> = {
+export const NAME_LIMITS: Record<'team' | 'league' | 'country' | 'stadium', Record<string, number | undefined>> = {
   team: { abbr15: 15, abbr10: 10, abbr7: 7, abbr3: 3 },
   league: { abbr15: 15, trophy_abbr15: 15 },
   country: { full: 40, abbr3: 3 },
+  stadium: { full: 60 },
 }
 
 // ---- comparing forms -------------------------------------------------------------------------------------------
@@ -305,7 +306,7 @@ export function NamesGrid({
   setNames,
   required = [],
 }: {
-  kind: 'team' | 'league' | 'country'
+  kind: 'team' | 'league' | 'country' | 'stadium'
   columns: string[]
   languages: string[]
   original: NameTable
@@ -330,55 +331,86 @@ export function NamesGrid({
   const shown = (key: string, code: string) => names[key]?.[code] ?? original[key]?.[code] ?? ''
   const inGame = (key: string, code: string) => original[key]?.[code] ?? original[key]?.eng_us ?? ''
   const missing = (key: string) => required.includes(key) && !names[key]?.[ALL]?.trim()
+  const colgroup = (
+    <colgroup>
+      <col className="w-24" />
+      {columns.map((key) => (
+        // a short name (a 3-letter abbreviation) gets a narrow column, the others share the rest
+        <col key={key} className={(limits[key] ?? 99) <= 3 ? 'w-44' : undefined} />
+      ))}
+    </colgroup>
+  )
+  const head = (
+    <thead className="sticky top-0 z-10 shadow-[0_1px_0_var(--border)] [&_th]:bg-card">
+      <tr className="border-b text-left text-muted-foreground">
+        <th className="px-2 py-2 font-medium">{t('names.language')}</th>
+        {columns.map((key) => (
+          <th key={key} className="px-2 py-2 font-medium">
+            {label(key)}
+          </th>
+        ))}
+      </tr>
+    </thead>
+  )
+  const allRow = (
+    <tr className="border-b bg-muted/40">
+      <td className="px-2 py-1.5 align-top leading-8 font-semibold">{t('names.all')}</td>
+      {columns.map((key) => (
+        <td key={key} className="px-2 py-1.5 align-top">
+          <Input
+            value={names[key]?.[ALL] ?? ''}
+            maxLength={limits[key]}
+            placeholder={inGame(key, uiLang)}
+            aria-invalid={missing(key) || undefined}
+            className={cn('h-8', missing(key) && 'border-destructive')}
+            onChange={(e) => set(key, ALL, e.target.value)}
+          />
+          {missing(key) && <p className="mt-1 text-xs text-destructive">{t('names.required')}</p>}
+        </td>
+      ))}
+    </tr>
+  )
+  const langRows = (codes: string[]) =>
+    codes.map((code) => (
+      <tr key={code} className="border-b last:border-0">
+        <td className="px-2 py-1.5 font-mono text-xs text-muted-foreground">{code}</td>
+        {columns.map((key) => (
+          <td key={key} className="px-2 py-1.5">
+            <Input className="h-8" value={shown(key, code)} maxLength={limits[key]} placeholder={names[key]?.[ALL]?.trim() || inGame(key, code)} onChange={(e) => setLang(key, code, e.target.value)} />
+          </td>
+        ))}
+      </tr>
+    ))
+  // one name only (a stadium's): "All" and the languages in two halves side by side on wide screens
+  if (columns.length === 1) {
+    const half = Math.ceil((languages.length + 1) / 2) - 1 // "All" is the first row of the left half
+    return (
+      <Section title={t('team.tab.names')} description={t('names.gridHint')}>
+        <div className="grid items-start gap-x-6 lg:grid-cols-2">
+          {[languages.slice(0, half), languages.slice(half)].map((codes, i) => (
+            <table key={i} className="w-full text-sm">
+              {colgroup}
+              {head}
+              <tbody>
+                {i === 0 && allRow}
+                {langRows(codes)}
+              </tbody>
+            </table>
+          ))}
+        </div>
+      </Section>
+    )
+  }
   return (
     <Section title={t('team.tab.names')} description={t('names.gridHint')}>
       {/* the grid scrolls on its own, with the header always on top */}
       <FillScroll>
         <table className="w-full text-sm">
-          <colgroup>
-            <col className="w-24" />
-            {columns.map((key) => (
-              // a short name (a 3-letter abbreviation) gets a narrow column, the others share the rest
-              <col key={key} className={(limits[key] ?? 99) <= 3 ? 'w-44' : undefined} />
-            ))}
-          </colgroup>
-          <thead className="sticky top-0 z-10 shadow-[0_1px_0_var(--border)] [&_th]:bg-card">
-            <tr className="border-b text-left text-muted-foreground">
-              <th className="px-2 py-2 font-medium">{t('names.language')}</th>
-              {columns.map((key) => (
-                <th key={key} className="px-2 py-2 font-medium">
-                  {label(key)}
-                </th>
-              ))}
-            </tr>
-          </thead>
+          {colgroup}
+          {head}
           <tbody>
-            <tr className="border-b bg-muted/40">
-              <td className="px-2 py-1.5 align-top leading-8 font-semibold">{t('names.all')}</td>
-              {columns.map((key) => (
-                <td key={key} className="px-2 py-1.5 align-top">
-                  <Input
-                    value={names[key]?.[ALL] ?? ''}
-                    maxLength={limits[key]}
-                    placeholder={inGame(key, uiLang)}
-                    aria-invalid={missing(key) || undefined}
-                    className={cn('h-8', missing(key) && 'border-destructive')}
-                    onChange={(e) => set(key, ALL, e.target.value)}
-                  />
-                  {missing(key) && <p className="mt-1 text-xs text-destructive">{t('names.required')}</p>}
-                </td>
-              ))}
-            </tr>
-            {languages.map((code) => (
-              <tr key={code} className="border-b last:border-0">
-                <td className="px-2 py-1.5 font-mono text-xs text-muted-foreground">{code}</td>
-                {columns.map((key) => (
-                  <td key={key} className="px-2 py-1.5">
-                    <Input className="h-8" value={shown(key, code)} maxLength={limits[key]} placeholder={names[key]?.[ALL]?.trim() || inGame(key, code)} onChange={(e) => setLang(key, code, e.target.value)} />
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {allRow}
+            {langRows(languages)}
           </tbody>
         </table>
       </FillScroll>

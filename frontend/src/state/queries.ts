@@ -20,7 +20,7 @@ export function useToken() {
   return useStatus().data?.game.token ?? ''
 }
 
-export function useList<T>(kind: 'countries' | 'leagues' | 'teams' | 'players', params: ListParams, fetcher: (p: ListParams) => Promise<T>) {
+export function useList<T>(kind: 'countries' | 'leagues' | 'teams' | 'players' | 'stadiums', params: ListParams, fetcher: (p: ListParams) => Promise<T>) {
   const token = useToken()
   const lang = useStatus().data?.names_language
   return useQuery({ queryKey: [kind, token, lang, params], queryFn: () => fetcher(params), placeholderData: keepPreviousData, enabled: !!token })

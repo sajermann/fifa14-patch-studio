@@ -137,8 +137,8 @@ export function OriginalBadge({ edited, isNew }: { edited?: boolean; isNew?: boo
   const { t } = useI18n()
   if (isNew) return <UiBadge className="font-normal">{t('common.new')}</UiBadge>
   return (
-    <UiBadge variant="secondary" className="font-normal" title={edited ? t('common.updatedHint') : undefined}>
-      {edited ? t('common.updated') : t('common.original')}
+    <UiBadge variant="secondary" className="font-normal" title={edited ? t('common.wasOriginalHint') : undefined}>
+      {edited ? t('common.wasOriginal') : t('common.original')}
     </UiBadge>
   )
 }

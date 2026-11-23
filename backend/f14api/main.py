@@ -258,6 +258,16 @@ def list_players(q: str = '', team: Optional[int] = None, position: Optional[int
         return queries.players(con, lang(), q, team, position, sort, dir, page, size, origin, status, face)
 
 
+@app.get('/api/stadiums')
+def list_stadiums(q: str = '', country: Optional[int] = None, home: Optional[str] = None,
+                  origin: Optional[str] = None, sort: Optional[str] = None, dir: Optional[str] = None, page: int = 1,
+                  size: int = queries.DEFAULT_PAGE_SIZE, ids: Optional[str] = None):
+    """`home` = yes/no: with or without a home team; `origin` = project (edited) / original."""
+    with db() as con:
+        return queries.stadiums(con, lang(), q, sort, dir, page, size, country=country, home=_yes_no(home),
+                                origin=origin, ids=_id_list(ids))
+
+
 @app.get('/api/options')
 def filter_options():
     """Small lists for the filter selects and the language fields."""
@@ -274,6 +284,9 @@ def filter_options():
                 'ORDER BY fold(name)', {'lang': lang()})],
             'teams': [dict(r) for r in con.execute(
                 f"SELECT * FROM (SELECT t.id, {queries._team_name('full')} AS name FROM v_teams t) ORDER BY fold(name)",  # noqa: SLF001
+                {'lang': lang()})],
+            'stadiums': [dict(r) for r in con.execute(
+                f'SELECT * FROM (SELECT s.id, {queries._stadium_name()} AS name FROM stadiums s) ORDER BY fold(name)',  # noqa: SLF001
                 {'lang': lang()})],
             # for the countries and leagues filters: the confederations in use, the division levels in use and the
             # countries that have a league (the league's main country)
@@ -315,9 +328,10 @@ class EntityBody(BaseModel):
 
 NAME_LIMITS = {'team': {'abbr15': 15, 'abbr10': 10, 'abbr7': 7, 'abbr3': 3},
                'league': {'abbr15': 15, 'trophy_abbr15': 15},
-               'country': {'full': 40, 'abbr3': 3}}
+               'country': {'full': 40, 'abbr3': 3},
+               'stadium': {'full': 60}}
 NAME_KEYS = {'team': queries.TEAM_NAME_KEYS, 'league': queries.LEAGUE_NAME_KEYS,
-             'country': queries.COUNTRY_NAME_KEYS}
+             'country': queries.COUNTRY_NAME_KEYS, 'stadium': queries.STADIUM_NAME_KEYS}
 
 
 def _clean_names(kind: str, body: dict, original: dict, langs: set[str]) -> dict:
@@ -361,7 +375,16 @@ def _clean_fields(con, kind: str, oid: int, body: dict, detail: dict) -> dict:
     return kept
 
 
-DETAILS = {'team': queries.team, 'league': queries.league, 'player': queries.player, 'country': queries.country}
+def _stadium_detail(con, lang_code: str, sid: int) -> dict | None:
+    """The stadium screen: the stadium with the project's changes and the teams that play in it."""
+    out = queries.stadium(con, lang_code, sid, game.files())
+    if out is not None:
+        out['teams'] = queries.stadium_teams(con, lang_code, sid)
+    return out
+
+
+DETAILS = {'team': queries.team, 'league': queries.league, 'player': queries.player, 'country': queries.country,
+           'stadium': _stadium_detail}
 
 
 def _save(kind: str, oid: int, body: EntityBody):
@@ -395,6 +418,45 @@ def save_team(tid: int, body: EntityBody):
 @app.delete('/api/teams/{tid}/edits')
 def reset_team(tid: int):
     return _reset('team', tid)
+
+
+@app.get('/api/stadiums/{sid}')
+def stadium_detail(sid: int):
+    with db() as con:
+        out = _stadium_detail(con, lang(), sid)
+    if out is None:
+        raise ApiError(404, 'not_found')
+    return out
+
+
+@app.put('/api/stadiums/{sid}')
+def save_stadium(sid: int, body: EntityBody):
+    return _save('stadium', sid, body)
+
+
+@app.delete('/api/stadiums/{sid}/edits')
+def reset_stadium(sid: int):
+    return _reset('stadium', sid)
+
+
+class TeamStadiumBody(BaseModel):
+    stadium: Optional[int] = None  # None = the game's stadium again (a created team: the one of the team it copies)
+
+
+@app.put('/api/teams/{tid}/stadium')
+def set_team_stadium(tid: int, body: TeamStadiumBody):
+    """The stadium the team plays in (one per team, as in the game)."""
+    with db() as con:
+        if not con.execute('SELECT 1 FROM v_teams WHERE id = ?', (tid,)).fetchone():
+            raise ApiError(404, 'not_found')
+        if body.stadium is not None and not con.execute('SELECT 1 FROM stadiums WHERE id = ?',
+                                                        (body.stadium,)).fetchone():
+            raise ApiError(400, 'field_out_of_range', 'stadium')
+        game_stadium = con.execute('SELECT stadium_id FROM team_stadiums WHERE team_id = ?', (tid,)).fetchone()
+    # the game's own stadium again: nothing to keep
+    same = body.stadium is not None and game_stadium is not None and game_stadium[0] == body.stadium
+    project().set_team_stadium(tid, None if same else body.stadium)
+    return team_detail(tid)
 
 
 @app.put('/api/leagues/{lid}')
@@ -1492,8 +1554,8 @@ def bulk_delete(body: BulkDeleteBody):
     deletes = {'country': delete_country, 'league': delete_league, 'team': delete_team,
                'player': player_routes.delete_player}
     resets = {'country': reset_country, 'league': reset_league, 'team': reset_team,
-              'player': player_routes.reset_player}
-    if body.kind not in deletes:
+              'player': player_routes.reset_player, 'stadium': reset_stadium}  # (no created stadiums yet)
+    if body.kind not in resets:
         raise ApiError(400, 'bad_request', 'kind')
     deleted, reset, skipped = [], [], []
     for oid in dict.fromkeys(body.ids):

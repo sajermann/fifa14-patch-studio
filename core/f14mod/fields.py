@@ -1,4 +1,4 @@
-"""What the editor can change in each database row (player, team, league) and the limits the game accepts.
+"""What the editor can change in each database row (player, team, league, stadium) and the limits the game accepts.
 
 A field is a database column of the entity's row, with these exceptions:
   - `name.first`, `name.last`, `name.common`, `name.jersey`: the player's names (texts of the name table);
@@ -136,7 +136,40 @@ COUNTRY = [
     FieldSpec('flag_from', 'info', 'nation', 1, fifa14.MAX_NATION_ID, optional=True),  # whose flag is copied
 ]
 
-SPECS = {'player': PLAYER, 'team': TEAM, 'league': LEAGUE, 'country': COUNTRY}
+# the columns of a stadiums row (ranges = the bits of each column in the game's database); the
+# manager and substitutes areas are left out
+STADIUM = [
+    FieldSpec('name', 'info', 'text', max_length=60),  # the database name (the menus show StadiumName_<id>)
+    FieldSpec('countrycode', 'info', 'nation', 0, 255, optional=True),
+    FieldSpec('hometeamid', 'info', 'team', 0, 262143, optional=True),
+    FieldSpec('capacity', 'info', 'int', 0, 262143),
+    FieldSpec('yearbuilt', 'info', 'int', 1800, 2055),
+    # the times of day and the weather the match screen offers (four slots; time 5 = slot not used; weather bits:
+    # 1 rain, 2 snow)
+    *(spec for n in range(1, fifa14.STADIUM_SLOTS + 1) for spec in (
+        FieldSpec(f'timeofday{n}', 'conditions', 'select',
+                  options=(fifa14.STADIUM_DAY, fifa14.STADIUM_NIGHT, fifa14.STADIUM_NO_TIME)),
+        FieldSpec(f'tod{n}weather', 'conditions', 'select', options=(0, 1, 2, 3)))),
+    FieldSpec('stadiumpitchlength', 'pitch', 'int', 0, 1_048_575),
+    FieldSpec('stadiumpitchwidth', 'pitch', 'int', 0, 1_048_575),
+    FieldSpec('stadiummowpattern_code', 'pitch', 'int', 0, 15),
+    FieldSpec('adboardendlinedistance', 'pitch', 'int', 0, 1_048_575),
+    FieldSpec('adboardsidelinedistance', 'pitch', 'int', 0, 1_048_575),
+    FieldSpec('stadiumgoalnettype', 'goal', 'select', options=(0, 1)),
+    FieldSpec('stadiumgoalnetstyle', 'goal', 'int', 0, 15),
+    FieldSpec('stadiumgoalnettension', 'goal', 'select', options=(0, 1, 2, 3)),
+    FieldSpec('stadiumgloalnetdepth', 'goal', 'int', 0, 1_048_575),  # (the game's column name has the typo)
+    FieldSpec('stadiumgoalnetwidth', 'goal', 'int', 0, 1_048_575),
+    FieldSpec('stadiumgoalnetlength', 'goal', 'int', 0, 1_048_575),
+    FieldSpec('seatcolor', 'stands', 'int', 1, 8),
+    FieldSpec('stadiumtype', 'stands', 'int', 0, 3),
+    FieldSpec('policetypecode', 'stands', 'int', 0, 15),
+    FieldSpec('sectionfacedbydefault', 'stands', 'select', options=(0, 1)),
+    FieldSpec('cameraheight', 'stands', 'int', 0, 31),
+    FieldSpec('camerazoom', 'stands', 'int', 0, 15),
+]
+
+SPECS = {'player': PLAYER, 'team': TEAM, 'league': LEAGUE, 'country': COUNTRY, 'stadium': STADIUM}
 BY_NAME = {kind: {s.name: s for s in specs} for kind, specs in SPECS.items()}
 
 

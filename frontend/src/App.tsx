@@ -11,6 +11,8 @@ import { ThemeProvider } from '@/lib/theme'
 import { CountriesPage } from '@/pages/CountriesPage'
 import { CountryPage } from '@/pages/CountryPage'
 import { LeaguePage } from '@/pages/LeaguePage'
+import { StadiumPage } from '@/pages/StadiumPage'
+import { StadiumsPage } from '@/pages/StadiumsPage'
 import { LeaguesPage } from '@/pages/LeaguesPage'
 import { PatchPage } from '@/pages/PatchPage'
 import { PlayerPage } from '@/pages/PlayerPage'
@@ -86,6 +88,8 @@ const router = createBrowserRouter([
           { path: 'countries/:id', element: <CountryPage /> },
           { path: 'leagues', element: <LeaguesPage /> },
           { path: 'leagues/:id', element: <LeaguePage /> },
+          { path: 'stadiums', element: <StadiumsPage /> },
+          { path: 'stadiums/:id', element: <StadiumPage /> },
           { path: 'teams', element: <TeamsPage /> },
           { path: 'teams/:id', element: <TeamPage /> },
           { path: 'players', element: <PlayersPage /> },

@@ -11,8 +11,9 @@ import { cn } from '@/lib/utils'
 const StadiumPreview = lazy(() => import('@/components/common/StadiumPreview')) // three.js only loads when asked
 
 /** The stadium in 3D, built only when asked (a big stadium is tens of MB and takes seconds); `open` lives in the page,
- * which gives it half of the height when open. */
-export function Stadium3D({ stadium, open, setOpen, className }: { stadium: StadiumInfo; open: boolean; setOpen: (v: boolean) => void; className?: string }) {
+ * which gives it half of the height when open. Without `setOpen` it is always open, with no button (the team's
+ * stadium tab, like the face and kit previews). */
+export function Stadium3D({ stadium, open, setOpen, className }: { stadium: StadiumInfo; open: boolean; setOpen?: (v: boolean) => void; className?: string }) {
   const { t } = useI18n()
   return (
     <Section
@@ -21,6 +22,7 @@ export function Stadium3D({ stadium, open, setOpen, className }: { stadium: Stad
       title={t('stadium3d.title')}
       action={
         stadium.times.length > 0 &&
+        setOpen &&
         (open ? (
           <Button size="sm" variant="outline" onClick={() => setOpen(false)}>
             <ChevronUp /> {t('stadium3d.close')}
@@ -44,7 +46,7 @@ export function Stadium3D({ stadium, open, setOpen, className }: { stadium: Stad
                 </div>
               }
             >
-              <StadiumPreview id={stadium.id} times={stadium.times} />
+              <StadiumPreview key={stadium.id} id={stadium.id} times={stadium.times} />
             </Suspense>
           </div>
           <p className="text-xs text-muted-foreground">{t('stadium3d.hint')}</p>
@@ -94,35 +96,89 @@ function StadiumConditions({ conditions }: { conditions: StadiumInfo['conditions
   )
 }
 
-/** Data of the stadium on top, its menu pictures below one another (a click opens them big). */
-export function StadiumDetails({ stadium: s, customName, title, className, scroll }: { stadium: StadiumInfo; customName?: string | null; title?: string; className?: string; scroll?: boolean }) {
+/** Data of the stadium on top, its menu pictures below one another (a click opens them big); `grid` = three columns
+ * on wide screens, the data in the first and the pictures two per row in the other two, cut to the part with the
+ * stadium (the game's pictures have black sides). `action` = buttons in the box's header, `notice` = a line above. */
+export function StadiumDetails({
+  stadium: s,
+  customName,
+  title,
+  className,
+  scroll,
+  grid,
+  action,
+  notice,
+}: {
+  stadium: StadiumInfo
+  customName?: string | null
+  title?: string
+  className?: string
+  scroll?: boolean
+  grid?: boolean
+  action?: React.ReactNode
+  notice?: React.ReactNode
+}) {
   const { t } = useI18n()
   return (
-    <Section scroll={scroll} className={className} title={title ?? t('section.stadium', { name: s.name })}>
-      <Facts
-        items={[
-          ...Object.entries(s.names).map(([k, v]) => [hasMessage(`stadiumName.${k}`) ? t(`stadiumName.${k}` as MessageKey) : k, v] as [string, React.ReactNode]),
-          ...(customName ? [[t('stadium.customName'), customName] as [string, React.ReactNode]] : []),
-          [t('stadium.capacity'), s.capacity?.toLocaleString() ?? '—'],
-          [t('stadium.yearBuilt'), s.year_built || '—'],
-          [t('stadium.conditions'), <StadiumConditions key="w" conditions={s.conditions} />],
-          [t('col.country'), s.country_id !== null && s.country ? <Link key="c" to={`/nations/${s.country_id}`} className="hover:underline">{s.country}</Link> : '—'],
-          [t('stadium.homeTeam'), s.home_team ? <Link key="h" to={`/teams/${s.home_team.id}`} className="hover:underline">{s.home_team.name}</Link> : t('stadium.noHomeTeam')],
-          [t('stadium.teamCount'), s.team_count],
-          [t('col.id'), <Link key="i" to={`/stadiums/${s.id}`} className="hover:underline">{s.id}</Link>],
-        ]}
-      />
-      <div className="mt-4 space-y-3">
-        {s.pictures.length ? (
-          s.pictures.map((v) => (
-            <figure key={v} className="space-y-1">
-              <StadiumImage id={s.id} variant={v} size={512} className="aspect-[981/278] w-full rounded border bg-muted/40" />
-              <figcaption className="text-xs text-muted-foreground">{t('stadium.picture', { variant: v })}</figcaption>
-            </figure>
-          ))
-        ) : (
-          <p className="text-sm text-muted-foreground">{t('stadium.noPictures')}</p>
-        )}
+    <Section scroll={scroll} className={className} title={title ?? t('section.stadium', { name: s.name })} action={action}>
+      {notice}
+      <div className={grid ? 'grid items-start gap-4 lg:grid-cols-3' : undefined}>
+        <Facts
+          items={[
+            ...Object.entries(s.names).map(
+              ([k, v]) => [hasMessage(`stadiumName.${k}`) ? t(`stadiumName.${k}` as MessageKey) : k, v] as [string, React.ReactNode],
+            ),
+            ...(customName ? [[t('stadium.customName'), customName] as [string, React.ReactNode]] : []),
+            [t('stadium.capacity'), s.capacity?.toLocaleString() ?? '—'],
+            [t('stadium.yearBuilt'), s.year_built || '—'],
+            [t('stadium.conditions'), <StadiumConditions key="w" conditions={s.conditions} />],
+            [
+              t('col.country'),
+              s.country_id !== null && s.country ? (
+                <Link key="c" to={`/nations/${s.country_id}`} className="hover:underline">
+                  {s.country}
+                </Link>
+              ) : (
+                '—'
+              ),
+            ],
+            [
+              t('stadium.homeTeam'),
+              s.home_team ? (
+                <Link key="h" to={`/teams/${s.home_team.id}`} className="hover:underline">
+                  {s.home_team.name}
+                </Link>
+              ) : (
+                t('stadium.noHomeTeam')
+              ),
+            ],
+            [t('stadium.teamCount'), s.team_count],
+            [
+              t('col.id'),
+              <Link key="i" to={`/stadiums/${s.id}`} className="hover:underline">
+                {s.id}
+              </Link>,
+            ],
+          ]}
+        />
+        <div className={grid ? 'grid content-start gap-3 sm:grid-cols-2 lg:col-span-2' : 'mt-4 space-y-3'}>
+          {s.pictures.length ? (
+            s.pictures.map((v) => (
+              <figure key={v} className="space-y-1">
+                <StadiumImage
+                  id={s.id}
+                  variant={v}
+                  size={512}
+                  zoom
+                  className={cn('w-full rounded border bg-muted/40', grid ? 'aspect-[23/10] object-cover' : 'aspect-[981/278]')}
+                />
+                <figcaption className="text-xs text-muted-foreground">{t('stadium.picture', { variant: v })}</figcaption>
+              </figure>
+            ))
+          ) : (
+            <p className="text-sm text-muted-foreground">{t('stadium.noPictures')}</p>
+          )}
+        </div>
       </div>
     </Section>
   )

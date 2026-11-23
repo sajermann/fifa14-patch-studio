@@ -48,6 +48,7 @@ STADIUM_FOLDERS = ('data/sceneassets/stadium/', 'data/sceneassets/crowdplacement
 # times of day and weather a stadium allows: four slots (timeofday1..4 + tod1weather..4); time 1 = day, 3 = night,
 # 5 = empty slot; weather is two flags (1 = rain, 2 = snow; 0 = clear sky only)
 STADIUM_SLOTS, STADIUM_NO_TIME, WEATHER_RAIN, WEATHER_SNOW = 4, 5, 1, 2
+STADIUM_DAY, STADIUM_NIGHT = 1, 3  # timeofdayN values of the game's stadiums (and 5 = slot not used)
 
 
 def stadium_conditions(row: dict) -> list[dict]:

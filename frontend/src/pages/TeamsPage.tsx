@@ -8,6 +8,7 @@ import { useFrom } from '@/lib/back'
 import { toast } from '@/lib/notify'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
+import { DateCells, DateHeads } from '@/components/common/dates'
 import { OriginalBadge, OverallBadge } from '@/components/common/detail'
 import { EntityIssues } from '@/components/common/form'
 import { HiddenByProjectBadge, HideButton, OutOfPatchBadge, useHide } from '@/components/common/HideButton'
@@ -105,6 +106,7 @@ export function TeamsPage() {
             <SortHead field="kit_count" label={t('col.kits')} state={sortState} className="text-center" />
             <TableHead className="text-center">{t('col.colors')}</TableHead>
             <SortHead field="id" label={t('col.id')} state={sortState} className="text-center" />
+            <DateHeads />
             <TableHead className="w-28" />
             <TableHead className="w-16" />
           </TableRow>
@@ -139,6 +141,7 @@ export function TeamsPage() {
                 </span>
               </TableCell>
               <TableCell className="text-center text-muted-foreground tabular-nums">{tm.id}</TableCell>
+              <DateCells entry={tm} />
               <TableCell>
                 <HideButton
                   hidden={tm.hidden}
@@ -155,7 +158,7 @@ export function TeamsPage() {
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={11} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={13} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>

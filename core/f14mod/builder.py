@@ -179,8 +179,9 @@ class PatchBuilder:
 
 
 NAME_STRINGS = {'team': fifa14.TEAM_NAME_STRINGS, 'league': fifa14.LEAGUE_NAME_STRINGS,
-                'country': fifa14.COUNTRY_NAME_STRINGS}
-ID_COLUMNS = {'player': ('players', 'playerid'), 'team': ('teams', 'teamid'), 'league': ('leagues', 'leagueid')}
+                'country': fifa14.COUNTRY_NAME_STRINGS, 'stadium': fifa14.STADIUM_NAME_STRINGS}
+ID_COLUMNS = {'player': ('players', 'playerid'), 'team': ('teams', 'teamid'), 'league': ('leagues', 'leagueid'),
+              'stadium': ('stadiums', 'stadiumid')}
 MAX_NAME_ID = (1 << 15) - 1  # playernames.nameid has 15 bits
 
 
@@ -219,7 +220,7 @@ def with_derived_names(kind: str, names: dict) -> dict:
 FILL_ONLY = '*fill'  # key of language_edits: "every language" values that only fill the texts the game lacks
 # names edited in a grid where the game's text of each language is a value of its own (the "All" row of an original
 # country or league only fills the languages without a text; a created one has none, so it goes everywhere)
-FILL_ONLY_KINDS = ('country', 'league')
+FILL_ONLY_KINDS = ('country', 'league', 'stadium')
 
 
 def language_edits(project: Project) -> dict[str, dict[str, str]]:
@@ -618,6 +619,28 @@ def add_created_teams(db: Database, project: Project) -> int:
     return len(created)
 
 
+def write_team_stadiums(db: Database, project: Project) -> int:
+    """The stadium of each team the user moved (teamstadiumlinks: one row per team); a team without a row gets one."""
+    chosen = project.all_team_stadiums()
+    links = _table(db, 'teamstadiumlinks')
+    if not chosen or links is None or not links.records:
+        return 0
+    stadiums, teams = db.table('stadiums'), db.table('teams')
+    stadium_ids = {stadiums.get(r, 'stadiumid') for r in stadiums.records}
+    team_ids = {teams.get(r, 'teamid') for r in teams.records}
+    written = 0
+    for tid, sid in sorted(chosen.items()):
+        if tid not in team_ids or sid not in stadium_ids:
+            continue  # a team left out of the patch, or a stadium the game no longer has
+        rows = links.find(teamid=tid)
+        for row in rows:
+            links.set(row, 'stadiumid', sid)
+        if not rows:
+            _clone(links, links.records[0], teamid=tid, stadiumid=sid)
+        written += 1
+    return written
+
+
 def write_formations(db: Database, project: Project) -> int:
     """The formation each team got (field `formation` = one of the game's 33): its own row takes the positions."""
     formations, teams = db.table('formations'), db.table('teams')
@@ -926,7 +949,7 @@ def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') 
                        or project.created('player'))
     hiding = any(project.hidden_in_game(kind) for kind in ('country', 'league', 'team'))
     team_work = project.all_rosters() or project.all_kits() or project.with_picture('team', 'crest') \
-        or project.with_picture('player', 'photo')
+        or project.with_picture('player', 'photo') or project.all_team_stadiums()
     if not any(project.all_fields(kind) for kind in ID_COLUMNS) and not has_created and not project.all_members() \
             and not hiding and not team_work:
         return None
@@ -942,6 +965,7 @@ def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') 
     result = apply_database(db, project)
     result['created'] = created
     for key, value in (('formations', write_formations(db, project)), ('rosters', write_rosters(db, project)),
+                       ('team_stadiums', write_team_stadiums(db, project)),
                        ('team_files', team_files(files, db, project, builder)),
                        ('player_files', write_player_files(files, db, project, builder))):
         if value:

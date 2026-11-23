@@ -18,6 +18,7 @@ import { EntityIssues } from '@/components/common/form'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api } from '@/api/client'
+import { EntryDates } from '@/components/common/dates'
 import { Facts, FillScroll, OriginalBadge, RawTable, Section } from '@/components/common/detail'
 import { ALL, EditActions, FieldsEditor, NamesGrid, useEntityForm } from '@/components/common/edit'
 import { GameHiddenBadge, HiddenByProjectBadge, HideButton, OutOfPatchBadge, usePendingHide } from '@/components/common/HideButton'
@@ -185,12 +186,18 @@ export function CountryPage() {
       <div className="flex flex-wrap justify-between gap-x-4 gap-y-3">
         <div className="flex min-w-0 items-center gap-3">
           {flag(256, 'h-16 w-24 shrink-0')}
-          <h1 className="min-w-0 text-2xl font-semibold break-words">{data.name}</h1>
-          <span className="shrink-0 text-sm text-muted-foreground tabular-nums">ID {data.id}</span>
-          <span className="shrink-0 text-sm text-muted-foreground">{confederation(data.confederation)}</span>
-          {!data.is_new && <OriginalBadge edited={data.edited} />}
-          {data.game_hidden && <GameHiddenBadge country />}
-          {hide.hidden && <OutOfPatchBadge alert label={data.is_new ? undefined : t('countries.hiddenByProject')} />}
+          {/* the name with its details and badges on one line, the dates under it */}
+          <div className="min-w-0">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+              <h1 className="min-w-0 text-2xl font-semibold break-words">{data.name}</h1>
+              <span className="shrink-0 text-sm text-muted-foreground tabular-nums">ID {data.id}</span>
+              <span className="shrink-0 text-sm text-muted-foreground">{confederation(data.confederation)}</span>
+              {!data.is_new && <OriginalBadge edited={data.edited} />}
+              {data.game_hidden && <GameHiddenBadge country />}
+              {hide.hidden && <OutOfPatchBadge alert label={data.is_new ? undefined : t('countries.hiddenByProject')} />}
+            </div>
+            <EntryDates entry={data} />
+          </div>
         </div>
         <div className="flex flex-wrap items-start gap-2">
           <EditActions edited={data.edited && !data.is_new} entity={entity} />

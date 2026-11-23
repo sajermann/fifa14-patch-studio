@@ -5,6 +5,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
+import { DateCells, DateHeads } from '@/components/common/dates'
 import { CreateDialog } from '@/components/common/create'
 import { OriginalBadge } from '@/components/common/detail'
 import { GameHiddenBadge, HiddenByProjectBadge, HideButton, OutOfPatchBadge, useHide } from '@/components/common/HideButton'
@@ -105,6 +106,7 @@ export function CountriesPage() {
             <SortHead field="league_count" label={t('col.leagues')} state={sortState} className="text-center" />
             <SortHead field="player_count" label={t('col.players')} state={sortState} className="text-center" />
             <SortHead field="id" label={t('col.id')} state={sortState} className="text-center" />
+            <DateHeads />
             <TableHead className="w-28" />
             <TableHead className="w-16" />
           </TableRow>
@@ -125,6 +127,7 @@ export function CountriesPage() {
               <TableCell className="text-center tabular-nums">{c.league_count}</TableCell>
               <TableCell className="text-center tabular-nums">{c.player_count}</TableCell>
               <TableCell className="text-center text-muted-foreground tabular-nums">{c.id}</TableCell>
+              <DateCells entry={c} />
               <TableCell>
                 {!c.game_hidden && (
                   <HideButton
@@ -141,7 +144,7 @@ export function CountriesPage() {
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={11} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>

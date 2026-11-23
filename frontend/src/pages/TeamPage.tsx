@@ -1,3 +1,4 @@
+import { cn } from '@/lib/utils'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -16,6 +17,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api } from '@/api/client'
+import { EntryDates } from '@/components/common/dates'
 import type { KitPart, SquadRow, TeamDetail } from '@/api/types'
 import { Facts, OriginalBadge, OverallBadge, RawTable, Section } from '@/components/common/detail'
 import { EditActions, FieldsEditor, NamesGrid, useEntityForm } from '@/components/common/edit'
@@ -25,7 +27,7 @@ import { TeamCrest } from '@/components/team/TeamCrest'
 import { TeamKits } from '@/components/team/TeamKits'
 import { TeamLeagues } from '@/components/team/TeamLeagues'
 import { TeamSquad } from '@/components/team/TeamSquad'
-import { TeamStadiums } from '@/components/team/TeamStadiums'
+import { TeamStadiums, type PendingStadium } from '@/components/team/TeamStadiums'
 import { RESERVE, type PendingKit, type PendingPicture } from '@/components/team/pending'
 import { LoadingBlock } from '@/components/layout/LoadingBlock'
 import { useI18n } from '@/i18n'
@@ -64,6 +66,7 @@ export function TeamPage() {
   const [pendingSquad, setPendingSquad] = useState<SquadRow[] | null>(null)
   // the leagues the team plays in, being edited (null = the saved ones); Save sends them with the rest
   const [pendingLeagues, setPendingLeagues] = useState<PendingLeagues>(null)
+  const [pendingStadium, setPendingStadium] = useState<PendingStadium>(null)
   const crestUrl = pendingCrest && pendingCrest !== 'remove' ? pendingCrest.url : null
   useEffect(() => () => void (crestUrl && URL.revokeObjectURL(crestUrl)), [crestUrl])
   const clearPending = () => {
@@ -71,12 +74,13 @@ export function TeamPage() {
     setPendingKits({})
     setPendingSquad(null)
     setPendingLeagues(null)
+    setPendingStadium(null)
     hide.clear()
   }
   const entity = useEntityForm({
     data: team,
     queryKey,
-    invalidate: ['teams', 'league', 'leagues', 'options'],
+    invalidate: ['teams', 'league', 'leagues', 'options', 'stadiums', 'stadium'],
     save: async (f) => {
       let saved = await api.saveTeam(id, f.names, f.fields)
       if (pendingCrest === 'remove') saved = await api.removeTeamCrest(id)
@@ -88,6 +92,7 @@ export function TeamPage() {
       }
       if (pendingSquad) saved = await api.saveTeamRoster(id, pendingSquad)
       if (pendingLeagues) saved = await api.saveTeamLeagues(id, pendingLeagues.ids, pendingLeagues.hidden)
+      if (pendingStadium !== null) saved = await api.setTeamStadium(id, pendingStadium === 'game' ? null : pendingStadium)
       if (hide.pending !== null) saved = await api.setTeamHidden(id, hide.pending)
       clearPending()
       return saved
@@ -96,7 +101,7 @@ export function TeamPage() {
       clearPending()
       return api.resetTeam(id)
     },
-    extraDirty: pendingCrest !== null || Object.keys(pendingKits).length > 0 || pendingSquad !== null || pendingLeagues !== null || hide.pending !== null,
+    extraDirty: pendingCrest !== null || Object.keys(pendingKits).length > 0 || pendingSquad !== null || pendingLeagues !== null || pendingStadium !== null || hide.pending !== null,
     onDiscard: clearPending,
     // a created team has no name of the game: its "All" name is required
     invalid: (f) => !!team?.is_new && !f.names.full?.['*']?.trim(),
@@ -130,24 +135,37 @@ export function TeamPage() {
         {/* one line like the league and country headers: crest, name, leagues · ID, badges */}
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           {crestUrl ? (
-            <img src={crestUrl} alt="" className="size-24 shrink-0 object-contain" />
+            <img src={crestUrl} alt="" className="size-24 shrink-0 rounded-lg bg-muted/40 object-contain" />
           ) : (
-            <Crest id={team.id} size={256} available={team.has_crest || team.is_new} version={team.own_crest} className="size-24 shrink-0" />
+            // the same rounded square as the player's photo: the user's own picture gets the box the game's crests have
+            <Crest
+              id={team.id}
+              size={256}
+              available={team.has_crest || team.is_new}
+              version={team.own_crest}
+              className={cn('size-24 shrink-0 rounded-lg', team.own_crest && 'bg-muted/40')}
+            />
           )}
-          <h1 className="min-w-0 text-2xl font-semibold break-words">{team.name}</h1>
-          <span className="shrink-0 text-sm text-muted-foreground tabular-nums">
-            {team.leagues.map((l, i) => (
-              <span key={l.id}>
-                {i > 0 && ' · '}
-                <Link to={`/leagues/${l.id}`} state={from.state} className="hover:underline">
-                  {l.name}
-                </Link>
+          {/* the name with its details and badges on one line, the dates under it */}
+          <div className="min-w-0">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+              <h1 className="min-w-0 text-2xl font-semibold break-words">{team.name}</h1>
+              <span className="shrink-0 text-sm text-muted-foreground tabular-nums">
+                {team.leagues.map((l, i) => (
+                  <span key={l.id}>
+                    {i > 0 && ' · '}
+                    <Link to={`/leagues/${l.id}`} state={from.state} className="hover:underline">
+                      {l.name}
+                    </Link>
+                  </span>
+                ))}
+                {team.leagues.length > 0 && ' · '}ID {team.id}
               </span>
-            ))}
-            {team.leagues.length > 0 && ' · '}ID {team.id}
-          </span>
-          {!team.is_new && <OriginalBadge edited={team.edited} />}
-          {hide.hidden && <OutOfPatchBadge alert label={team.is_new ? undefined : t('teams.hiddenByProject')} />}
+              {!team.is_new && <OriginalBadge edited={team.edited} />}
+              {hide.hidden && <OutOfPatchBadge alert label={team.is_new ? undefined : t('teams.hiddenByProject')} />}
+            </div>
+            <EntryDates entry={team} />
+          </div>
         </div>
         <div className="flex flex-wrap items-start gap-2">
           <EditActions edited={team.edited && !team.is_new} entity={entity} />
@@ -248,7 +266,14 @@ export function TeamPage() {
           />
         </TabsContent>
         <TabsContent value="stadium">
-          <TeamStadiums stadiums={team.stadiums} customName={team.stadium_custom_name} />
+          <TeamStadiums
+            stadiums={team.stadiums}
+            customName={team.stadium_custom_name}
+            changed={team.stadium_changed}
+            gameStadium={team.game_stadium_id}
+            pending={pendingStadium}
+            onPending={setPendingStadium}
+          />
         </TabsContent>
         <TabsContent value="raw">
           <Section title={t('tab.raw')}>

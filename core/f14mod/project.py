@@ -31,16 +31,28 @@ only, kept in its squad on the screen: same rule as the Street Studio). A player
 Older files open as they are (the new column is added).
 Schema 7 (19/11/2026) adds `league_members.hidden` (a team left out of the patch in that league only, kept in its list
 on the screen). Older files open as they are (the new column is added).
+Schema 8 (23/11/2026) adds `dates`: when each entity of the project was created and last changed (Unix time, UTC;
+same rule as the Street Studio). A created entity is created when the user creates it; a game entity when it is first
+changed. `updated_at` only moves when something of the entity really changed (saving the same form again keeps it);
+an original whose changes are all undone leaves the project, and its dates with it. Older files get their dates from
+what they had: a created entity's `created.created_at`, and the last save of `edited` (an original edited before
+schema 8 has no creation date, as in the Street Studio).
+Schema 9 (23/11/2026) adds the stadiums: `stadium` is a kind of entity (its names in `stadium_names`, its fields in
+`fields`; only the game's stadiums, none created yet) and `team_stadiums` holds the stadium a team plays in when the
+user changed it (one per team, as in the game's teamstadiumlinks). Older files open as they are (the new tables start
+empty).
+Schema 10 (23/11/2026): a game entity changed by the project only has `updated_at` (the project never created it, same
+rule as the Street Studio); files of schemas 8 and 9 lose the creation date they gave the game's entities.
 """
 import json
 import sqlite3
 import time
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 10
 DEFAULT_LANG = '*'
-KINDS = ('team', 'league', 'player', 'country')
+KINDS = ('team', 'league', 'player', 'country', 'stadium')
 NAME_TABLES = {'team': ('team_names', 'team_id'), 'league': ('league_names', 'league_id'),
-               'country': ('country_names', 'country_id')}
+               'country': ('country_names', 'country_id'), 'stadium': ('stadium_names', 'stadium_id')}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -66,6 +78,11 @@ CREATE TABLE IF NOT EXISTS team_rosters (team_id INTEGER, player_id INTEGER, ord
 CREATE TABLE IF NOT EXISTS team_kits (team_id INTEGER, kind INTEGER, config TEXT, PRIMARY KEY (team_id, kind));
 CREATE TABLE IF NOT EXISTS player_sources (player_id INTEGER PRIMARY KEY, template INTEGER);
 CREATE TABLE IF NOT EXISTS player_files (player_id INTEGER, name TEXT, data BLOB, PRIMARY KEY (player_id, name));
+CREATE TABLE IF NOT EXISTS dates (kind TEXT, id INTEGER, created_at INTEGER, updated_at INTEGER,
+                                  PRIMARY KEY (kind, id));
+CREATE TABLE IF NOT EXISTS stadium_names (stadium_id INTEGER, key TEXT, lang TEXT, text TEXT,
+                                          PRIMARY KEY (stadium_id, key, lang));
+CREATE TABLE IF NOT EXISTS team_stadiums (team_id INTEGER PRIMARY KEY, stadium_id INTEGER);
 """
 BENCH, RESERVE = 28, 29  # team_rosters.slot of a substitute and of a player out of the squad
 
@@ -74,6 +91,60 @@ Names = dict[str, dict[str, str]]  # {name key: {language or '*': text}}
 
 class ProjectError(ValueError):
     pass
+
+
+# what the project keeps of each kind of entity besides its names, fields, pictures and hidden flag:
+# (table, id column); a change in any of these rows changes the entity's `updated_at`
+OWN_TABLES = {
+    'league': (('league_members_set', 'league_id'), ('league_members', 'league_id')),
+    'team': (('team_sources', 'team_id'), ('team_rosters_set', 'team_id'), ('team_rosters', 'team_id'),
+             ('team_kits', 'team_id'), ('team_stadiums', 'team_id')),
+    'player': (('player_sources', 'player_id'), ('player_files', 'player_id')),
+    'country': (),
+    'stadium': (),
+}
+
+
+def _snapshot(con: sqlite3.Connection, kind: str, oid: int) -> list:
+    """Everything the project keeps of one entity, to tell whether a change really changed it."""
+    out = []
+    tables = [(NAME_TABLES[kind][0], NAME_TABLES[kind][1], '')] if kind in NAME_TABLES else []
+    tables += [('fields', 'id', ' AND kind = :kind'), ('pictures', 'id', ' AND kind = :kind'),
+               ('hidden', 'id', ' AND kind = :kind')]
+    tables += [(table, column, '') for table, column in OWN_TABLES.get(kind, ())]
+    for table, column, extra in tables:
+        skip = {'updated_at'} if table == 'pictures' else set()  # the picture's own save time is not its content
+        rows = con.execute(f'SELECT * FROM {table} WHERE {column} = :id{extra}', {'id': oid, 'kind': kind}).fetchall()
+        out.append((table, sorted(tuple(v for k, v in zip(r.keys(), r) if k not in skip) for r in rows)))
+    return out
+
+
+def _dated(method):
+    """Keeps the entity's dates (table `dates`) after a change made by `method(self, kind?, id, ...)`: every real change
+    updates it now (a created entity got its creation date from create(); a game entity never has one); an original
+    left with nothing of the project loses its dates (it is the game's again)."""
+    import functools
+    import inspect
+    params = list(inspect.signature(method).parameters)
+    fixed = {'set_members': 'league', 'set_team_source': 'team', 'set_roster': 'team', 'set_kit': 'team',
+             'set_team_stadium': 'team', 'set_player_source': 'player',
+             'set_player_files': 'player'}.get(method.__name__)
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        bound = dict(zip(params[1:], args), **kwargs)
+        kind = fixed or bound['kind']
+        oid = bound[params[1]] if fixed else bound['oid']
+        con = self.connect()
+        try:
+            before = _snapshot(con, kind, oid) if kind in KINDS else None
+        finally:
+            con.close()
+        result = method(self, *args, **kwargs)
+        if before is not None:
+            self._stamp(kind, oid, before)
+        return result
+    return wrapper
 
 
 class Project:
@@ -88,7 +159,18 @@ class Project:
                 row = con.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
                 if row and int(row[0]) > SCHEMA_VERSION:
                     raise ProjectError('project made by a newer version of the app')
+            had_dates = found and con.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'dates'").fetchone()
             con.executescript(SCHEMA)
+            if found and row and int(row[0]) < 10:  # a game entity was never created by the project
+                con.execute('UPDATE dates SET created_at = NULL WHERE NOT EXISTS (SELECT 1 FROM created c '
+                            'WHERE c.kind = dates.kind AND c.id = dates.id)')
+            if found and not had_dates:  # schema 7 and older: the dates they had
+                con.execute('INSERT OR IGNORE INTO dates SELECT kind, id, created_at, created_at FROM created')
+                con.execute('INSERT OR IGNORE INTO dates SELECT kind, id, NULL, updated_at FROM edited')
+                con.execute('UPDATE dates SET updated_at = (SELECT MAX(dates.updated_at, e.updated_at) FROM edited e '
+                            'WHERE e.kind = dates.kind AND e.id = dates.id) WHERE EXISTS (SELECT 1 FROM edited e '
+                            'WHERE e.kind = dates.kind AND e.id = dates.id)')
             if 'hidden' not in {r[1] for r in con.execute('PRAGMA table_info(team_rosters)')}:  # schema 5 and older
                 con.execute('ALTER TABLE team_rosters ADD COLUMN hidden INTEGER DEFAULT 0')
             if 'hidden' not in {r[1] for r in con.execute('PRAGMA table_info(league_members)')}:  # schema 6 and older
@@ -128,6 +210,7 @@ class Project:
         finally:
             con.close()
 
+    @_dated
     def save(self, kind: str, oid: int, names: Names | None = None, fields: dict | None = None) -> None:
         """Replaces everything saved for the entity; empty texts are dropped (= original)."""
         if kind not in KINDS:
@@ -148,7 +231,8 @@ class Project:
             con.executemany('INSERT INTO fields VALUES (?,?,?,?)', field_rows)
             own = kind == 'team' and con.execute(  # a team's squad, kits or pictures keep it edited
                 'SELECT 1 FROM team_rosters_set WHERE team_id = ? UNION SELECT 1 FROM team_kits WHERE team_id = ? '
-                "UNION SELECT 1 FROM pictures WHERE kind = 'team' AND id = ?", (oid, oid, oid)).fetchone()
+                "UNION SELECT 1 FROM pictures WHERE kind = 'team' AND id = ? "
+                'UNION SELECT 1 FROM team_stadiums WHERE team_id = ?', (oid, oid, oid, oid)).fetchone()
             own = own or kind == 'player' and con.execute(  # a player's photo or face files too
                 "SELECT 1 FROM pictures WHERE kind = 'player' AND id = ? UNION "
                 'SELECT 1 FROM player_files WHERE player_id = ?', (oid, oid)).fetchone()
@@ -160,12 +244,13 @@ class Project:
         finally:
             con.close()
 
+    @_dated
     def reset(self, kind: str, oid: int) -> None:
         con = self.connect()
         try:
             con.execute('DELETE FROM pictures WHERE kind = ? AND id = ?', (kind, oid))
             if kind == 'team':
-                for table in ('team_rosters', 'team_rosters_set', 'team_kits'):
+                for table in ('team_rosters', 'team_rosters_set', 'team_kits', 'team_stadiums'):
                     con.execute(f'DELETE FROM {table} WHERE team_id = ?', (oid,))
             if kind == 'player':
                 con.execute('DELETE FROM player_files WHERE player_id = ?', (oid,))
@@ -176,6 +261,7 @@ class Project:
 
     # ---- pictures -------------------------------------------------------------------------------------------
 
+    @_dated
     def set_picture(self, kind: str, oid: int, slot: str, data: bytes | None) -> None:
         """Keeps (or, with None, removes) a picture of the entity; a picture marks the entity as edited."""
         con = self.connect()
@@ -247,6 +333,38 @@ class Project:
         finally:
             con.close()
 
+    # ---- dates ----------------------------------------------------------------------------------------------------
+
+    def now(self) -> int:
+        return int(time.time())
+
+    def _stamp(self, kind: str, oid: int, before: list) -> None:
+        con = self.connect()
+        try:
+            after = _snapshot(con, kind, oid)
+            created = con.execute('SELECT 1 FROM created WHERE kind = ? AND id = ?', (kind, oid)).fetchone()
+            if not created and not any(rows for _, rows in after):
+                con.execute('DELETE FROM dates WHERE kind = ? AND id = ?', (kind, oid))
+            elif after != before:
+                now = self.now()
+                # only an entity the user created has a creation date (create() sets it); an entity that already has
+                # dates keeps its creation date, even none (edited before schema 8)
+                con.execute('INSERT INTO dates VALUES (?, ?, ?, ?) ON CONFLICT (kind, id) DO UPDATE SET '
+                            'updated_at = excluded.updated_at', (kind, oid, now if created else None, now))
+            con.commit()
+        finally:
+            con.close()
+
+    def dates(self, kind: str, oid: int) -> tuple[int | None, int | None]:
+        """(created at, updated at) of the entity, Unix time; (None, None) for a game entity the project does not
+        change."""
+        con = self.connect()
+        try:
+            r = con.execute('SELECT created_at, updated_at FROM dates WHERE kind = ? AND id = ?', (kind, oid)).fetchone()
+            return (r[0], r[1]) if r else (None, None)
+        finally:
+            con.close()
+
     # ---- created entities -------------------------------------------------------------------------------------
 
     def create(self, kind: str, oid: int, names: Names | None = None, fields: dict | None = None) -> None:
@@ -254,7 +372,9 @@ class Project:
             raise ProjectError(f'unknown kind {kind}')
         con = self.connect()
         try:
-            con.execute('INSERT INTO created VALUES (?, ?, ?)', (kind, oid, int(time.time())))
+            now = self.now()
+            con.execute('INSERT INTO created VALUES (?, ?, ?)', (kind, oid, now))
+            con.execute('INSERT OR REPLACE INTO dates VALUES (?, ?, ?, ?)', (kind, oid, now, now))
             con.commit()
         except sqlite3.IntegrityError:
             raise ProjectError(f'{kind} {oid} exists') from None
@@ -283,12 +403,13 @@ class Project:
         try:
             con.execute('DELETE FROM created WHERE kind = ? AND id = ?', (kind, oid))
             con.execute('DELETE FROM hidden WHERE kind = ? AND id = ?', (kind, oid))
+            con.execute('DELETE FROM dates WHERE kind = ? AND id = ?', (kind, oid))
             if kind == 'league':
                 con.execute('DELETE FROM league_members WHERE league_id = ?', (oid,))
                 con.execute('DELETE FROM league_members_set WHERE league_id = ?', (oid,))
             if kind == 'team':
                 con.execute('DELETE FROM league_members WHERE team_id = ?', (oid,))
-                for table in ('team_sources', 'team_rosters', 'team_rosters_set', 'team_kits'):
+                for table in ('team_sources', 'team_rosters', 'team_rosters_set', 'team_kits', 'team_stadiums'):
                     con.execute(f'DELETE FROM {table} WHERE team_id = ?', (oid,))
             if kind == 'player':  # out of every squad the user set too
                 con.execute('DELETE FROM player_sources WHERE player_id = ?', (oid,))
@@ -299,6 +420,7 @@ class Project:
 
     # ---- left out of the patch ---------------------------------------------------------------------------------
 
+    @_dated
     def set_hidden(self, kind: str, oid: int, hidden: bool) -> None:
         con = self.connect()
         try:
@@ -328,6 +450,7 @@ class Project:
 
     # ---- teams of a league ------------------------------------------------------------------------------------
 
+    @_dated
     def set_members(self, league_id: int, team_ids: list[int] | None, hidden=None) -> None:
         """The whole team list of a league, in order; None = the game's teams again. `hidden`: the teams left out of
         the patch in this league only (None = the ones that were hidden stay hidden)."""
@@ -379,6 +502,7 @@ class Project:
 
     # ---- teams: source, squad, kits ---------------------------------------------------------------------------
 
+    @_dated
     def set_team_source(self, team_id: int, template: int, copy: bool) -> None:
         con = self.connect()
         try:
@@ -396,6 +520,7 @@ class Project:
         finally:
             con.close()
 
+    @_dated
     def set_roster(self, team_id: int, rows: list[dict] | None) -> None:
         """The whole squad of a team, in order: [{'player', 'jersey', 'slot', 'hidden'}]; None = the game's squad
         again. `hidden` = out of the patch in this team only."""
@@ -435,6 +560,7 @@ class Project:
         finally:
             con.close()
 
+    @_dated
     def set_kit(self, team_id: int, kind: int, config: dict | None) -> None:
         """Where one kit of the team comes from (see f14mod.teamkits); None = the game's (or the template's)."""
         con = self.connect()
@@ -467,8 +593,44 @@ class Project:
         finally:
             con.close()
 
+    @_dated
+    def set_team_stadium(self, team_id: int, stadium_id: int | None) -> None:
+        """The stadium the team plays in; None = the game's (or, for a created team, the one of the team it copies)."""
+        con = self.connect()
+        try:
+            if stadium_id is None:
+                con.execute('DELETE FROM team_stadiums WHERE team_id = ?', (team_id,))
+            else:
+                con.execute('INSERT OR REPLACE INTO team_stadiums VALUES (?, ?)', (team_id, stadium_id))
+                con.execute('INSERT OR REPLACE INTO edited VALUES (?, ?, ?)', ('team', team_id, int(time.time())))
+            if stadium_id is None and not con.execute(  # nothing else of the team left: it is the game's again
+                    "SELECT 1 FROM fields WHERE kind = 'team' AND id = ? UNION SELECT 1 FROM team_names WHERE team_id = ? "
+                    "UNION SELECT 1 FROM pictures WHERE kind = 'team' AND id = ? UNION SELECT 1 FROM team_kits "
+                    'WHERE team_id = ? UNION SELECT 1 FROM team_rosters_set WHERE team_id = ?',
+                    (team_id,) * 5).fetchone():
+                con.execute("DELETE FROM edited WHERE kind = 'team' AND id = ?", (team_id,))
+            con.commit()
+        finally:
+            con.close()
+
+    def team_stadium(self, team_id: int) -> int | None:
+        con = self.connect()
+        try:
+            r = con.execute('SELECT stadium_id FROM team_stadiums WHERE team_id = ?', (team_id,)).fetchone()
+            return r[0] if r else None
+        finally:
+            con.close()
+
+    def all_team_stadiums(self) -> dict[int, int]:
+        con = self.connect()
+        try:
+            return {r[0]: r[1] for r in con.execute('SELECT team_id, stadium_id FROM team_stadiums')}
+        finally:
+            con.close()
+
     # ---- players: source and face files ------------------------------------------------------------------------
 
+    @_dated
     def set_player_source(self, player_id: int, template: int) -> None:
         con = self.connect()
         try:
@@ -486,6 +648,7 @@ class Project:
         finally:
             con.close()
 
+    @_dated
     def set_player_files(self, player_id: int, files: dict[str, bytes] | None) -> None:
         """The face files of a player (kind -> bytes, see fifa14.PLAYER_FACE_FILES); None or {} = none."""
         con = self.connect()

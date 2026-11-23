@@ -94,6 +94,17 @@ VIEWS = [
                EXISTS (SELECT 1 FROM p.pictures WHERE kind = 'player' AND id = c.id AND slot = 'photo'), '', t.raw, 1
         FROM p.created c LEFT JOIN p.player_sources s ON s.player_id = c.id LEFT JOIN players t ON t.id = s.template
         WHERE c.kind = 'player'""",
+    # the stadium each team plays in: the one the user chose, else the game's (a created team: the team it copies)
+    f"""CREATE TEMP VIEW v_team_stadiums AS
+        SELECT team_id, stadium_id, custom_name FROM team_stadiums
+        WHERE team_id NOT IN (SELECT team_id FROM p.team_stadiums)
+        UNION ALL
+        SELECT c.id, g.stadium_id, NULL FROM p.created c LEFT JOIN p.team_sources s ON s.team_id = c.id
+            JOIN team_stadiums g ON g.team_id = COALESCE(s.template, {MODEL_TEAM})
+        WHERE c.kind = 'team' AND c.id NOT IN (SELECT team_id FROM p.team_stadiums)
+        UNION ALL
+        SELECT t.team_id, t.stadium_id, g.custom_name FROM p.team_stadiums t
+            LEFT JOIN team_stadiums g ON g.team_id = t.team_id AND g.stadium_id = t.stadium_id""",
     """CREATE TEMP VIEW v_league_teams AS
         SELECT league_id, team_id, 0 AS ord, 0 AS hidden FROM league_teams
         WHERE league_id NOT IN (SELECT league_id FROM p.league_members_set)
@@ -162,6 +173,14 @@ def _real_face(alias: str) -> str:
 
 def _edited(kind: str, alias: str) -> str:
     return f"EXISTS (SELECT 1 FROM p.edited WHERE kind = '{kind}' AND id = {alias}.id)"
+
+
+def _dates(kind: str, alias: str) -> str:
+    """The `created_at` and `updated_at` columns of an entity (ISO 8601, UTC, as the Street Studio sends them; NULL for
+    a game entity the project does not change)."""
+    return ', '.join(
+        f"(SELECT strftime('%Y-%m-%dT%H:%M:%SZ', {col}, 'unixepoch') FROM p.dates WHERE kind = '{kind}' "
+        f"AND id = {alias}.id) AS {col}" for col in ('created_at', 'updated_at'))
 
 
 def _flag(table: str, kind: str, alias: str) -> str:
@@ -236,7 +255,7 @@ def leagues(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAUL
     select = f"""SELECT l.id, {_league_name()} AS name, l.db_name, l.level, l.country_id,
                  (SELECT {_country_name()} FROM v_nations n WHERE n.id = l.country_id) AS country, l.has_logo, l.is_new,
                  (SELECT COUNT(*) FROM v_league_teams WHERE league_id = l.id) AS team_count,
-                 {_edited('league', 'l')} AS edited, l.search AS search,
+                 {_edited('league', 'l')} AS edited, {_dates('league', 'l')}, l.search AS search,
                  {_flag('hidden', 'league', 'l')} AS hidden,
                  COALESCE((SELECT g.country_id FROM leagues g WHERE g.id = l.id) IN (0, {', '.join(map(str, fifa14.UNLISTED_NATIONS))}), 0) AS game_hidden,
                  (SELECT value FROM p.fields WHERE kind = 'league' AND id = l.id AND field = 'extra_countries')
@@ -307,7 +326,7 @@ def teams(con, lang: str, q='', league: int | None = None, edited: bool | None =
                  (SELECT {_league_name('l')} FROM v_leagues l WHERE l.id = {_first_league()}) AS league,
                  (SELECT COUNT(*) FROM v_team_players WHERE team_id = t.id) AS player_count,
                  {_kit_count_sql()} AS kit_count,
-                 {_edited('team', 't')} AS edited,
+                 {_edited('team', 't')} AS edited, {_dates('team', 't')},
                  {_flag('hidden', 'team', 't')} AS hidden, t.is_new,
                  (SELECT updated_at FROM p.pictures WHERE kind = 'team' AND id = t.id AND slot = 'crest') AS own_crest,
                  t.search AS search
@@ -351,7 +370,7 @@ def players(con, lang: str, q='', team: int | None = None, position: int | None 
                  pl.nationality, (SELECT {_country_name()} FROM v_nations n WHERE n.id = pl.nationality) AS nationality_name,
                  pl.has_photo, {_real_face('pl')} AS has_face, {club} AS team_id,
                  (SELECT {_team_name('abbr15')} FROM v_teams t WHERE t.id = {club}) AS team,
-                 {_edited('player', 'pl')} AS edited, pl.is_new, {_flag('hidden', 'player', 'pl')} AS hidden,
+                 {_edited('player', 'pl')} AS edited, {_dates('player', 'pl')}, pl.is_new, {_flag('hidden', 'player', 'pl')} AS hidden,
                  pl.raw, pl.search || ' ' || fold({_player_name()}) AS search_all
                  FROM v_players pl"""
     where = []
@@ -404,7 +423,7 @@ def _project_fields(con, kind: str, oid: int) -> dict:
 
 def _project_names(con, kind: str, oid: int) -> dict[str, dict[str, str]]:
     table, column = {'team': ('team_names', 'team_id'), 'league': ('league_names', 'league_id'),
-                     'country': ('country_names', 'country_id')}[kind]
+                     'country': ('country_names', 'country_id'), 'stadium': ('stadium_names', 'stadium_id')}[kind]
     out: dict[str, dict[str, str]] = {}
     for r in con.execute(f'SELECT key, lang, text FROM p.{table} WHERE {column} = ?', (oid,)):
         out.setdefault(r['key'], {})[r['lang']] = r['text']
@@ -455,16 +474,17 @@ def team(con, lang: str, tid: int) -> dict | None:
     copied = bool(source['copy']) if source else not head['is_new']
     look_from = template if copied else None  # where the crest and kits come from when the user set none
     form = _form(con, 'team', tid, raw)
-    # the stadium: the game's links of the team (a created team gets the first one of the team it starts from)
-    stadium_of = tid if not head['is_new'] else template
+    # the stadium: the one the user chose, else the game's (a created team: the one of the team it starts from)
     stadium_links = [dict(r) for r in con.execute(
-        'SELECT stadium_id, custom_name FROM team_stadiums WHERE team_id = ? ORDER BY stadium_id', (stadium_of,))]
-    if head['is_new']:
-        stadium_links = stadium_links[:1]
+        'SELECT stadium_id, custom_name FROM v_team_stadiums WHERE team_id = ? ORDER BY stadium_id', (tid,))]
     own = con.execute('SELECT base FROM formations WHERE team_id = ? AND generic = 0', (template,)).fetchone()
     form['values']['formation'] = own['base'] if own else None
     return {**head, 'db_name': row['db_name'], 'name_keys': TEAM_NAME_KEYS, 'languages': languages(con),
             'stadium_ids': [r['stadium_id'] for r in stadium_links],
+            'stadium_changed': con.execute('SELECT 1 FROM p.team_stadiums WHERE team_id = ?', (tid,)).fetchone() is not None,
+            # the game's stadium of the team (a created team: the one of the team it starts from): "back to the game's"
+            'game_stadium_id': (con.execute('SELECT MIN(stadium_id) FROM team_stadiums WHERE team_id = ?',
+                                            (template if head['is_new'] else tid,)).fetchone() or [None])[0],
             'stadium_custom_name': next((r['custom_name'] for r in stadium_links if r['custom_name']), None),
             'original_names': {} if head['is_new'] else _names(con, 'team', tid), 'saved_names': saved,
             'roster': roster, 'roster_changed': con.execute(
@@ -561,7 +581,8 @@ def league(con, lang: str, lid: int) -> dict | None:
     if not row:
         return None
     head = con.execute(f"""SELECT l.id, {_league_name()} AS name, l.level, l.country_id,
-                           (SELECT {_country_name()} FROM v_nations n WHERE n.id = l.country_id) AS country, l.has_logo, l.is_new
+                           (SELECT {_country_name()} FROM v_nations n WHERE n.id = l.country_id) AS country, l.has_logo, l.is_new,
+                           {_dates('league', 'l')}
                            FROM v_leagues l WHERE l.id = :lid""", {'lang': lang, 'lid': lid}).fetchone()
     raw = json.loads(row['raw'])
     if head['is_new']:  # the row the patch writes: a copy of the model league's row with the new league's values
@@ -634,6 +655,7 @@ def player(con, lang: str, pid: int) -> dict | None:
                         (pid,)).fetchone()
     return {
         'id': pid, 'name': row['shown'], 'names': names, 'is_new': is_new,
+        **dict(con.execute(f"SELECT {_dates('player', 'x')} FROM (SELECT :pid AS id) x", {'pid': pid}).fetchone()),
         'template': source['template'] if source else None,
         'hidden': bool(con.execute("SELECT 1 FROM p.hidden WHERE kind = 'player' AND id = ?", (pid,)).fetchone()),
         'overall': row['overall'], 'potential': row['potential'], 'position': row['position'],
@@ -648,19 +670,93 @@ def player(con, lang: str, pid: int) -> dict | None:
     }
 
 
+STADIUM_NAME_KEYS = list(fifa14.STADIUM_NAME_STRINGS)
+
+
+def _stadium_language_name(alias: str = 's') -> str:
+    """A stadium's text in the names language (StadiumName_<id>): the project's (language, then "All"), then the
+    game's (language, then English)."""
+    return f"""COALESCE(
+        (SELECT text FROM p.stadium_names WHERE stadium_id = {alias}.id AND key = 'full' AND lang = :lang),
+        (SELECT text FROM p.stadium_names WHERE stadium_id = {alias}.id AND key = 'full' AND lang = '*'),
+        (SELECT text FROM names WHERE kind = 'stadium' AND id = {alias}.id AND key = 'full' AND lang = :lang),
+        (SELECT text FROM names WHERE kind = 'stadium' AND id = {alias}.id AND key = 'full' AND lang = '{FALLBACK_LANG}'))"""
+
+
+def _stadium_name(alias: str = 's') -> str:
+    """A stadium's shown name: the database name first (the saved one, then the game's), as the extractor: it is the
+    one the game shows (patches leave the StadiumName_ texts behind); then the language text."""
+    return f"COALESCE(NULLIF({_saved('stadium', alias, 'name')}, ''), NULLIF({alias}.name, ''), {_stadium_language_name(alias)}, '#' || {alias}.id)"
+
+
+def _stadium_value(alias: str, column: str) -> str:
+    """One column of a stadium: the project's value, else the game's."""
+    return f"COALESCE({_saved('stadium', alias, column)}, json_extract({alias}.raw, '$.{column}'))"
+
+
+def stadiums(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAULT_PAGE_SIZE,
+             country: int | None = None, home: bool | None = None, origin: str | None = None,
+             ids: list[int] | None = None) -> dict:
+    params: dict = {'lang': lang}
+    country_sql = _stadium_value('s', 'countrycode')
+    home_sql = _stadium_value('s', 'hometeamid')
+    select = f"""SELECT s.id, {_stadium_name()} AS name, {_stadium_language_name()} AS language_name,
+                 {country_sql} AS country_id,
+                 (SELECT {_country_name()} FROM v_nations n WHERE n.id = {country_sql}) AS country,
+                 {home_sql} AS home_team_id,
+                 (SELECT {_team_name('full')} FROM v_teams t WHERE t.id = {home_sql}) AS home_team,
+                 {_stadium_value('s', 'capacity')} AS capacity,
+                 (SELECT COUNT(*) FROM v_team_stadiums x WHERE x.stadium_id = s.id) AS team_count,
+                 (SELECT MIN(variant) FROM stadium_files f WHERE f.stadium_id = s.id AND f.kind IN ('large', 'small'))
+                     AS picture,
+                 EXISTS (SELECT 1 FROM stadium_files f WHERE f.stadium_id = s.id AND f.kind = 'scene') AS has_3d,
+                 {_edited('stadium', 's')} AS edited, 0 AS is_new, {_dates('stadium', 's')},
+                 fold(COALESCE(s.name, '')) AS search
+                 FROM stadiums s"""
+    where = []
+    if ids is not None:
+        where.append(f"id IN ({','.join(str(int(i)) for i in ids) or 'NULL'})")
+    if q.strip():
+        where.append(_search("fold(name) || ' ' || fold(COALESCE(language_name, '')) || ' ' || id", q, params))
+    if country is not None:
+        params['country'] = country
+        where.append('country_id = :country')
+    if home is not None:
+        where.append('home_team_id > 0' if home else 'COALESCE(home_team_id, 0) <= 0')
+    if origin == 'project':
+        where.append('edited')
+    elif origin == 'original':
+        where.append('NOT edited')
+    sorts = {'name': 'fold(name)', 'id': 'id', 'country': 'fold(country)', 'capacity': 'capacity',
+             'team_count': 'team_count'}
+    out = _page(con, select, where, params, sorts, sort, direction, ('name', 'asc'), page, size, new_first=True)
+    for r in out['items']:
+        r.pop('search', None)
+        r.pop('is_new', None)
+        r['edited'] = bool(r['edited'])
+        r['has_3d'] = bool(r['has_3d'])
+    return out
+
+
 def stadium(con, lang: str, sid: int, files) -> dict | None:
-    """One stadium of the game, read-only (the same data as the extractor's stadium screen): names, capacity, year,
-    country, home team, the times of day and weather it allows, its menu pictures and scene files (`files` = the game's
-    files, to say where each one is and which times of day the 3D preview can show)."""
+    """One stadium of the game with the project's changes over it: names, capacity, year, country, home team, the times
+    of day and weather it allows, its menu pictures and scene files (`files` = the game's files, to say where each one
+    is and which times of day the 3D preview can show), and the edit form (`values` = the game's)."""
     row = con.execute('SELECT id, name, raw FROM stadiums WHERE id = ?', (sid,)).fetchone()
     if row is None:
         return None
-    raw = json.loads(row['raw'] or '{}')
-    names = {'database': row['name'] or ''}
+    game_raw = json.loads(row['raw'] or '{}')
+    saved = _project_fields(con, 'stadium', sid)
+    raw = {**game_raw, **fields.to_columns('stadium', saved)}
+    shown = con.execute(f'SELECT {_stadium_name()} FROM stadiums s WHERE s.id = :id',
+                        {'lang': lang, 'id': sid}).fetchone()[0]
+    names = {'database': raw.get('name') or ''}
     full = con.execute("SELECT text FROM names WHERE kind = 'stadium' AND id = ? AND key = 'full' AND lang IN (?, ?) "
                        'ORDER BY lang = ? DESC LIMIT 1', (sid, lang, FALLBACK_LANG, lang)).fetchone()
-    if full:
-        names['full'] = full[0]
+    own = _project_names(con, 'stadium', sid).get('full') or {}
+    full_text = own.get(lang) or own.get('*') or (full[0] if full else None)
+    if full_text:
+        names['full'] = full_text
     names = {k: v for k, v in names.items() if v}
     country_id = raw.get('countrycode')
     country = con.execute(f'SELECT {_country_name()} FROM v_nations n WHERE n.id = :id',
@@ -675,22 +771,41 @@ def stadium(con, lang: str, sid: int, files) -> dict | None:
             scene.append(r['path'])
         else:
             pictures.setdefault(r['kind'], []).append(r['variant'])
+    dates = con.execute(f"SELECT {_dates('stadium', 'x')} FROM (SELECT :id AS id) x", {'id': sid}).fetchone()
     return {
         'id': sid,
-        'name': names.get('database') or names.get('full') or f'#{sid}',
+        'name': shown,
         'names': names,
         'capacity': raw.get('capacity'),
         'year_built': raw.get('yearbuilt'),
         'country_id': country_id,
         'country': country[0] if country else None,
         'home_team': dict(home) if home else None,
-        'team_count': con.execute('SELECT COUNT(*) FROM team_stadiums WHERE stadium_id = ?', (sid,)).fetchone()[0],
+        'team_count': con.execute('SELECT COUNT(*) FROM v_team_stadiums WHERE stadium_id = ?', (sid,)).fetchone()[0],
         'conditions': fifa14.stadium_conditions(raw),
         'pictures': sorted(pictures.get('large') or pictures.get('small') or []),
         'files': [{'path': p, 'where': files.where(p)} for p in scene],
         'times': stadium3d.available(files, sid),  # 3D preview: 1 = day, 3 = night
+        'is_new': False, **dict(dates),
+        'name_keys': STADIUM_NAME_KEYS, 'languages': languages(con),
+        'original_names': _names(con, 'stadium', sid), 'saved_names': _project_names(con, 'stadium', sid),
+        **_form(con, 'stadium', sid, game_raw),
         'raw': raw,
     }
+
+
+def stadium_teams(con, lang: str, sid: int) -> list[dict]:
+    """The teams that play in the stadium (the user's choices included), with the name each gives it."""
+    rows = [dict(r) for r in con.execute(
+        f"""SELECT t.id, {_team_name('full')} AS name, t.has_crest, t.is_new, x.custom_name AS stadium_custom_name,
+                   (SELECT {_league_name('l')} FROM v_leagues l WHERE l.id = {_first_league()}) AS league,
+                   {_edited('team', 't')} AS edited
+            FROM v_team_stadiums x JOIN v_teams t ON t.id = x.team_id WHERE x.stadium_id = :sid
+            ORDER BY fold(name)""", {'lang': lang, 'sid': sid})]
+    for r in rows:
+        for key in ('has_crest', 'is_new', 'edited'):
+            r[key] = bool(r[key])
+    return rows
 
 
 def stadium_picture_path(con, sid: int, variant: int) -> str | None:
@@ -739,7 +854,7 @@ def countries(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFA
                  COALESCE(pc.player_count, 0) AS player_count, n.confederation,
                  {_flag('hidden', 'country', 'n')} AS hidden,
                  n.id IN ({', '.join(map(str, fifa14.UNLISTED_NATIONS))}) AS game_hidden,
-                 {_edited('country', 'n')} AS edited, n.search AS search
+                 {_edited('country', 'n')} AS edited, {_dates('country', 'n')}, n.search AS search
                  FROM v_nations n
                  LEFT JOIN (SELECT nationality, COUNT(*) AS player_count FROM v_players GROUP BY nationality) pc
                      ON pc.nationality = n.id"""

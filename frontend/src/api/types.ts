@@ -138,7 +138,7 @@ export interface Page<T> {
 }
 
 /** what the lists' bulk delete takes */
-export type BulkKind = 'country' | 'league' | 'team' | 'player'
+export type BulkKind = 'country' | 'league' | 'team' | 'player' | 'stadium'
 
 export interface Ref {
   id: number
@@ -147,7 +147,14 @@ export interface Ref {
   is_new?: boolean
 }
 
-export interface LeagueRow {
+/** When an entity of the project was created and last changed (ISO 8601, UTC), set by the backend on save; a game
+ * entity the project does not change has none (and one edited before they existed has no creation date). */
+export interface Dated {
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface LeagueRow extends Dated {
   id: number
   name: string
   db_name: string | null
@@ -171,7 +178,7 @@ export interface LeagueRow {
   own_logo: number | null
 }
 
-export interface CountryRow {
+export interface CountryRow extends Dated {
   id: number
   name: string
   is_new: boolean
@@ -212,6 +219,46 @@ export interface StadiumInfo {
   raw: Raw
 }
 
+/** A row of the stadiums list (the project's changes over the game's values). */
+export interface StadiumRow extends Dated {
+  id: number
+  /** the database name (the one the game shows), else the language text */
+  name: string
+  /** the StadiumName_ text in the names language */
+  language_name: string | null
+  country_id: number | null
+  country: string | null
+  home_team_id: number | null
+  home_team: string | null
+  capacity: number | null
+  team_count: number
+  /** the first menu picture variant, null = none */
+  picture: number | null
+  has_3d: boolean
+  edited: boolean
+}
+
+/** A team that plays in the stadium (the user's choices included). */
+export interface StadiumTeam {
+  id: number
+  name: string
+  league: string | null
+  has_crest: boolean
+  is_new: boolean
+  edited: boolean
+  stadium_custom_name: string | null
+}
+
+/** The stadium screen: what the extractor shows, the edit form and the teams that play in it. */
+export interface StadiumDetail extends StadiumInfo, EditForm, Dated {
+  is_new: boolean
+  name_keys: string[]
+  languages: string[]
+  original_names: NameTable
+  saved_names: NameTable
+  teams: StadiumTeam[]
+}
+
 export interface CountryDetail extends CountryRow, EditForm {
   name_keys: string[]
   languages: string[]
@@ -234,7 +281,7 @@ export interface Limits {
   max_squad: number
 }
 
-export interface TeamRow {
+export interface TeamRow extends Dated {
   id: number
   name: string
   abbr15: string | null
@@ -263,7 +310,7 @@ export interface TeamRow {
   own_crest: number | null
 }
 
-export interface PlayerRow {
+export interface PlayerRow extends Dated {
   id: number
   name: string
   overall: number | null
@@ -422,8 +469,12 @@ export interface TeamKit {
 
 export interface TeamDetail extends TeamRow, EditForm {
   db_name: string | null
-  /** The team's stadiums (read-only tab) and the name the team gives its stadium. */
+  /** The team's stadium (the user's choice, else the game's) and the name the team gives its stadium. */
   stadium_ids: number[]
+  /** The user chose the stadium (not the game's). */
+  stadium_changed: boolean
+  /** The game's stadium of the team (a created team: the one of the team it starts from); null = none. */
+  game_stadium_id: number | null
   stadiums: StadiumInfo[]
   stadium_custom_name: string | null
   name_keys: string[]
@@ -444,7 +495,7 @@ export interface TeamDetail extends TeamRow, EditForm {
   raw: Raw
 }
 
-export interface LeagueDetail extends EditForm {
+export interface LeagueDetail extends EditForm, Dated {
   id: number
   name: string
   db_name: string | null
@@ -494,7 +545,7 @@ export interface PlayerTeam {
   slots: number[]
 }
 
-export interface PlayerDetail extends EditForm {
+export interface PlayerDetail extends EditForm, Dated {
   id: number
   name: string
   names: Partial<Record<'first' | 'last' | 'common' | 'jersey_name', string>>
@@ -604,6 +655,7 @@ export interface Options {
   languages: string[]
   nations: Ref[]
   teams: Ref[]
+  stadiums: Ref[]
   /** Confederation codes in use (countries filter). */
   confederations: number[]
   /** Division levels in use (leagues filter). */

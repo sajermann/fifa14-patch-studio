@@ -15,6 +15,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api, type PlayerTeamBody } from '@/api/client'
+import { EntryDates } from '@/components/common/dates'
 import type { PlayerDetail } from '@/api/types'
 import { OriginalBadge, OverallBadge, RawTable, Section } from '@/components/common/detail'
 import { computeOverall } from '@/lib/overall'
@@ -164,14 +165,20 @@ export function PlayerPage() {
           ) : (
             <Photo id={data.id} size={256} available={data.has_photo} className="size-24 shrink-0 rounded-lg bg-muted/40" />
           )}
-          <h1 className="min-w-0 text-2xl font-semibold break-words">{data.name}</h1>
-          <span className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground tabular-nums">
-            {realFace && <ScanFace className="size-5 text-emerald-600 dark:text-emerald-400" aria-label={t('squad.hasFace')} />}
-            <OverallBadge value={liveOverall ?? data.overall} />
-            {t('player.idHint', { id: data.id })}
-          </span>
-          {!data.is_new && <OriginalBadge edited={data.edited} />}
-          {hide.hidden && <OutOfPatchBadge alert />}
+          {/* the name with its details and badges on one line, the dates under it */}
+          <div className="min-w-0">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+              <h1 className="min-w-0 text-2xl font-semibold break-words">{data.name}</h1>
+              <span className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground tabular-nums">
+                {realFace && <ScanFace className="size-5 text-emerald-600 dark:text-emerald-400" aria-label={t('squad.hasFace')} />}
+                <OverallBadge value={liveOverall ?? data.overall} />
+                {t('player.idHint', { id: data.id })}
+              </span>
+              {!data.is_new && <OriginalBadge edited={data.edited} />}
+              {hide.hidden && <OutOfPatchBadge alert />}
+            </div>
+            <EntryDates entry={data} />
+          </div>
         </div>
         <div className="flex flex-wrap items-start gap-2">
           <EditActions edited={data.edited && !data.is_new} entity={entity} />

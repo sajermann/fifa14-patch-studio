@@ -9,6 +9,7 @@ import { toast } from '@/lib/notify'
 import { useFrom } from '@/lib/back'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
+import { DateCells, DateHeads } from '@/components/common/dates'
 import { OriginalBadge, OverallBadge } from '@/components/common/detail'
 import { EntityIssues } from '@/components/common/form'
 import { Photo } from '@/components/common/pictures'
@@ -112,6 +113,7 @@ export function PlayersPage() {
             <SortHead field="birthdate" label={t('col.birthdate')} state={sortState} className="text-center" />
             <SortHead field="id" label={t('col.id')} state={sortState} className="text-center" />
             <TableHead>{t('col.nationality')}</TableHead>
+            <DateHeads />
             <TableHead className="w-28" />
             <TableHead className="w-16" />
           </TableRow>
@@ -139,6 +141,7 @@ export function PlayersPage() {
               <TableCell className="text-center tabular-nums">{p.birthdate ?? '—'}</TableCell>
               <TableCell className="text-center text-muted-foreground tabular-nums">{p.id}</TableCell>
               <TableCell>{p.nationality_name ?? '—'}</TableCell>
+              <DateCells entry={p} />
               <TableCell>
                 {p.is_new && (
                   <HideButton
@@ -157,7 +160,7 @@ export function PlayersPage() {
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={11} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={13} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>

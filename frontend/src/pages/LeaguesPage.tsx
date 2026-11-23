@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 import { useFrom } from '@/lib/back'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
+import { DateCells, DateHeads } from '@/components/common/dates'
 import { OriginalBadge } from '@/components/common/detail'
 import { EntityIssues } from '@/components/common/form'
 import { GameHiddenBadge, HiddenByProjectBadge, HideButton, OutOfPatchBadge, useHide } from '@/components/common/HideButton'
@@ -108,6 +109,7 @@ export function LeaguesPage() {
             <SortHead field="level" label={t('col.level')} state={sortState} className="text-center" />
             <SortHead field="team_count" label={t('col.teams')} state={sortState} className="text-center" />
             <SortHead field="id" label={t('col.id')} state={sortState} className="text-center" />
+            <DateHeads />
             <TableHead className="w-28" />
             <TableHead className="w-16" />
           </TableRow>
@@ -132,6 +134,7 @@ export function LeaguesPage() {
               <TableCell className="text-center tabular-nums">{l.level ?? '—'}</TableCell>
               <TableCell className="text-center tabular-nums">{l.team_count}</TableCell>
               <TableCell className="text-center text-muted-foreground tabular-nums">{l.id}</TableCell>
+              <DateCells entry={l} />
               <TableCell>
                 {!l.game_hidden && (
                   <HideButton
@@ -150,7 +153,7 @@ export function LeaguesPage() {
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={11} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>

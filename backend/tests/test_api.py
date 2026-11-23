@@ -659,3 +659,49 @@ def test_squad_marks_real_faces(client):
     assert copy.json()['id'] in real and made['id'] in plain and not real & plain
     for pid in (copy.json()['id'], made['id']):  # the other tests count on the ids from 300001
         assert client.delete(f'/api/players/{pid}').status_code == 200
+
+
+def test_entities_send_when_they_were_created_and_changed(client):
+    tid, pid = fakegame.TEAM, fakegame.STAR
+    team = client.delete(f'/api/teams/{tid}/edits').json()  # the other tests leave it changed
+    assert team['created_at'] is None and team['updated_at'] is None  # the game's, not changed
+    saved = client.put(f'/api/teams/{tid}', json={'names': {'abbr15': {'*': 'A01'}}}).json()
+    # a game team changed by the project: only the date it was changed (the project did not create it)
+    assert saved['created_at'] is None and saved['updated_at'].endswith('Z')
+    listed = next(x for x in client.get('/api/teams').json()['items'] if x['id'] == tid)
+    assert (listed['created_at'], listed['updated_at']) == (None, saved['updated_at'])
+    player = client.put(f'/api/players/{pid}', json={'fields': {'height': 181}}).json()
+    assert player['created_at'] is None and player['updated_at']
+    assert client.delete(f'/api/teams/{tid}/edits').json()['created_at'] is None  # the game's again
+
+
+def test_stadiums_list_detail_save_and_team_stadium(client):
+    client.delete('/api/stadiums/3/edits')
+    client.put(f'/api/teams/{fakegame.SMALL_TEAM}/stadium', json={'stadium': None})
+    listed = client.get('/api/stadiums').json()
+    row = next(s for s in listed['items'] if s['id'] == 3)
+    assert (row['name'], row['capacity'], row['team_count'], row['edited']) == ('Test Ground', 12345, 1, False)
+    detail = client.get('/api/stadiums/3').json()
+    assert detail['values']['capacity'] == 12345 and [t['id'] for t in detail['teams']] == [fakegame.TEAM]
+    assert detail['teams'][0]['stadium_custom_name'] == 'Custom Park'
+    saved = client.put('/api/stadiums/3', json={'names': {'full': {'*': 'A01 Arena'}},
+                                                'fields': {'capacity': 50000, 'yearbuilt': 1901}}).json()
+    assert saved['saved'] == {'capacity': 50000} and saved['capacity'] == 50000 and saved['edited']
+    # shown: the database name (the one the game shows); the language text is kept apart
+    assert saved['name'] == 'Test Ground' and saved['names']['full'] == 'A01 Arena'
+    assert saved['created_at'] is None and saved['updated_at']
+    renamed = client.put('/api/stadiums/3', json={'names': {'full': {'*': 'A01 Arena'}},
+                                                  'fields': {'name': 'A01 Ground', 'capacity': 50000}}).json()
+    assert renamed['name'] == 'A01 Ground'
+    row = next(s for s in client.get('/api/stadiums').json()['items'] if s['id'] == 3)
+    assert (row['name'], row['language_name']) == ('A01 Ground', 'A01 Arena')
+    assert client.put('/api/stadiums/3', json={'fields': {'timeofday1': 2}}).status_code == 400
+    assert client.get('/api/stadiums', params={'origin': 'project'}).json()['items'][0]['capacity'] == 50000
+    # a team moved to the stadium: listed there, and the team's stadium tab shows it
+    team = client.put(f'/api/teams/{fakegame.SMALL_TEAM}/stadium', json={'stadium': 3}).json()
+    assert team['stadium_ids'] == [3] and team['stadium_changed'] and team['edited']
+    assert client.get('/api/stadiums/3').json()['team_count'] == 2
+    assert client.put(f'/api/teams/{fakegame.SMALL_TEAM}/stadium', json={'stadium': 999}).status_code == 400
+    back = client.put(f'/api/teams/{fakegame.SMALL_TEAM}/stadium', json={'stadium': None}).json()
+    assert back['stadium_ids'] == [] and not back['stadium_changed']
+    assert client.delete('/api/stadiums/3/edits').json()['saved'] == {}
