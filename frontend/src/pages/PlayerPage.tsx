@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Copy, Loader2, Trash2 } from 'lucide-react'
+import { Copy, Loader2, ScanFace, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
@@ -149,19 +149,26 @@ export function PlayerPage() {
     const edited = fields[col]
     return typeof edited === 'number' ? edited : (data.values[col] as number | undefined)
   })
+  // a real face: the one chosen here (a pack's or another player's), else the game's own one
+  const face = fields.face as { source?: string } | null | undefined
+  const realFace = face?.source ? face.source !== 'generic' : data.game_face
   const editor = (groups: string[], columns?: string, bars?: boolean) => <FieldsEditor form={data} groups={groups} fields={fields} setField={entity.setField} columns={columns} bars={bars} />
   return (
     <div className="space-y-4">
       <BackButton back={back} />
       <div className="flex flex-wrap justify-between gap-x-4 gap-y-3">
-        <div className="flex min-w-0 items-center gap-3">
-          {photoUrl ? <img src={photoUrl} alt="" className="size-12 object-contain" /> : <Photo id={data.id} size={96} available={data.has_photo} className="size-12" />}
-          <div className="min-w-0">
-            <h1 className="text-2xl font-semibold break-words">{data.name}</h1>
-            <p className="text-sm text-muted-foreground">
-              {[data.position_name, data.nationality_name, data.birthdate, t('player.idHint', { id: data.id })].filter(Boolean).join(' · ')}
-            </p>
-          </div>
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          {photoUrl ? (
+            <img src={photoUrl} alt="" className="size-24 shrink-0 rounded-lg bg-muted/40 object-contain" />
+          ) : (
+            <Photo id={data.id} size={256} available={data.has_photo} className="size-24 shrink-0 rounded-lg bg-muted/40" />
+          )}
+          <h1 className="min-w-0 text-2xl font-semibold break-words">{data.name}</h1>
+          <span className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground tabular-nums">
+            {realFace && <ScanFace className="size-5 text-emerald-600 dark:text-emerald-400" aria-label={t('squad.hasFace')} />}
+            <OverallBadge value={liveOverall ?? data.overall} />
+            {t('player.idHint', { id: data.id })}
+          </span>
           {!data.is_new && <OriginalBadge edited={data.edited} />}
           {hide.hidden && <OutOfPatchBadge alert />}
         </div>
@@ -199,16 +206,14 @@ export function PlayerPage() {
             <PlayerPhoto player={data} pending={pendingPhoto} setPending={setPendingPhoto} />
           </div>
           <PlayerTeams player={data} rows={teams} setRows={setTeams} />
-          {editor(['positions', 'style'])}
-          <CodeGroup player={data} group="animations" fields={fields} setField={entity.setField} title={t('fieldGroup.animations')} description={t('code.hint')} />
-          {editor(['career'])}
+          {editor(['positions', 'style', 'career'], 'lg:grid-cols-3')}
         </TabsContent>
         <TabsContent value="ratings" className="space-y-4">
           <div className="flex items-center gap-2 text-sm">
             {t('col.overall')} <OverallBadge value={liveOverall ?? data.overall} />
             <span className="text-xs text-muted-foreground">{t('player.overallHint')}</span>
           </div>
-          {editor(['physical', 'mental', 'skill', 'goalkeeper'], 'md:grid-cols-2 xl:grid-cols-4', true)}
+          {editor(['pace', 'shooting', 'passing', 'dribbling', 'defending', 'physical', 'goalkeeping'], 'md:grid-cols-2 xl:grid-cols-4', true)}
         </TabsContent>
         <TabsContent value="traits">
           <PlayerTraits all={options?.traits ?? []} value={fields.traits} original={data.values.traits} onChange={(v) => entity.setField('traits', v)} />
@@ -223,8 +228,9 @@ export function PlayerPage() {
             pendingPhoto={pendingPhoto}
           />
         </TabsContent>
-        <TabsContent value="accessories">
+        <TabsContent value="accessories" className="space-y-4">
           <CodeGroup player={data} group="accessories" fields={fields} setField={entity.setField} title={t('fieldGroup.accessories')} description={t('look.accessoriesHint')} />
+          <CodeGroup player={data} group="animations" fields={fields} setField={entity.setField} title={t('fieldGroup.animations')} description={t('code.hint')} />
         </TabsContent>
         <TabsContent value="raw">
           <Section title={t('tab.raw')}>

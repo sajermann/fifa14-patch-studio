@@ -129,6 +129,7 @@ def create_player(body: CreatePlayerBody):
 
 # ---- generated players -------------------------------------------------------------------------------------------------
 
+RATING_GROUPS = ('pace', 'shooting', 'passing', 'dribbling', 'defending', 'physical', 'goalkeeping')
 MAX_GENERATED = 60
 GENERATED_POSITION = 25  # ST
 GOALKEEPER = 0
@@ -173,7 +174,7 @@ def generate_players(tid: int, body: GeneratePlayersBody):
     faces = _generic_faces()
     first_day, last_day = (d.toordinal() for d in GENERATED_BIRTHDATES)
     middle = {spec.name: (spec.min + spec.max) // 2 for spec in fields.PLAYER
-              if spec.group in ('physical', 'mental', 'skill', 'goalkeeper')}
+              if spec.group in RATING_GROUPS}
     out, index = [], 0
     for position in positions:
         index += 1

@@ -71,13 +71,15 @@ PLAYER = [
     FieldSpec('defensiveworkrate', 'style', 'select', options=(0, 1, 2)),
     # the traits the player has (keys of fifa14.TRAITS); written as bits of trait1/trait2, other bits kept
     FieldSpec('traits', 'traits', 'traits'),
-    *_ratings(['acceleration', 'sprintspeed', 'agility', 'balance', 'jumping', 'stamina', 'strength',
-               'reactions'], 'physical'),
-    *_ratings(['aggression', 'interceptions', 'positioning', 'vision'], 'mental'),
-    *_ratings(['ballcontrol', 'crossing', 'curve', 'dribbling', 'finishing', 'freekickaccuracy', 'headingaccuracy',
-               'longpassing', 'longshots', 'marking', 'penalties', 'shortpassing', 'shotpower', 'slidingtackle',
-               'standingtackle', 'volleys'], 'skill'),
-    *_ratings(['gkdiving', 'gkhandling', 'gkkicking', 'gkpositioning', 'gkreflexes'], 'goalkeeper'),
+    # the ratings in the game's own groups (its attribute screens): pace, shooting, passing, dribbling, defending,
+    # physical and goalkeeping
+    *_ratings(['acceleration', 'sprintspeed'], 'pace'),
+    *_ratings(['finishing', 'shotpower', 'longshots', 'volleys', 'penalties', 'positioning'], 'shooting'),
+    *_ratings(['vision', 'crossing', 'freekickaccuracy', 'shortpassing', 'longpassing', 'curve'], 'passing'),
+    *_ratings(['agility', 'balance', 'reactions', 'ballcontrol', 'dribbling'], 'dribbling'),
+    *_ratings(['interceptions', 'headingaccuracy', 'marking', 'standingtackle', 'slidingtackle'], 'defending'),
+    *_ratings(['jumping', 'stamina', 'strength', 'aggression'], 'physical'),
+    *_ratings(['gkdiving', 'gkhandling', 'gkkicking', 'gkpositioning', 'gkreflexes'], 'goalkeeping'),
     # generic head (headclasscode 1): the game builds it from these codes
     # (the ranges are the bits of the game's database: hair files above 127, e.g. hair_213, cannot be stored)
     *_codes([('headtypecode', 0, 8191), ('hairtypecode', 0, 127), ('haircolorcode', 0, 15),
