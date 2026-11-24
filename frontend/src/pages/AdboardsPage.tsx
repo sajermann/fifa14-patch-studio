@@ -82,7 +82,7 @@ export function AdboardsPage() {
             </TableHead>
             <TableHead className="w-12" />
             <TableHead data-grow>{t('col.name')}</TableHead>
-            <TableHead>{t('adboards.colGame')}</TableHead>
+            <TableHead className="text-right">{t('adboards.colGame')}</TableHead>
             <TableHead className="text-center">{t('adboards.colTeams')}</TableHead>
             <TableHead className="text-center">{t('adboards.colLeagues')}</TableHead>
             <DateHeads />
@@ -91,7 +91,7 @@ export function AdboardsPage() {
         </TableHeader>
         <TableBody>
           {boards.map((b) => (
-            <TableRow key={b.id} className={b.is_new || b.edited ? 'cursor-pointer' : 'cursor-pointer text-muted-foreground'} onClick={() => navigate(`/adboards/${b.id}`, { state: from.state })}>
+            <TableRow key={b.id} className={b.is_new || b.edited ? undefined : 'text-muted-foreground'}>
               <TableCell>{(b.is_new || b.edited) && <RowCheckbox selection={selection} value={b.id} />}</TableCell>
               <TableCell>
                 <AdboardThumb board={b} width={20} />
@@ -101,8 +101,7 @@ export function AdboardsPage() {
                   <Link
                     to={`/adboards/${b.id}`}
                     state={from.state}
-                    className={b.hidden ? 'font-medium text-muted-foreground' : 'font-medium text-foreground'}
-                    onClick={(e) => e.stopPropagation()}
+                    className={b.hidden ? 'font-medium text-muted-foreground underline-offset-4 hover:underline' : 'font-medium text-foreground underline-offset-4 hover:underline'}
                   >
                     {nameOf(b)}
                   </Link>
@@ -111,7 +110,7 @@ export function AdboardsPage() {
                   {b.hidden && <OutOfPatchBadge />}
                 </span>
               </TableCell>
-              <TableCell className="max-w-72 truncate text-muted-foreground" title={b.is_new ? undefined : where(b)}>
+              <TableCell className="max-w-72 truncate text-right text-muted-foreground" title={b.is_new ? undefined : where(b)}>
                 {b.is_new ? '—' : where(b)}
               </TableCell>
               <TableCell className="text-center tabular-nums" title={b.teams.map((x) => x.name).join(', ')}>

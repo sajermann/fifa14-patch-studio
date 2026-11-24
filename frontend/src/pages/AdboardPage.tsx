@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Copy, ImageOff, Loader2, Trash2, Upload } from 'lucide-react'
+import { Copy, Loader2, Trash2, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '@/api/client'
@@ -135,8 +135,11 @@ export function AdboardPage() {
     )
   const name = typeof entity.form.fields.name === 'string' ? entity.form.fields.name : data.name
   const savedUrl = data.picture !== null ? `/api/image/adboard/${data.id}?v=${data.picture}` : null
-  const shownUrl = pending === 'remove' ? null : (pendingUrl ?? savedUrl)
+  const shownUrl = pending === 'remove' ? (isNew ? null : `/api/image/adboard/${data.id}?game_only=true`) : (pendingUrl ?? savedUrl)
   const hasPicture = pending === 'remove' ? false : !!pending || data.picture !== null
+  // the user's own picture (a game board's game picture is not one: Remove only takes the user's away)
+  const ownSaved = isNew ? data.picture !== null : data.edited
+  const hasOwn = pending === 'remove' ? false : !!pending || ownSaved
   const title = isNew ? name.trim() || data.name : nameOf(data)
   const pick = async (file: File) => {
     try {
@@ -177,7 +180,9 @@ export function AdboardPage() {
         </div>
       </div>
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      {/* the data on the left; the picture on the right, as narrow as the picture, with its buttons below it (the
+          player's photo card) */}
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
         <div className="space-y-4">
           {isNew ? (
             <Section title={t('adboards.name')} description={t('adboards.nameHint')}>
@@ -188,35 +193,6 @@ export function AdboardPage() {
               <GameBoardWarning board={data} />
             </Section>
           )}
-          <Section title={t('adboards.picture')} description={t('adboards.pictureHint', { width: size[0], height: size[1], bands, band: size[1] / bands })}>
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  ref={input}
-                  type="file"
-                  accept=".png,.jpg,.jpeg,.webp,.bmp,.dds"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0]
-                    e.target.value = ''
-                    if (file) void pick(file)
-                  }}
-                />
-                <Button size="sm" variant="outline" onClick={() => input.current?.click()}>
-                  <Upload /> {t(hasPicture ? 'adboards.changePicture' : 'adboards.pickPicture')}
-                </Button>
-                {isNew && hasPicture && (
-                  <Button size="sm" variant="ghost" onClick={() => setPending(data.picture !== null ? 'remove' : null)}>
-                    <ImageOff /> {t('adboards.removePicture')}
-                  </Button>
-                )}
-              </div>
-              {pending && <p className="text-xs text-amber-600 dark:text-amber-400">{t(pending === 'remove' ? 'adboards.pictureRemovePending' : 'adboards.picturePending')}</p>}
-              {pending && pending !== 'remove' && !isNew && <GameBoardWarning board={{ ...data, edited: true }} />}
-              {isNew && !hasPicture && <p className="text-sm text-amber-600 dark:text-amber-400">{t('adboards.noPictureWarning')}</p>}
-              <p className="text-xs text-muted-foreground">{t('adboards.pictureHowTo', { bands })}</p>
-            </div>
-          </Section>
           <Section title={t('adboards.usedBy')} description={t('adboards.usedByHint')}>
             {data.teams.length || data.leagues.length ? (
               <div className="grid gap-4 sm:grid-cols-2">
@@ -252,8 +228,53 @@ export function AdboardPage() {
             )}
           </Section>
         </div>
-        <Section title={t('adboards.picture')}>
-          <BandsPreview url={shownUrl} bands={bands} />
+        <Section
+          className="lg:w-[22rem]"
+          title={t('adboards.picture')}
+          description={t('adboards.pictureHint', { width: size[0], height: size[1], bands, band: size[1] / bands })}
+        >
+          <div className="space-y-3">
+            <div
+              className="mx-auto w-fit cursor-pointer"
+              onClick={() => input.current?.click()}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault()
+                const f = e.dataTransfer.files[0]
+                if (f) void pick(f)
+              }}
+              title={t('image.clickOrDrop')}
+            >
+              <BandsPreview url={shownUrl} bands={bands} />
+            </div>
+            <input
+              ref={input}
+              type="file"
+              accept=".png,.jpg,.jpeg,.webp,.bmp,.dds"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                e.target.value = ''
+                if (file) void pick(file)
+              }}
+            />
+            {pending && <p className="text-center text-xs text-amber-600 dark:text-amber-400">{t(pending === 'remove' ? 'adboards.pictureRemovePending' : 'adboards.picturePending')}</p>}
+            {shownUrl && (
+              <div className="flex justify-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => input.current?.click()}>
+                  <Upload /> {t('common.replace')}
+                </Button>
+                {hasOwn && (
+                  <Button variant="outline" size="sm" onClick={() => setPending(ownSaved ? 'remove' : null)}>
+                    <Trash2 /> {t('common.remove')}
+                  </Button>
+                )}
+              </div>
+            )}
+            {pending && pending !== 'remove' && !isNew && <GameBoardWarning board={{ ...data, edited: true }} />}
+            {isNew && !hasPicture && <p className="text-sm text-amber-600 dark:text-amber-400">{t('adboards.noPictureWarning')}</p>}
+            <p className="text-xs text-muted-foreground">{t('adboards.pictureHowTo', { bands })}</p>
+          </div>
         </Section>
       </div>
 
