@@ -76,7 +76,7 @@ export function StadiumsPage() {
             <SortHead field="capacity" label={t('col.capacity')} state={sortState} className="text-right" />
             <SortHead field="team_count" label={t('col.teams')} state={sortState} className="text-center" />
             <SortHead field="id" label={t('col.id')} state={sortState} className="text-center" />
-            <DateHeads />
+            <DateHeads sort={sortState} />
           </TableRow>
         </TableHeader>
         <TableBody className={isFetching ? 'opacity-70' : undefined}>

@@ -8,6 +8,8 @@ import { AppShell, RequireGame } from '@/components/layout/AppShell'
 import { LoadingBlock } from '@/components/layout/LoadingBlock'
 import { I18nProvider, onLanguageChange, useI18n } from '@/i18n'
 import { ThemeProvider } from '@/lib/theme'
+import { AdboardPage } from '@/pages/AdboardPage'
+import { AdboardsPage } from '@/pages/AdboardsPage'
 import { CountriesPage } from '@/pages/CountriesPage'
 import { CountryPage } from '@/pages/CountryPage'
 import { LeaguePage } from '@/pages/LeaguePage'
@@ -90,6 +92,8 @@ const router = createBrowserRouter([
           { path: 'leagues/:id', element: <LeaguePage /> },
           { path: 'stadiums', element: <StadiumsPage /> },
           { path: 'stadiums/:id', element: <StadiumPage /> },
+          { path: 'adboards', element: <AdboardsPage /> },
+          { path: 'adboards/:id', element: <AdboardPage /> },
           { path: 'teams', element: <TeamsPage /> },
           { path: 'teams/:id', element: <TeamPage /> },
           { path: 'players', element: <PlayersPage /> },

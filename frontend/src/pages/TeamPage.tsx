@@ -23,6 +23,7 @@ import { Facts, OriginalBadge, OverallBadge, RawTable, Section } from '@/compone
 import { EditActions, FieldsEditor, NamesGrid, useEntityForm } from '@/components/common/edit'
 import { HideButton, OutOfPatchBadge, usePendingHide } from '@/components/common/HideButton'
 import { Crest } from '@/components/common/pictures'
+import { AdboardChoice, type PendingAdboard } from '@/components/adboard/AdboardChoice'
 import { TeamCrest } from '@/components/team/TeamCrest'
 import { TeamKits } from '@/components/team/TeamKits'
 import { TeamLeagues } from '@/components/team/TeamLeagues'
@@ -35,7 +36,7 @@ import { BackButton, useBack, useFrom, useTabParam } from '@/lib/back'
 import { toast } from '@/lib/notify'
 import { useToken } from '@/state/queries'
 
-const TABS = ['data', 'crest', 'kits', 'leagues', 'roster', 'stadium', 'raw'] as const
+const TABS = ['data', 'crest', 'kits', 'leagues', 'roster', 'stadium', 'adboard', 'raw'] as const
 
 const sameIds = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => v === b[i])
 const sameSet = (a: number[], b: number[]) => a.length === b.length && a.every((v) => b.includes(v))
@@ -67,6 +68,7 @@ export function TeamPage() {
   // the leagues the team plays in, being edited (null = the saved ones); Save sends them with the rest
   const [pendingLeagues, setPendingLeagues] = useState<PendingLeagues>(null)
   const [pendingStadium, setPendingStadium] = useState<PendingStadium>(null)
+  const [pendingAdboard, setPendingAdboard] = useState<PendingAdboard>(null)
   const crestUrl = pendingCrest && pendingCrest !== 'remove' ? pendingCrest.url : null
   useEffect(() => () => void (crestUrl && URL.revokeObjectURL(crestUrl)), [crestUrl])
   const clearPending = () => {
@@ -75,6 +77,7 @@ export function TeamPage() {
     setPendingSquad(null)
     setPendingLeagues(null)
     setPendingStadium(null)
+    setPendingAdboard(null)
     hide.clear()
   }
   const entity = useEntityForm({
@@ -93,6 +96,7 @@ export function TeamPage() {
       if (pendingSquad) saved = await api.saveTeamRoster(id, pendingSquad)
       if (pendingLeagues) saved = await api.saveTeamLeagues(id, pendingLeagues.ids, pendingLeagues.hidden)
       if (pendingStadium !== null) saved = await api.setTeamStadium(id, pendingStadium === 'game' ? null : pendingStadium)
+      if (pendingAdboard !== null) saved = await api.setTeamAdboard(id, pendingAdboard === 'none' ? null : pendingAdboard)
       if (hide.pending !== null) saved = await api.setTeamHidden(id, hide.pending)
       clearPending()
       return saved
@@ -101,7 +105,7 @@ export function TeamPage() {
       clearPending()
       return api.resetTeam(id)
     },
-    extraDirty: pendingCrest !== null || Object.keys(pendingKits).length > 0 || pendingSquad !== null || pendingLeagues !== null || pendingStadium !== null || hide.pending !== null,
+    extraDirty: pendingCrest !== null || Object.keys(pendingKits).length > 0 || pendingSquad !== null || pendingLeagues !== null || pendingStadium !== null || pendingAdboard !== null || hide.pending !== null,
     onDiscard: clearPending,
     // a created team has no name of the game: its "All" name is required
     invalid: (f) => !!team?.is_new && !f.names.full?.['*']?.trim(),
@@ -202,6 +206,7 @@ export function TeamPage() {
             {t('team.tab.roster')} ({squad.length})
           </TabsTrigger>
           <TabsTrigger value="stadium">{t('tab.stadium')}</TabsTrigger>
+          <TabsTrigger value="adboard">{t('tab.adboard')}</TabsTrigger>
           <TabsTrigger value="raw">{t('tab.raw')}</TabsTrigger>
         </TabsList>
         <TabsContent value="data" className="space-y-4">
@@ -274,6 +279,9 @@ export function TeamPage() {
             pending={pendingStadium}
             onPending={setPendingStadium}
           />
+        </TabsContent>
+        <TabsContent value="adboard">
+          <AdboardChoice kind="team" saved={team.adboard_id} pending={pendingAdboard} onPending={setPendingAdboard} />
         </TabsContent>
         <TabsContent value="raw">
           <Section title={t('tab.raw')}>

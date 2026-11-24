@@ -26,11 +26,11 @@ import re
 
 from PIL import Image
 
-from . import bh, buildcache, facefill, faceconv, fields, fifa14, flags, images, t3db, teamkits, workers
+from . import adboards, bh, buildcache, facefill, faceconv, fields, fifa14, flags, images, t3db, teamkits, workers
 from .big import BigArchive, normalize, rebuild
 from .dbedit import Database, LanguageStrings, Table
 from .gamefs import DATABASE, GameFiles
-from .project import DEFAULT_LANG, Project
+from .project import ADBOARD_PICTURE, DEFAULT_LANG, Project
 
 LOCALE = 'data/loc/locale.big'
 
@@ -943,6 +943,52 @@ def _kit_files(files: GameFiles, tid: int, kind: int, template: int, config: dic
             teamkits.MINIKIT.format(kind, tid): teamkits.minikit(files, tint, kind, template, mini)}
 
 
+def write_adboards(files: GameFiles, project: Project, builder: 'PatchBuilder') -> dict | None:
+    """The advertising boards (f14mod.adboards): the game's boards the user edited (their own files, so they change
+    wherever the game shows them), the boards the user created that teams and leagues use (each written once) and the
+    stadium script that gives each team and league its board. A link to a board that has nothing to show (a created
+    board without a picture or left out of the patch, a game board the game lacks) is left out. Teams and leagues the
+    patch does not have keep their row in the script's tables: harmless."""
+    created = set(project.created('adboard'))
+    with_picture = set(project.with_picture('adboard', ADBOARD_PICTURE))
+    game_boards = set(adboards.game_boards(files))
+    edited_game = sorted(b for b in with_picture - created if b in game_boards)
+
+    def shown(board: int) -> bool:
+        return board in with_picture if board in created else board in game_boards
+
+    teams = {t: b for t, b in project.all_adboard_links('team').items() if shown(b)}
+    leagues = {lg: b for lg, b in project.all_adboard_links('league').items() if shown(b)}
+    if not teams and not leagues and not edited_game:
+        return None
+    if teams or leagues:
+        game_script = files.read(adboards.SCRIPT)
+        if game_script is None:
+            raise BuildError('adboard_script', adboards.SCRIPT)
+        try:
+            builder.put(adboards.SCRIPT, adboards.script(game_script, teams, leagues))
+        except adboards.AdboardError as e:
+            raise BuildError('adboard_script', str(e)) from e
+    own = sorted(b for b in set(teams.values()) | set(leagues.values()) if b in created)
+    if own:
+        try:
+            model = adboards.model_file(files)
+        except FileNotFoundError as e:
+            raise BuildError('adboard_model', str(e)) from e
+    for board in own + edited_game:
+        png = project.picture('adboard', board, ADBOARD_PICTURE)[0]
+        name = (project.fields('adboard', board).get('name') or '').strip() or str(board)
+        path = adboards.FILE.format(board) if board in created else adboards.GAME_FILE.format(board)
+        base = model if board in created else files.read(path)  # a game board keeps its own file's layout
+        builder.later('adboard', name, builder.key('adboard', ('adboards', 'teamkits'), path, png, base),
+                      functools.partial(_adboard_files, base, path, png))
+    return {'boards': len(own), 'game_boards': len(edited_game), 'teams': len(teams), 'leagues': len(leagues)}
+
+
+def _adboard_files(model: bytes, path: str, png: bytes) -> dict[str, bytes]:
+    return {path: adboards.board_file(model, png)}
+
+
 def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') -> dict | None:
     """The database with the project's fields, created entities and league teams, loose (with its meta file)."""
     has_created = bool(project.created('country') or project.created('league') or project.created('team')
@@ -1006,7 +1052,7 @@ def build(files: GameFiles, project: Project, out_dir: str, progress=None, worke
           cache: buildcache.BuildCache | None = None, cancel=None, log=None, name_of=None) -> dict:
     """The patch of the project over the clean game.
     progress(step, done, total, kind=None, name=None): step of BUILD_STEPS; the 'images' step also says what it waits
-    for (kind: kit, crest, photo, league, flag; name: the team, player...). worker_count: processes for the language
+    for (kind: kit, crest, photo, league, flag, adboard; name: the team, player...). worker_count: processes for the language
     texts and threads for the pictures (None = workers.plan(), the machine's defaults). cache: a
     buildcache.BuildCache whose folder keeps texts and pictures between builds (None = no cache); entries this build
     did not use are deleted at the end. cancel: a threading.Event; once set, the build stops (BuildCancelled) at the
@@ -1057,6 +1103,7 @@ def build(files: GameFiles, project: Project, out_dir: str, progress=None, worke
 
         # ---- database (its pictures go to the thread pool)
         database = write_database(files, project, builder)
+        boards = write_adboards(files, project, builder)
         step('database', 1, 1)
         check()
         pictures = created_pictures(files, project, builder)
@@ -1101,4 +1148,6 @@ def build(files: GameFiles, project: Project, out_dir: str, progress=None, worke
     summary['missing_strings'] = []
     summary['database'] = database
     summary['pictures'] = pictures
+    if boards:
+        summary['adboards'] = boards
     return summary

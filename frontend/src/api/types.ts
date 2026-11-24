@@ -138,7 +138,7 @@ export interface Page<T> {
 }
 
 /** what the lists' bulk delete takes */
-export type BulkKind = 'country' | 'league' | 'team' | 'player' | 'stadium'
+export type BulkKind = 'country' | 'league' | 'team' | 'player' | 'stadium' | 'adboard'
 
 export interface Ref {
   id: number
@@ -492,6 +492,8 @@ export interface TeamDetail extends TeamRow, EditForm {
   formations: Formation[]
   kits: TeamKit[]
   max_squad: number
+  /** The advertising board of the team (its home games), null = the game's boards. */
+  adboard_id: number | null
   raw: Raw
 }
 
@@ -523,6 +525,8 @@ export interface LeagueDetail extends EditForm, Dated {
   /** The league's teams in the game (a created league: none). */
   game_team_ids: number[]
   teams_changed: boolean
+  /** The advertising board of the league, null = the game's boards. */
+  adboard_id: number | null
   teams: TeamRow[]
   raw: Raw
 }
@@ -682,4 +686,39 @@ export interface PreviewLook {
   scale: number
   /** with a face of a pack (or kept in the project): what the face URLs carry */
   query?: string
+}
+
+/** An advertising board: one the user created (is_new) or one of the game's (edited = its picture replaced). A
+ * picture of 512x1024 = 16 bands; linked to teams and leagues. */
+export interface Adboard extends EditForm, Dated {
+  id: number
+  is_new: boolean
+  /** The name of a board the user created ('' for the game's: the screen names them by number). */
+  name: string
+  hidden: boolean
+  /** The picture's version: when the user's picture was saved, 0 = the game's own picture, null = no picture yet. */
+  picture: number | null
+  teams: (Ref & { is_new: boolean })[]
+  leagues: (Ref & { is_new: boolean })[]
+  /** A game board: the competitions the game shows it in (name null = not a league of the database). */
+  competitions?: { id: number; name: string | null }[]
+  /** A game board: the one of every competition the game's table lacks (friendlies, cups, new leagues). */
+  default?: boolean
+}
+
+export interface AdboardList {
+  items: Adboard[]
+  /** The board picture's size in the game and its number of bands. */
+  size: [number, number]
+  bands: number
+  default_board: number
+}
+
+export interface AdboardBody {
+  name: string
+  /** A new picture (base64); omitted = keep the one it has. */
+  picture?: string
+  remove_picture?: boolean
+  /** Create: a copy of this board (its picture; the game's own one for a game board not edited). */
+  copy_of?: number
 }

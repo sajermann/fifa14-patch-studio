@@ -286,7 +286,8 @@ def leagues(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAUL
     elif status == 'hidden':
         where.append('(hidden OR game_hidden)')
     sorts = {'name': 'fold(name)', 'id': 'id', 'level': 'level', 'country': 'fold(country)',
-             'team_count': 'team_count'}
+             'team_count': 'team_count', 'created_at': 'created_at',
+             'updated_at': 'updated_at'}
     out = _page(con, select, where, params, sorts, sort, direction, ('name', 'asc'), page, size, new_first=True)
     countries_hidden = {r[0] for r in con.execute("SELECT id FROM p.hidden WHERE kind = 'country'")}
     for r in out['items']:
@@ -346,7 +347,8 @@ def teams(con, lang: str, q='', league: int | None = None, edited: bool | None =
     if q.strip():
         where.append(_search("fold(name) || ' ' || fold(abbr15) || ' ' || search", q, params))
     sorts = {'name': 'fold(name)', 'id': 'id', 'overall': 'overall', 'league': 'fold(league)',
-             'player_count': 'player_count', 'kit_count': 'kit_count'}
+             'player_count': 'player_count', 'kit_count': 'kit_count', 'created_at': 'created_at',
+             'updated_at': 'updated_at'}
     out = _page(con, select, where, params, sorts, sort, direction, ('name', 'asc'), page, size, new_first=True)
     for r in out['items']:
         r.pop('search', None)
@@ -391,7 +393,8 @@ def players(con, lang: str, q='', team: int | None = None, position: int | None 
     if q.strip():
         where.append(_search('search_all', q, params))
     sorts = {'name': 'fold(name)', 'id': 'id', 'overall': 'overall', 'potential': 'potential',
-             'position': 'position', 'team': 'fold(team)', 'height': 'height', 'birthdate': 'birthdate'}
+             'position': 'position', 'team': 'fold(team)', 'height': 'height', 'birthdate': 'birthdate',
+             'created_at': 'created_at', 'updated_at': 'updated_at'}
     out = _page(con, select, where, params, sorts, sort, direction, ('overall', 'desc'), page, size, new_first=True)
     for r in out['items']:
         r.pop('search', None)
@@ -491,6 +494,7 @@ def team(con, lang: str, tid: int) -> dict | None:
                 'SELECT 1 FROM p.team_rosters_set WHERE team_id = ?', (tid,)).fetchone() is not None,
             'leagues': leagues_of, 'template': template if head['is_new'] else None, 'copied': copied,
             'formations': formations(con), 'kits': team_kits(con, tid, look_from, bool(head['is_new'])),
+            'adboard_id': adboard_of(con, 'team', tid),
             'max_squad': fifa14.MAX_SQUAD, **form, 'raw': raw}
 
 
@@ -622,7 +626,15 @@ def league(con, lang: str, lid: int) -> dict | None:
             'name_keys': LEAGUE_NAME_KEYS, 'languages': languages(con), 'team_ids': team_ids,
             'hidden_team_ids': hidden_team_ids,
             'teams_changed': custom, 'teams': teams(con, lang, league=lid, size=100)['items'],
+            'adboard_id': adboard_of(con, 'league', lid),
             **_form(con, 'league', lid, raw), 'raw': raw}
+
+
+def adboard_of(con, kind: str, oid: int) -> int | None:
+    """The advertising board linked to a team or a league (f14mod.project.ADBOARD_LINKS), or None."""
+    table, column = {'team': ('team_adboards', 'team_id'), 'league': ('league_adboards', 'league_id')}[kind]
+    row = con.execute(f'SELECT adboard_id FROM p.{table} WHERE {column} = ?', (oid,)).fetchone()
+    return row[0] if row else None
 
 
 def player(con, lang: str, pid: int) -> dict | None:
@@ -728,7 +740,8 @@ def stadiums(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAU
     elif origin == 'original':
         where.append('NOT edited')
     sorts = {'name': 'fold(name)', 'id': 'id', 'country': 'fold(country)', 'capacity': 'capacity',
-             'team_count': 'team_count'}
+             'team_count': 'team_count', 'created_at': 'created_at',
+             'updated_at': 'updated_at'}
     out = _page(con, select, where, params, sorts, sort, direction, ('name', 'asc'), page, size, new_first=True)
     for r in out['items']:
         r.pop('search', None)
@@ -880,7 +893,8 @@ def countries(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFA
     elif status == 'hidden':
         where.append(hidden_sql)
     sorts = {'name': 'fold(name)', 'id': 'id', 'league_count': 'league_count', 'player_count': 'player_count',
-             'confederation': 'confederation'}
+             'confederation': 'confederation', 'created_at': 'created_at',
+             'updated_at': 'updated_at'}
     out = _page(con, select, where, params, sorts, sort, direction, ('name', 'asc'), page, size, new_first=True)
     for r in out['items']:
         r.pop('search', None)

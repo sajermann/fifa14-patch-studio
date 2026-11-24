@@ -277,6 +277,35 @@ def kit_rx3(color):
     return b'RX3l' + b'\0' * 8 + struct.pack('<I', len(sections)) + table + body
 
 
+def adboard_rx3(color):
+    """RX3l board as the game's (one texture, 16x32 raw BGRA here; 512x1024 DXT1 in the game)."""
+    raw = Image.new('RGBA', (16, 32), color + (255,)).tobytes('raw', 'BGRA')
+    texture = struct.pack('<IBBBBHHHH', 0, 0, 7, 0, 0, 16, 32, 0, 1) + struct.pack('<IIII', 0, 0, len(raw), 0) + raw
+    name = b'adboard_1.Raster\0'
+    names = struct.pack('<IIII', 0, 1, 0, 0) + struct.pack('<II', 0, len(name)) + name
+    sections = [(TEXTURE_SECTION, texture), (NAMES_SECTION, names)]
+    off = 16 + 16 * len(sections)
+    table, body = b'', b''
+    for kind, blob in sections:
+        table += struct.pack('<IIII', kind, off + len(body), len(blob), 0)
+        body += blob
+    return b'RX3l' + b'\0' * 8 + struct.pack('<I', len(sections)) + table + body
+
+
+# the lines of the game's stadium script the boards are added next to (f14mod.adboards), with the game's line endings
+STADIUM_SCRIPT = (
+    'function StadiumUpdate(idx)\r\n'
+    '\tlocal as = gSportsRNA\r\n'
+    '\tlocal stadium = as:GetTable("wvStadium", idx)\r\n'
+    '\tdb.stadium[idx].adboardID = as:GetInt(stadium, "adboardID" )\r\n'
+    '\tdb.stadium[idx].adboardGroup = as:GetInt(stadium, "adboardGroup" )\r\n'
+    'end\r\n\r\n'
+    'function StadiumAssetBind(stadium)\r\n'
+    '\tgr:AddAsset(stadium, lod, "adboardsingletex", "data/sceneassets/adboard/adboard_${db.stadium[?].adboardID}_'
+    '${db.stadium[?].adboardGroup}.rx3", priority)\r\n'
+    'end\r\n').encode()
+
+
 GENERIC_EYES, GENERIC_HAIR = 5, 12  # the game's generic eyes color and hair style the face fill tests use
 
 
@@ -406,6 +435,13 @@ def build(root):
         with open(path, 'wb') as f:
             f.write(blob)
     for game_path, blob in _fonts().items():
+        path = os.path.join(root, 'Game', *game_path.split('/'))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'wb') as f:
+            f.write(blob)
+    # the game's board file and stadium script (advertising boards, f14mod.adboards)
+    for game_path, blob in (('data/sceneassets/adboard/adboard_1_0.rx3', adboard_rx3((90, 90, 90))),
+                            ('data/fifarna/lua/assets/stadium.lua', STADIUM_SCRIPT)):
         path = os.path.join(root, 'Game', *game_path.split('/'))
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'wb') as f:

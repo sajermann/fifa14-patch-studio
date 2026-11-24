@@ -1538,6 +1538,7 @@ def job_status():
 
 
 from . import player_routes  # noqa: E402,F401 - the player routes (before the interface's catch-all)
+from . import adboard_routes  # noqa: E402,F401 - the advertising boards (before the interface's catch-all)
 
 
 # ---- bulk delete (the lists' checkboxes) ----------------------------------------------------------------------------
@@ -1552,9 +1553,10 @@ def bulk_delete(body: BulkDeleteBody):
     """Delete what a list picked, like the Street Studio: a created item leaves the project, an edited one of the game
     goes back to the game's. One that cannot go (a country that still has leagues) is skipped with its error code."""
     deletes = {'country': delete_country, 'league': delete_league, 'team': delete_team,
-               'player': player_routes.delete_player}
+               'player': player_routes.delete_player, 'adboard': adboard_routes.delete_adboard}
     resets = {'country': reset_country, 'league': reset_league, 'team': reset_team,
-              'player': player_routes.reset_player, 'stadium': reset_stadium}  # (no created stadiums yet)
+              'player': player_routes.reset_player, 'stadium': reset_stadium,  # (no created stadiums yet)
+              'adboard': adboard_routes.reset_adboard}  # a game board: its own picture again
     if body.kind not in resets:
         raise ApiError(400, 'bad_request', 'kind')
     deleted, reset, skipped = [], [], []

@@ -672,6 +672,14 @@ def test_entities_send_when_they_were_created_and_changed(client):
     assert (listed['created_at'], listed['updated_at']) == (None, saved['updated_at'])
     player = client.put(f'/api/players/{pid}', json={'fields': {'height': 181}}).json()
     assert player['created_at'] is None and player['updated_at']
+    # the lists sort by both dates; the newest first, the entities without dates (the game's) last either way
+    for kind, eid in (('teams', tid), ('players', pid)):
+        for direction in ('desc', 'asc'):
+            out = client.get(f'/api/{kind}', params={'sort': 'updated_at', 'dir': direction}).json()
+            assert (out['sort'], out['dir']) == ('updated_at', direction) and out['items'][0]['id'] == eid
+        assert client.get(f'/api/{kind}', params={'sort': 'created_at'}).json()['sort'] == 'created_at'
+    for kind in ('leagues', 'stadiums', 'countries'):
+        assert client.get(f'/api/{kind}', params={'sort': 'updated_at'}).json()['sort'] == 'updated_at'
     assert client.delete(f'/api/teams/{tid}/edits').json()['created_at'] is None  # the game's again
 
 

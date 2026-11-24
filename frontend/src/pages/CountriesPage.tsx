@@ -106,7 +106,7 @@ export function CountriesPage() {
             <SortHead field="league_count" label={t('col.leagues')} state={sortState} className="text-center" />
             <SortHead field="player_count" label={t('col.players')} state={sortState} className="text-center" />
             <SortHead field="id" label={t('col.id')} state={sortState} className="text-center" />
-            <DateHeads />
+            <DateHeads sort={sortState} />
             <TableHead className="w-28" />
             <TableHead className="w-16" />
           </TableRow>

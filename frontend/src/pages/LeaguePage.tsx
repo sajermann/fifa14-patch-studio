@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ImageOff, Loader2, Plus, RotateCcw, Trash2, Upload, UserMinus } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { AdboardChoice, type PendingAdboard } from '@/components/adboard/AdboardChoice'
 import { EntityIssues } from '@/components/common/form'
 import {
   AlertDialog,
@@ -32,7 +33,7 @@ import { useI18n } from '@/i18n'
 import { useOptions, useStatus, useToken } from '@/state/queries'
 import { useConfederationName } from './CountriesPage'
 
-const TABS = ['data', 'countries', 'teams', 'raw'] as const
+const TABS = ['data', 'countries', 'teams', 'adboard', 'raw'] as const
 /** The league's teams shown on the page (a league can have more: the rest is counted). */
 const SHOWN_TEAMS = 100
 
@@ -93,12 +94,14 @@ export function LeaguePage() {
   const [pendingLogo, setPendingLogo] = useState<PendingLogo>(null)
   // the team list being edited (null = the saved one); Save sends it with the rest of the form
   const [pendingTeams, setPendingTeams] = useState<{ ids: number[]; hidden: number[] } | null>(null)
+  const [pendingAdboard, setPendingAdboard] = useState<PendingAdboard>(null)
   const pendingUrl = pendingLogo && pendingLogo !== 'remove' ? pendingLogo.url : null
   useEffect(() => () => void (pendingUrl && URL.revokeObjectURL(pendingUrl)), [pendingUrl])
   const hide = usePendingHide(data?.hidden)
   const clearPending = () => {
     setPendingLogo(null)
     setPendingTeams(null)
+    setPendingAdboard(null)
     hide.clear()
   }
   const entity = useEntityForm({
@@ -116,6 +119,7 @@ export function LeaguePage() {
             ? await api.resetLeagueTeams(id)
             : await api.saveLeagueTeams(id, pendingTeams.ids, pendingTeams.hidden)
       }
+      if (pendingAdboard !== null) saved = await api.setLeagueAdboard(id, pendingAdboard === 'none' ? null : pendingAdboard)
       if (hide.pending !== null) saved = await api.setLeagueHidden(id, hide.pending)
       clearPending()
       return saved
@@ -124,7 +128,7 @@ export function LeaguePage() {
       clearPending()
       return api.resetLeague(id)
     },
-    extraDirty: pendingLogo !== null || pendingTeams !== null || hide.pending !== null,
+    extraDirty: pendingLogo !== null || pendingTeams !== null || pendingAdboard !== null || hide.pending !== null,
     onDiscard: clearPending,
     // a created league has no name of the game: its "All" name is required (an original one keeps the game's)
     invalid: (f) => !!data?.is_new && !f.names.full?.[ALL]?.trim(),
@@ -250,6 +254,7 @@ export function LeaguePage() {
           <TabsTrigger value="teams">
             {t('col.teams')} ({teamIds.length})
           </TabsTrigger>
+          <TabsTrigger value="adboard">{t('tab.adboard')}</TabsTrigger>
           <TabsTrigger value="raw">{t('tab.raw')}</TabsTrigger>
         </TabsList>
         <TabsContent value="data" className="space-y-4">
@@ -466,6 +471,9 @@ export function LeaguePage() {
               </Table>
             </FillScroll>
           </Section>
+        </TabsContent>
+        <TabsContent value="adboard">
+          <AdboardChoice kind="league" saved={data.adboard_id} pending={pendingAdboard} onPending={setPendingAdboard} />
         </TabsContent>
         <TabsContent value="raw">
           <Section title={t('tab.raw')}>

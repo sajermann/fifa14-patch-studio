@@ -1,6 +1,8 @@
 import type { Dated } from '@/api/types'
 import { TableCell, TableHead } from '@/components/ui/table'
 import { useI18n } from '@/i18n'
+import { SortHead } from '@/lib/list'
+import type { ComponentProps } from 'react'
 
 /** A project date (ISO 8601) in the interface language: day and time, short. */
 export function useDateText() {
@@ -12,9 +14,16 @@ export function useDateText() {
   }
 }
 
-/** "Created" and "Edited" headers of a list. */
-export function DateHeads() {
+/** "Created" and "Edited" headers of a list; with `sort` they sort the list (on the backend) like the other columns. */
+export function DateHeads({ sort }: { sort?: ComponentProps<typeof SortHead>['state'] }) {
   const { t } = useI18n()
+  if (sort)
+    return (
+      <>
+        <SortHead field="created_at" label={t('dates.colCreated')} state={sort} />
+        <SortHead field="updated_at" label={t('dates.colUpdated')} state={sort} />
+      </>
+    )
   return (
     <>
       <TableHead>{t('dates.colCreated')}</TableHead>

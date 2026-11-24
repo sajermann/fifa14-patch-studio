@@ -43,14 +43,21 @@ user changed it (one per team, as in the game's teamstadiumlinks). Older files o
 empty).
 Schema 10 (23/11/2026): a game entity changed by the project only has `updated_at` (the project never created it, same
 rule as the Street Studio); files of schemas 8 and 9 lose the creation date they gave the game's entities.
+Schema 11 (24/11/2026) adds the advertising boards (tests PL1-PL5): `adboard` is a kind the user creates (its name in
+`fields` as 'name', its picture in `pictures`, slot 'board'), and `team_adboards` / `league_adboards` link a team or a
+league to one board (one each; a board may be linked to many). Older files open as they are (the new tables start
+empty).
+Schema 12 (24/11/2026): the game's boards are entities too (kind `adboard`, id = the game's board number, at most
+GAME_ADBOARD_MAX; edited = its picture replaced, like any original) and the boards the user creates take ids from
+FIRST_OWN_ADBOARD, so the two never meet; schema 11 files get their created boards (and their links) renumbered.
 """
 import json
 import sqlite3
 import time
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 12
 DEFAULT_LANG = '*'
-KINDS = ('team', 'league', 'player', 'country', 'stadium')
+KINDS = ('team', 'league', 'player', 'country', 'stadium', 'adboard')
 NAME_TABLES = {'team': ('team_names', 'team_id'), 'league': ('league_names', 'league_id'),
                'country': ('country_names', 'country_id'), 'stadium': ('stadium_names', 'stadium_id')}
 
@@ -83,7 +90,12 @@ CREATE TABLE IF NOT EXISTS dates (kind TEXT, id INTEGER, created_at INTEGER, upd
 CREATE TABLE IF NOT EXISTS stadium_names (stadium_id INTEGER, key TEXT, lang TEXT, text TEXT,
                                           PRIMARY KEY (stadium_id, key, lang));
 CREATE TABLE IF NOT EXISTS team_stadiums (team_id INTEGER PRIMARY KEY, stadium_id INTEGER);
+CREATE TABLE IF NOT EXISTS team_adboards (team_id INTEGER PRIMARY KEY, adboard_id INTEGER);
+CREATE TABLE IF NOT EXISTS league_adboards (league_id INTEGER PRIMARY KEY, adboard_id INTEGER);
 """
+ADBOARD_PICTURE = 'board'  # picture slot of an advertising board
+GAME_ADBOARD_MAX = 999  # the game's boards are numbered below this (teams.adboardid: 8 bits in the game)
+FIRST_OWN_ADBOARD = 1001  # the boards the user creates
 BENCH, RESERVE = 28, 29  # team_rosters.slot of a substitute and of a player out of the squad
 
 Names = dict[str, dict[str, str]]  # {name key: {language or '*': text}}
@@ -96,13 +108,35 @@ class ProjectError(ValueError):
 # what the project keeps of each kind of entity besides its names, fields, pictures and hidden flag:
 # (table, id column); a change in any of these rows changes the entity's `updated_at`
 OWN_TABLES = {
-    'league': (('league_members_set', 'league_id'), ('league_members', 'league_id')),
+    'league': (('league_members_set', 'league_id'), ('league_members', 'league_id'), ('league_adboards', 'league_id')),
     'team': (('team_sources', 'team_id'), ('team_rosters_set', 'team_id'), ('team_rosters', 'team_id'),
-             ('team_kits', 'team_id'), ('team_stadiums', 'team_id')),
+             ('team_kits', 'team_id'), ('team_stadiums', 'team_id'), ('team_adboards', 'team_id')),
     'player': (('player_sources', 'player_id'), ('player_files', 'player_id')),
     'country': (),
     'stadium': (),
+    'adboard': (),
 }
+# where a team or a league keeps its board: (table, id column)
+ADBOARD_LINKS = {'team': ('team_adboards', 'team_id'), 'league': ('league_adboards', 'league_id')}
+
+
+def _renumber_boards(con: sqlite3.Connection) -> None:
+    """Schema 11 -> 12: the boards the user created (numbered from 1) take ids from FIRST_OWN_ADBOARD."""
+    old = [r[0] for r in con.execute("SELECT id FROM created WHERE kind = 'adboard' AND id < ? ORDER BY id",
+                                     (FIRST_OWN_ADBOARD,))]
+    for k, oid in enumerate(old):
+        new = FIRST_OWN_ADBOARD + 1000 + k  # past any id a renumbered board could take before it moves
+        for table in ('created', 'fields', 'pictures', 'hidden', 'dates', 'edited'):
+            con.execute(f"UPDATE {table} SET id = ? WHERE kind = 'adboard' AND id = ?", (new, oid))
+        for table in ('team_adboards', 'league_adboards'):
+            con.execute(f'UPDATE {table} SET adboard_id = ? WHERE adboard_id = ?', (new, oid))
+    for k in range(len(old)):  # then down to FIRST_OWN_ADBOARD, FIRST_OWN_ADBOARD + 1, ...
+        for table in ('created', 'fields', 'pictures', 'hidden', 'dates', 'edited'):
+            con.execute(f"UPDATE {table} SET id = ? WHERE kind = 'adboard' AND id = ?",
+                        (FIRST_OWN_ADBOARD + k, FIRST_OWN_ADBOARD + 1000 + k))
+        for table in ('team_adboards', 'league_adboards'):
+            con.execute(f'UPDATE {table} SET adboard_id = ? WHERE adboard_id = ?',
+                        (FIRST_OWN_ADBOARD + k, FIRST_OWN_ADBOARD + 1000 + k))
 
 
 def _snapshot(con: sqlite3.Connection, kind: str, oid: int) -> list:
@@ -162,6 +196,8 @@ class Project:
             had_dates = found and con.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'dates'").fetchone()
             con.executescript(SCHEMA)
+            if found and row and int(row[0]) == 11:  # created boards move out of the game's numbers
+                _renumber_boards(con)
             if found and row and int(row[0]) < 10:  # a game entity was never created by the project
                 con.execute('UPDATE dates SET created_at = NULL WHERE NOT EXISTS (SELECT 1 FROM created c '
                             'WHERE c.kind = dates.kind AND c.id = dates.id)')
@@ -229,10 +265,13 @@ class Project:
                 con.executemany(f'INSERT INTO {table} VALUES (?,?,?,?)', name_rows)
             con.execute('DELETE FROM fields WHERE kind = ? AND id = ?', (kind, oid))
             con.executemany('INSERT INTO fields VALUES (?,?,?,?)', field_rows)
-            own = kind == 'team' and con.execute(  # a team's squad, kits or pictures keep it edited
+            own = kind == 'team' and con.execute(  # a team's squad, kits, pictures, stadium or board keep it edited
                 'SELECT 1 FROM team_rosters_set WHERE team_id = ? UNION SELECT 1 FROM team_kits WHERE team_id = ? '
                 "UNION SELECT 1 FROM pictures WHERE kind = 'team' AND id = ? "
-                'UNION SELECT 1 FROM team_stadiums WHERE team_id = ?', (oid, oid, oid, oid)).fetchone()
+                'UNION SELECT 1 FROM team_stadiums WHERE team_id = ? UNION SELECT 1 FROM team_adboards WHERE team_id = ?',
+                (oid, oid, oid, oid, oid)).fetchone()
+            own = own or kind == 'league' and con.execute(  # a league's board too
+                'SELECT 1 FROM league_adboards WHERE league_id = ?', (oid,)).fetchone()
             own = own or kind == 'player' and con.execute(  # a player's photo or face files too
                 "SELECT 1 FROM pictures WHERE kind = 'player' AND id = ? UNION "
                 'SELECT 1 FROM player_files WHERE player_id = ?', (oid, oid)).fetchone()
@@ -250,8 +289,10 @@ class Project:
         try:
             con.execute('DELETE FROM pictures WHERE kind = ? AND id = ?', (kind, oid))
             if kind == 'team':
-                for table in ('team_rosters', 'team_rosters_set', 'team_kits', 'team_stadiums'):
+                for table in ('team_rosters', 'team_rosters_set', 'team_kits', 'team_stadiums', 'team_adboards'):
                     con.execute(f'DELETE FROM {table} WHERE team_id = ?', (oid,))
+            if kind == 'league':
+                con.execute('DELETE FROM league_adboards WHERE league_id = ?', (oid,))
             if kind == 'player':
                 con.execute('DELETE FROM player_files WHERE player_id = ?', (oid,))
             con.commit()
@@ -397,7 +438,12 @@ class Project:
             con.close()
 
     def delete(self, kind: str, oid: int) -> None:
-        """Removes a created entity and everything saved for it."""
+        """Removes a created entity and everything saved for it (a board leaves the teams and leagues it was on)."""
+        if kind == 'adboard':
+            users = self.adboard_users(oid)
+            for user_kind, ids in users.items():
+                for user in ids:
+                    self.set_adboard_link(user_kind, user, None)
         self.reset(kind, oid)
         con = self.connect()
         try:
@@ -407,9 +453,11 @@ class Project:
             if kind == 'league':
                 con.execute('DELETE FROM league_members WHERE league_id = ?', (oid,))
                 con.execute('DELETE FROM league_members_set WHERE league_id = ?', (oid,))
+                con.execute('DELETE FROM league_adboards WHERE league_id = ?', (oid,))
             if kind == 'team':
                 con.execute('DELETE FROM league_members WHERE team_id = ?', (oid,))
-                for table in ('team_sources', 'team_rosters', 'team_rosters_set', 'team_kits', 'team_stadiums'):
+                for table in ('team_sources', 'team_rosters', 'team_rosters_set', 'team_kits', 'team_stadiums',
+                              'team_adboards'):
                     con.execute(f'DELETE FROM {table} WHERE team_id = ?', (oid,))
             if kind == 'player':  # out of every squad the user set too
                 con.execute('DELETE FROM player_sources WHERE player_id = ?', (oid,))
@@ -606,8 +654,9 @@ class Project:
             if stadium_id is None and not con.execute(  # nothing else of the team left: it is the game's again
                     "SELECT 1 FROM fields WHERE kind = 'team' AND id = ? UNION SELECT 1 FROM team_names WHERE team_id = ? "
                     "UNION SELECT 1 FROM pictures WHERE kind = 'team' AND id = ? UNION SELECT 1 FROM team_kits "
-                    'WHERE team_id = ? UNION SELECT 1 FROM team_rosters_set WHERE team_id = ?',
-                    (team_id,) * 5).fetchone():
+                    'WHERE team_id = ? UNION SELECT 1 FROM team_rosters_set WHERE team_id = ? '
+                    'UNION SELECT 1 FROM team_adboards WHERE team_id = ?',
+                    (team_id,) * 6).fetchone():
                 con.execute("DELETE FROM edited WHERE kind = 'team' AND id = ?", (team_id,))
             con.commit()
         finally:
@@ -625,6 +674,59 @@ class Project:
         con = self.connect()
         try:
             return {r[0]: r[1] for r in con.execute('SELECT team_id, stadium_id FROM team_stadiums')}
+        finally:
+            con.close()
+
+    # ---- advertising boards -------------------------------------------------------------------------------------
+
+    @_dated
+    def set_adboard_link(self, kind: str, oid: int, adboard_id: int | None) -> None:
+        """The board of a team or a league (kind 'team' / 'league'); None = none (the game's own boards)."""
+        table, column = ADBOARD_LINKS[kind]
+        con = self.connect()
+        try:
+            if adboard_id is None:
+                con.execute(f'DELETE FROM {table} WHERE {column} = ?', (oid,))
+            else:
+                con.execute(f'INSERT OR REPLACE INTO {table} VALUES (?, ?)', (oid, adboard_id))
+            con.commit()
+        finally:
+            con.close()
+        self.save(kind, oid, self.names(kind, oid), self.fields(kind, oid))  # keeps `edited` right
+
+    def adboard_link(self, kind: str, oid: int) -> int | None:
+        table, column = ADBOARD_LINKS[kind]
+        con = self.connect()
+        try:
+            r = con.execute(f'SELECT adboard_id FROM {table} WHERE {column} = ?', (oid,)).fetchone()
+            return r[0] if r else None
+        finally:
+            con.close()
+
+    def all_adboard_links(self, kind: str) -> dict[int, int]:
+        """{team or league id: board id}."""
+        table, column = ADBOARD_LINKS[kind]
+        con = self.connect()
+        try:
+            return {r[0]: r[1] for r in con.execute(f'SELECT {column}, adboard_id FROM {table}')}
+        finally:
+            con.close()
+
+    def adboard_users(self, adboard_id: int) -> dict[str, list[int]]:
+        """The teams and leagues a board is on: {'team': [...], 'league': [...]}."""
+        con = self.connect()
+        try:
+            return {kind: [r[0] for r in con.execute(
+                f'SELECT {column} FROM {table} WHERE adboard_id = ? ORDER BY {column}', (adboard_id,))]
+                for kind, (table, column) in ADBOARD_LINKS.items()}
+        finally:
+            con.close()
+
+    def next_adboard_id(self) -> int:
+        con = self.connect()
+        try:
+            r = con.execute("SELECT MAX(id) FROM created WHERE kind = 'adboard'").fetchone()
+            return max(FIRST_OWN_ADBOARD, (r[0] or 0) + 1)
         finally:
             con.close()
 
@@ -737,6 +839,11 @@ class VisibleProject:
 
     def player_files(self, player_id: int) -> dict[str, bytes]:
         return {} if self._out('player', player_id) else self._project.player_files(player_id)
+
+    def all_adboard_links(self, kind: str) -> dict[int, int]:
+        """Without the boards left out of the patch and the teams/leagues left out of it."""
+        return {oid: board for oid, board in self._project.all_adboard_links(kind).items()
+                if not self._out(kind, oid) and not self._out('adboard', board)}
 
     def all_team_names(self) -> dict[int, Names]:
         return self.all_names('team')

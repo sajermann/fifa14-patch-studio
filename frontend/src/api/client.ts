@@ -1,5 +1,5 @@
 import { hasMessage, translate } from '@/i18n'
-import type { BuildProgress, BulkKind, Config, CountryDetail, CountryRow, FaceChoice, FacePackCheck, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, MachineInfo, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, SetupRequest, Status, StadiumDetail, StadiumRow, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook, ProjectIssue } from './types'
+import type { Adboard, AdboardBody, AdboardList, BuildProgress, BulkKind, Config, CountryDetail, CountryRow, FaceChoice, FacePackCheck, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, MachineInfo, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, SetupRequest, Status, StadiumDetail, StadiumRow, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook, ProjectIssue } from './types'
 
 /** Error of the backend; `message` is in the interface language when the app knows its code. */
 export class ApiError extends Error {
@@ -89,6 +89,15 @@ export const api = {
   resetStadium: (id: number) => request<StadiumDetail>('DELETE', `/api/stadiums/${id}/edits`),
   /** The stadium the team plays in; null = the game's again. */
   setTeamStadium: (id: number, stadium: number | null) => request<TeamDetail>('PUT', `/api/teams/${id}/stadium`, { stadium }),
+  adboards: () => get<AdboardList>('/api/adboards'),
+  adboard: (id: number) => get<Adboard>(`/api/adboards/${id}`),
+  createAdboard: (body: AdboardBody) => post<Adboard>('/api/adboards', body),
+  saveAdboard: (id: number, body: AdboardBody) => request<Adboard>('PUT', `/api/adboards/${id}`, body),
+  deleteAdboard: (id: number) => request<{ deleted: number }>('DELETE', `/api/adboards/${id}`),
+  resetAdboard: (id: number) => request<Adboard>('DELETE', `/api/adboards/${id}/edits`),
+  setAdboardHidden: (id: number, hidden: boolean) => request<Adboard>('PUT', `/api/adboards/${id}/hidden`, { hidden }),
+  setTeamAdboard: (id: number, adboard: number | null) => request<TeamDetail>('PUT', `/api/teams/${id}/adboard`, { adboard }),
+  setLeagueAdboard: (id: number, adboard: number | null) => request<LeagueDetail>('PUT', `/api/leagues/${id}/adboard`, { adboard }),
   team: (id: number) => get<TeamDetail>(`/api/teams/${id}`),
   saveTeam: (id: number, names: NameTable, fields: Fields) => request<TeamDetail>('PUT', `/api/teams/${id}`, { names, fields }),
   resetTeam: (id: number) => request<TeamDetail>('DELETE', `/api/teams/${id}/edits`),

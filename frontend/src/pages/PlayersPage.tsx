@@ -113,7 +113,7 @@ export function PlayersPage() {
             <SortHead field="birthdate" label={t('col.birthdate')} state={sortState} className="text-center" />
             <SortHead field="id" label={t('col.id')} state={sortState} className="text-center" />
             <TableHead>{t('col.nationality')}</TableHead>
-            <DateHeads />
+            <DateHeads sort={sortState} />
             <TableHead className="w-28" />
             <TableHead className="w-16" />
           </TableRow>
