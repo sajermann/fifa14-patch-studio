@@ -99,7 +99,7 @@ export function PlayersPage() {
         />
         <BulkActions kind="player" selection={selection} invalidate={['players', 'player', 'teams', 'team']} />
       </FilterBar>
-      <ScrollTable>
+      <ScrollTable loading={!data}>
         <TableHeader>
           <TableRow>
             <TableHead className="w-8">

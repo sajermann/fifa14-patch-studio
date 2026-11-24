@@ -50,14 +50,21 @@ empty).
 Schema 12 (24/11/2026): the game's boards are entities too (kind `adboard`, id = the game's board number, at most
 GAME_ADBOARD_MAX; edited = its picture replaced, like any original) and the boards the user creates take ids from
 FIRST_OWN_ADBOARD, so the two never meet; schema 11 files get their created boards (and their links) renumbered.
+Schema 13 (24/11/2026) adds boots, goalkeeper gloves and balls (f14mod.equipment): kinds `boot`,
+`glove` and `ball`, id = their code in the game (the game's own items are edited like any original; a new one takes a
+free code when it is created); their name, credits and credits page are fields ('name', 'credits', 'credits_url'), the
+files of the pack they come from are kept in `equipment_files` (name 'mesh' or 'texture') and their picture in
+`pictures` (slot 'thumbnail'). A player wears one through his fields shoetypecode / gkglovetypecode and a team plays
+with one through balltype. Older files open as they are (the new table starts empty).
 """
 import json
 import sqlite3
 import time
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 DEFAULT_LANG = '*'
-KINDS = ('team', 'league', 'player', 'country', 'stadium', 'adboard')
+KINDS = ('team', 'league', 'player', 'country', 'stadium', 'adboard', 'boot', 'glove', 'ball')
+EQUIPMENT_KINDS = ('boot', 'glove', 'ball')
 NAME_TABLES = {'team': ('team_names', 'team_id'), 'league': ('league_names', 'league_id'),
                'country': ('country_names', 'country_id'), 'stadium': ('stadium_names', 'stadium_id')}
 
@@ -92,8 +99,10 @@ CREATE TABLE IF NOT EXISTS stadium_names (stadium_id INTEGER, key TEXT, lang TEX
 CREATE TABLE IF NOT EXISTS team_stadiums (team_id INTEGER PRIMARY KEY, stadium_id INTEGER);
 CREATE TABLE IF NOT EXISTS team_adboards (team_id INTEGER PRIMARY KEY, adboard_id INTEGER);
 CREATE TABLE IF NOT EXISTS league_adboards (league_id INTEGER PRIMARY KEY, adboard_id INTEGER);
+CREATE TABLE IF NOT EXISTS equipment_files (kind TEXT, id INTEGER, name TEXT, data BLOB, PRIMARY KEY (kind, id, name));
 """
 ADBOARD_PICTURE = 'board'  # picture slot of an advertising board
+EQUIPMENT_PICTURE = 'thumbnail'  # picture slot of a boot, glove or ball (the user's; none = drawn from its files)
 GAME_ADBOARD_MAX = 999  # the game's boards are numbered below this (teams.adboardid: 8 bits in the game)
 FIRST_OWN_ADBOARD = 1001  # the boards the user creates
 BENCH, RESERVE = 28, 29  # team_rosters.slot of a substitute and of a player out of the squad
@@ -115,6 +124,9 @@ OWN_TABLES = {
     'country': (),
     'stadium': (),
     'adboard': (),
+    'boot': (),
+    'glove': (),
+    'ball': (),
 }
 # where a team or a league keeps its board: (table, id column)
 ADBOARD_LINKS = {'team': ('team_adboards', 'team_id'), 'league': ('league_adboards', 'league_id')}
@@ -145,6 +157,8 @@ def _snapshot(con: sqlite3.Connection, kind: str, oid: int) -> list:
     tables = [(NAME_TABLES[kind][0], NAME_TABLES[kind][1], '')] if kind in NAME_TABLES else []
     tables += [('fields', 'id', ' AND kind = :kind'), ('pictures', 'id', ' AND kind = :kind'),
                ('hidden', 'id', ' AND kind = :kind')]
+    if kind in EQUIPMENT_KINDS:
+        tables.append(('equipment_files', 'id', ' AND kind = :kind'))
     tables += [(table, column, '') for table, column in OWN_TABLES.get(kind, ())]
     for table, column, extra in tables:
         skip = {'updated_at'} if table == 'pictures' else set()  # the picture's own save time is not its content
@@ -275,6 +289,9 @@ class Project:
             own = own or kind == 'player' and con.execute(  # a player's photo or face files too
                 "SELECT 1 FROM pictures WHERE kind = 'player' AND id = ? UNION "
                 'SELECT 1 FROM player_files WHERE player_id = ?', (oid, oid)).fetchone()
+            own = own or kind in EQUIPMENT_KINDS and con.execute(  # an item's files or picture too
+                'SELECT 1 FROM equipment_files WHERE kind = ? AND id = ? UNION '
+                'SELECT 1 FROM pictures WHERE kind = ? AND id = ?', (kind, oid, kind, oid)).fetchone()
             if name_rows or field_rows or own:
                 con.execute('INSERT OR REPLACE INTO edited VALUES (?, ?, ?)', (kind, oid, int(time.time())))
             else:
@@ -295,6 +312,8 @@ class Project:
                 con.execute('DELETE FROM league_adboards WHERE league_id = ?', (oid,))
             if kind == 'player':
                 con.execute('DELETE FROM player_files WHERE player_id = ?', (oid,))
+            if kind in EQUIPMENT_KINDS:
+                con.execute('DELETE FROM equipment_files WHERE kind = ? AND id = ?', (kind, oid))
             con.commit()
         finally:
             con.close()
@@ -767,6 +786,48 @@ class Project:
         try:
             return {r[0]: bytes(r[1]) for r in con.execute(
                 'SELECT name, data FROM player_files WHERE player_id = ?', (player_id,))}
+        finally:
+            con.close()
+
+    # ---- boots, gloves and balls ------------------------------------------------------------------------------
+
+    @_dated
+    def set_equipment_files(self, kind: str, oid: int, files: dict[str, bytes | None]) -> None:
+        """Sets the item's files by name ('mesh', 'texture'); None removes one, names not given are kept."""
+        con = self.connect()
+        try:
+            for name, data in files.items():
+                con.execute('DELETE FROM equipment_files WHERE kind = ? AND id = ? AND name = ?', (kind, oid, name))
+                if data is not None:
+                    con.execute('INSERT INTO equipment_files VALUES (?, ?, ?, ?)', (kind, oid, name, data))
+            con.commit()
+        finally:
+            con.close()
+        self.save(kind, oid, fields=self.fields(kind, oid))
+
+    def equipment_files(self, kind: str, oid: int) -> dict[str, bytes]:
+        con = self.connect()
+        try:
+            return {r[0]: bytes(r[1]) for r in con.execute(
+                'SELECT name, data FROM equipment_files WHERE kind = ? AND id = ?', (kind, oid))}
+        finally:
+            con.close()
+
+    def with_equipment_files(self, kind: str) -> list[int]:
+        con = self.connect()
+        try:
+            return [r[0] for r in con.execute(
+                'SELECT DISTINCT id FROM equipment_files WHERE kind = ? ORDER BY id', (kind,))]
+        finally:
+            con.close()
+
+    def edited(self, kind: str) -> list[int]:
+        """The game's entities of this kind the project changed (not the created ones)."""
+        con = self.connect()
+        try:
+            return [r[0] for r in con.execute(
+                'SELECT id FROM edited WHERE kind = ? AND id NOT IN (SELECT id FROM created WHERE kind = ?) '
+                'ORDER BY id', (kind, kind))]
         finally:
             con.close()
 

@@ -90,6 +90,8 @@ PLAYER = [
              ('hasseasonaljersey', 0, 7)], 'body'),
     *_codes([(f'{kind}{n}', 0, hi) for n in (1, 2, 3, 4)
              for kind, hi in (('accessorycode', 31), ('accessorycolourcode', 15))], 'accessories'),
+    # the boot and the goalkeeper glove (f14mod.equipment): a boot code > 0 also writes the licensed colors 30/31
+    *_codes([('shoetypecode', 0, 255), ('gkglovetypecode', 0, 127)], 'equipment'),
     *_codes([('runningcode1', 0, 127), ('runningcode2', 0, 127), ('finishingcode1', 0, 127),
              ('finishingcode2', 0, 127), ('animfreekickstartposcode', 0, 15), ('animpenaltieskickstylecode', 0, 3),
              ('animpenaltiesmotionstylecode', 0, 7), ('animpenaltiesstartposcode', 0, 15), ('gkkickstyle', 0, 3),
@@ -120,6 +122,8 @@ TEAM = [
     # one of the game's 33 formations (formations rows of team -1, relativeformationid): the team's own formation row
     # takes its positions (test TN1); shown on the Squad tab, not with the other fields
     FieldSpec('formation', 'lineup', 'select', options=tuple(range(1, 34))),
+    # the ball of the team's home matches (f14mod.equipment)
+    FieldSpec('balltype', 'equipment', 'code', 0, 255),
 ]
 
 LEAGUE = [
@@ -299,6 +303,9 @@ def to_columns(kind: str, values: dict) -> dict:
             out[name] = _to_days(value)
         else:
             out[name] = value
+    if kind == 'player' and 'shoetypecode' in values:
+        from .equipment import player_columns
+        out.update(player_columns(values))
     return out
 
 

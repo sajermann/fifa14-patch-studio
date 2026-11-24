@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsUpDown, Search, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsUpDown, Loader2, Search, X } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
@@ -157,7 +157,38 @@ export function Pager({ page, pages, total, size, onPage }: { page: number; page
 export const LIST_PAGE = 'flex h-full min-h-[24rem] flex-col gap-4'
 
 /** Table that fills the rest of the page and scrolls inside (the header sticks). */
-export function ScrollTable({ children }: { children: ReactNode }) {
+/** The sort of a list the page has whole (the server sorts the others): the state for SortHead and the rows sorted.
+ * Unsorted, the rows keep their order; texts by name (any case), empty values last. */
+export function useLocalSort<T>(rows: T[], keys: Record<string, (row: T) => string | number | null | undefined>) {
+  const [sort, setSort] = useState('')
+  const [dir, setDir] = useState('')
+  const state = {
+    sort,
+    dir,
+    update: (c: Record<string, string | null>) => {
+      setSort(c.sort ?? '')
+      setDir(c.dir ?? '')
+    },
+    current: sort,
+    currentDir: sort ? dir || 'asc' : '',
+  }
+  const key = keys[sort]
+  if (!key) return { state, rows }
+  const sign = state.currentDir === 'desc' ? -1 : 1
+  const empty = (v: unknown) => v === null || v === undefined || v === ''
+  const sorted = [...rows].sort((a, b) => {
+    const x = key(a)
+    const y = key(b)
+    if (empty(x) || empty(y)) return empty(x) ? (empty(y) ? 0 : 1) : -1
+    const order = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { sensitivity: 'base', numeric: true })
+    return order * sign
+  })
+  return { state, rows: sorted }
+}
+
+/** A list's table, scrolling under its fixed header; `loading` = its rows are on the way (a spinner below the header). */
+export function ScrollTable({ children, loading }: { children: ReactNode; loading?: boolean }) {
+  const { t } = useI18n()
   return (
     <div className="min-h-0 flex-1 overflow-auto rounded-md border">
       <table
@@ -169,6 +200,11 @@ export function ScrollTable({ children }: { children: ReactNode }) {
       >
         {children}
       </table>
+      {loading && (
+        <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" /> {t('common.loading')}
+        </div>
+      )}
     </div>
   )
 }

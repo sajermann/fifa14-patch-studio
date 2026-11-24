@@ -94,7 +94,7 @@ export function CountriesPage() {
         />
         <BulkActions kind="country" selection={selection} invalidate={['countries', 'country', 'leagues']} />
       </FilterBar>
-      <ScrollTable>
+      <ScrollTable loading={!data}>
         <TableHeader>
           <TableRow>
             <TableHead className="w-8">

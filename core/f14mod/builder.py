@@ -17,6 +17,7 @@ converted faces are kept in the build cache (f14mod.buildcache): building again 
 faces are copied as they are.
 """
 import functools
+import io
 import os
 import shutil
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -26,11 +27,12 @@ import re
 
 from PIL import Image
 
-from . import adboards, bh, buildcache, facefill, faceconv, fields, fifa14, flags, images, t3db, teamkits, workers
+from . import (adboards, bh, buildcache, equipment, facefill, faceconv, fields, fifa14, flags, images, rx3, t3db,
+               teamkits, workers)
 from .big import BigArchive, normalize, rebuild
 from .dbedit import Database, LanguageStrings, Table
 from .gamefs import DATABASE, GameFiles
-from .project import ADBOARD_PICTURE, DEFAULT_LANG, Project
+from .project import ADBOARD_PICTURE, DEFAULT_LANG, EQUIPMENT_KINDS, EQUIPMENT_PICTURE, Project
 
 LOCALE = 'data/loc/locale.big'
 
@@ -239,6 +241,11 @@ def language_edits(project: Project) -> dict[str, dict[str, str]]:
                     if lang == DEFAULT_LANG and kind in FILL_ONLY_KINDS and oid not in created:
                         lang = FILL_ONLY
                     out.setdefault(lang, {})[f'{prefix}{oid}'] = text
+    for kind in EQUIPMENT_KINDS:  # the names of boots, gloves and balls: one text for every language
+        for oid in set(project.created(kind)) | set(project.edited(kind)):
+            name = (project.fields(kind, oid).get('name') or '').strip()
+            if name:
+                out.setdefault(DEFAULT_LANG, {}).update(equipment.name_strings(kind, oid, name))
     return out
 
 
@@ -996,8 +1003,9 @@ def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') 
     hiding = any(project.hidden_in_game(kind) for kind in ('country', 'league', 'team'))
     team_work = project.all_rosters() or project.all_kits() or project.with_picture('team', 'crest') \
         or project.with_picture('player', 'photo') or project.all_team_stadiums()
+    equipment_work = bool(project.created('boot') or project.created('ball') or named_game_boots(project))
     if not any(project.all_fields(kind) for kind in ID_COLUMNS) and not has_created and not project.all_members() \
-            and not hiding and not team_work:
+            and not hiding and not team_work and not equipment_work:
         return None
     meta_raw, raw = files.read(fifa14.META), files.read(DATABASE)
     if meta_raw is None or raw is None:
@@ -1016,6 +1024,8 @@ def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') 
                        ('player_files', write_player_files(files, db, project, builder))):
         if value:
             result[key] = value
+    if rows := write_equipment_rows(db, project):
+        result['equipment'] = rows
     result['league_links'] = write_members(db, project)
     visibility = write_visibility(db, project)
     if visibility:
@@ -1023,6 +1033,71 @@ def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') 
     builder.put(DATABASE, db.build())
     builder.put(fifa14.META, meta_raw)
     return result
+
+
+def named_game_boots(project: Project) -> list[int]:
+    """The game's boots the user named (they join the edit player screen's list)."""
+    return [c for c in project.edited('boot') if (project.fields('boot', c).get('name') or '').strip()]
+
+
+def write_equipment_rows(db: Database, project: Project) -> dict:
+    """The rows the game lists boots and balls by: `playerboots` (new boots and the game's boots the user named)
+    and `teamballs` (new balls: the match settings list)."""
+    out = {}
+    boots, named = project.created('boot'), named_game_boots(project)
+    if boots or named:
+        table = db.table('playerboots')
+        added = equipment.add_store_boots(table, boots) if boots else 0
+        listed = equipment.list_boots(table, set(named))
+        if added or listed:
+            out['boots'] = added
+    balls = project.created('ball')
+    if balls:
+        if added := equipment.add_menu_balls(db.table('teamballs'), balls):
+            out['balls'] = added
+    return out
+
+
+def write_equipment(files: GameFiles, project: Project, builder: 'PatchBuilder') -> dict | None:
+    """The files of the project's boots, gloves and balls: new ones (their codes) and the game's own the user gave
+    new files or a new picture (f14mod.equipment); made in the thread pool."""
+    done = {}
+    game_gloves = set(equipment.game_codes(files, 'glove'))
+    for kind in EQUIPMENT_KINDS:
+        created = set(project.created(kind))
+        for code in sorted(created | set(project.edited(kind))):
+            own = project.equipment_files(kind, code)
+            picture = project.picture(kind, code, EQUIPMENT_PICTURE) if kind == 'ball' else None
+            if not own and picture is None:
+                continue
+            name = (project.fields(kind, code).get('name') or '').strip() or str(code)
+            new_mesh = kind == 'glove' and code not in game_gloves
+            parts = (kind, code, own.get('mesh'), own.get('texture'), picture[0] if picture else None, new_mesh,
+                     code in created)
+            builder.later(kind, name, builder.key(kind, ('equipment',), *parts),
+                          functools.partial(_equipment_files, files, *parts))
+            done[kind] = done.get(kind, 0) + 1
+    return done or None
+
+
+def _equipment_files(files: GameFiles, kind: str, code: int, mesh: bytes | None, texture: bytes | None,
+                     picture: bytes | None, new_mesh: bool, created: bool) -> dict[str, bytes]:
+    if kind == 'boot':
+        return equipment.boot_files(files, code, mesh, texture)
+    if kind == 'glove':
+        return equipment.glove_files(files, code, texture, new_mesh)
+    shown = None
+    if picture is not None:
+        shown = Image.open(io.BytesIO(picture))
+    elif created or mesh is not None or texture is not None:  # the menu's picture drawn from the ball's files
+        m = mesh if mesh is not None else files.read(equipment.mesh_path('ball', code))
+        t = texture if texture is not None else files.read(equipment.texture_path('ball', code))
+        if m is not None and t is not None:
+            try:
+                shown = equipment.thumbnail('ball', rx3.unpack(m), equipment.game_textures('ball', t), 512)
+            except Exception:  # noqa: BLE001 (a mesh the drawing cannot read: the menu keeps the game's picture)
+                shown = None
+    return equipment.ball_files(files, code, mesh, texture, shown)
 
 
 def language_files(lang: str, base: bytes | None, upd: bytes | None, wanted: dict[str, str],
@@ -1104,6 +1179,7 @@ def build(files: GameFiles, project: Project, out_dir: str, progress=None, worke
         # ---- database (its pictures go to the thread pool)
         database = write_database(files, project, builder)
         boards = write_adboards(files, project, builder)
+        gear = write_equipment(files, project, builder)
         step('database', 1, 1)
         check()
         pictures = created_pictures(files, project, builder)
@@ -1150,4 +1226,6 @@ def build(files: GameFiles, project: Project, out_dir: str, progress=None, worke
     summary['pictures'] = pictures
     if boards:
         summary['adboards'] = boards
+    if gear:
+        summary['equipment'] = gear
     return summary

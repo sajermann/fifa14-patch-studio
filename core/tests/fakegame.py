@@ -17,6 +17,7 @@ TEAM = 7001           # team with names, crest, the three kits and 16 players (2
 SMALL_TEAM = 7002     # team without names or pictures, 6 players
 STAR = 8001           # player with real face and photo, the best of TEAM
 KEEPER, BACKUP_KEEPER = 8002, 8003
+GAME_BOOT, GAME_GLOVE, GAME_BALL = 5, 1, 1  # the boot, glove and ball the game has files for
 SHARED = 8016         # player in both teams
 SMALL_TEAM_PLAYERS = [SHARED] + list(range(8101, 8106))
 
@@ -27,7 +28,7 @@ NATIONS = [{'nationid': 54, 'nationname': 'Nowhereland', 'teamid': -1, 'confeder
 LEAGUES = [{'leagueid': LEAGUE, 'leaguename': 'Test League (1)', 'countryid': 54, 'level': 1},
            {'leagueid': PLAIN_LEAGUE, 'leaguename': 'Plain League', 'countryid': 52, 'level': 2}]
 TEAMS = [
-    {'teamid': TEAM, 'teamname': 'Test Athletic Club', 'teamcolor1r': 200, 'teamcolor1g': 10, 'teamcolor1b': 20,
+    {'teamid': TEAM, 'balltype': GAME_BALL, 'teamname': 'Test Athletic Club', 'teamcolor1r': 200, 'teamcolor1g': 10, 'teamcolor1b': 20,
      'teamcolor2r': 250, 'teamcolor2g': 250, 'teamcolor2b': 250, 'captainid': STAR, 'penaltytakerid': STAR,
      'freekicktakerid': 8004, 'longkicktakerid': 8004, 'leftcornerkicktakerid': 8005,
      'rightcornerkicktakerid': 8005},
@@ -80,6 +81,9 @@ def _players():
             'trait1': 1 << 14 if pid == STAR else 0, 'trait2': 1 << 12, 'headclasscode': 0 if pid == STAR else 1,
             # appearance codes outside any short list: they must go exactly as they are
             'headtypecode': 2500 + pid % 7, 'hairtypecode': 30 + pid % 5, 'haircolorcode': 3, 'skintonecode': 1 + pid % 10,
+            # boot (the generic one, the game's colors) and goalkeeper glove (the goalkeepers' 1)
+            'shoetypecode': 0, 'shoecolorcode1': 2, 'shoecolorcode2': 5, 'shoedesigncode': 1,
+            'gkglovetypecode': GAME_GLOVE if position == 0 else 0,
             **{attr: overall for attr in ('acceleration', 'sprintspeed', 'finishing', 'shortpassing', 'dribbling',
                                           'ballcontrol', 'standingtackle', 'interceptions', 'strength',
                                           'stamina', 'gkdiving', 'gkhandling', 'gkpositioning', 'gkreflexes')}})
@@ -439,6 +443,21 @@ def build(root):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'wb') as f:
             f.write(blob)
+    # a boot, a glove and a ball of the game (f14mod.equipment), and the ball's picture of the match settings
+    for game_path, blob in ((f'data/sceneassets/shoe/shoe_{GAME_BOOT}.rx3', mesh_rx3('shoe')),
+                            (f'data/sceneassets/shoe/shoe_{GAME_BOOT}_0_textures.rx3', equipment_textures('boot', (0, 90, 0))),
+                            (f'data/sceneassets/gkglove/gkglove_{GAME_GLOVE}.rx3', mesh_rx3('gkglove')),
+                            (f'data/sceneassets/gkglove/gkglove_{GAME_GLOVE}_textures.rx3', equipment_textures('glove', (90, 90, 90))),
+                            (f'data/sceneassets/ball/ball_{GAME_BALL}.rx3', mesh_rx3('ball')),
+                            (f'data/sceneassets/ball/ball_{GAME_BALL}_textures.rx3', equipment_textures('ball', (250, 250, 250)))):
+        path = os.path.join(root, 'Game', *game_path.split('/'))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'wb') as f:
+            f.write(blob)
+    ball_picture = io.BytesIO()
+    Image.new('RGBA', (64, 32), (0, 0, 0, 0)).save(ball_picture, 'DDS', pixel_format='DXT5')
+    write_big(os.path.join(data, 'ui', 'artassets', 'settingsimg', f'ball_{GAME_BALL}.big'),
+              {'0': b'Apt Data:fake screen', '2': ball_picture.getvalue()})
     # the game's board file and stadium script (advertising boards, f14mod.adboards)
     for game_path, blob in (('data/sceneassets/adboard/adboard_1_0.rx3', adboard_rx3((90, 90, 90))),
                             ('data/fifarna/lua/assets/stadium.lua', STADIUM_SCRIPT)):
@@ -470,7 +489,21 @@ def _tables():
             'stadiums': [{'stadiumid': 3, 'name': 'Test Ground', 'capacity': 12345, 'yearbuilt': 1901,
                           'countrycode': 54, 'hometeamid': TEAM, 'timeofday1': 1, 'timeofday2': 3, 'timeofday3': 5,
                           'timeofday4': 5, 'tod1weather': 3, 'tod2weather': 1, 'tod3weather': 0, 'tod4weather': 0}],
-            'stadiumassignments': [{'teamid': TEAM, 'stadiumcustomname': 'Custom Park'}]}
+            'stadiumassignments': [{'teamid': TEAM, 'stadiumcustomname': 'Custom Park'}],
+            # boots of the edit player list (a store boot, a hidden one) and the balls of the match settings
+            'playerboots': [_boot_row(GAME_BOOT, -1, 1), _boot_row(GAME_BOOT + 1, 475, 0)],
+            'teamballs': [{'powid': -1, 'islicensed': 0, 'isembargoed': 0, 'isavailableinstore': 1, 'ballid': GAME_BALL}]}
+
+
+def _boot_row(shoetype, powid, store):
+    return {'powid': powid, 'islocked': 0, 'islegacy': 0, 'shoecolor1': 30, 'islicensed': 1, 'shoetype': shoetype,
+            'isembargoed': 0, 'isavailableinstore': store, 'isadidas': 0, 'shoedesign': 0, 'shoecolor2': 31}
+
+
+def equipment_textures(kind, color):
+    """A texture file of a boot, glove or ball in the game's layout, every texture of one color."""
+    from f14mod import equipment
+    return equipment.textures_file([(n, Image.new('RGB', (16, 16), color)) for n in equipment.TEXTURES[kind]])
 
 
 def number_font_rx3(color):

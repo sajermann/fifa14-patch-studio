@@ -24,6 +24,7 @@ import { EditActions, FieldsEditor, NamesGrid, useEntityForm } from '@/component
 import { HideButton, OutOfPatchBadge, usePendingHide } from '@/components/common/HideButton'
 import { Crest } from '@/components/common/pictures'
 import { AdboardChoice, type PendingAdboard } from '@/components/adboard/AdboardChoice'
+import { EquipmentChoice } from '@/components/equipment/EquipmentChoice'
 import { TeamCrest } from '@/components/team/TeamCrest'
 import { TeamKits } from '@/components/team/TeamKits'
 import { TeamLeagues } from '@/components/team/TeamLeagues'
@@ -36,7 +37,7 @@ import { BackButton, useBack, useFrom, useTabParam } from '@/lib/back'
 import { toast } from '@/lib/notify'
 import { useToken } from '@/state/queries'
 
-const TABS = ['data', 'crest', 'kits', 'leagues', 'roster', 'stadium', 'adboard', 'raw'] as const
+const TABS = ['data', 'crest', 'kits', 'leagues', 'roster', 'stadium', 'other', 'raw'] as const
 
 const sameIds = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => v === b[i])
 const sameSet = (a: number[], b: number[]) => a.length === b.length && a.every((v) => b.includes(v))
@@ -171,23 +172,23 @@ export function TeamPage() {
             <EntryDates entry={team} />
           </div>
         </div>
-        <div className="flex flex-wrap items-start gap-2">
-          <EditActions edited={team.edited && !team.is_new} entity={entity} />
-          <HideButton
-            variant="outline"
-            hidden={hide.hidden}
-            onToggle={hide.toggle}
-            hideHint={t(team.is_new ? 'teams.hideHint' : 'teams.originalHideHint')}
-            showHint={t(team.is_new ? 'teams.showHint' : 'teams.originalShowHint')}
-          />
-          {team.is_new && (
-            <Button variant="outline" size="sm" onClick={() => setDeleting(true)}>
-              <Trash2 /> {t('common.delete')}
-            </Button>
-          )}
-          <span className="self-center">
-            <EntityIssues kind="team" id={id} />
-          </span>
+        <div className="flex flex-col items-end justify-between">
+          <div className="flex flex-wrap gap-2">
+            <EditActions edited={team.edited && !team.is_new} entity={entity} />
+            <HideButton
+              variant="outline"
+              hidden={hide.hidden}
+              onToggle={hide.toggle}
+              hideHint={t(team.is_new ? 'teams.hideHint' : 'teams.originalHideHint')}
+              showHint={t(team.is_new ? 'teams.showHint' : 'teams.originalShowHint')}
+            />
+            {team.is_new && (
+              <Button variant="outline" size="sm" onClick={() => setDeleting(true)}>
+                <Trash2 /> {t('common.delete')}
+              </Button>
+            )}
+          </div>
+          <EntityIssues kind="team" id={id} />
         </div>
       </div>
       {team.is_new && team.leagues.length === 0 && <p className="text-sm text-amber-600 dark:text-amber-400">{t('team.noLeague')}</p>}
@@ -206,7 +207,7 @@ export function TeamPage() {
             {t('team.tab.roster')} ({squad.length})
           </TabsTrigger>
           <TabsTrigger value="stadium">{t('tab.stadium')}</TabsTrigger>
-          <TabsTrigger value="adboard">{t('tab.adboard')}</TabsTrigger>
+          <TabsTrigger value="other">{t('tab.other')}</TabsTrigger>
           <TabsTrigger value="raw">{t('tab.raw')}</TabsTrigger>
         </TabsList>
         <TabsContent value="data" className="space-y-4">
@@ -280,8 +281,12 @@ export function TeamPage() {
             onPending={setPendingStadium}
           />
         </TabsContent>
-        <TabsContent value="adboard">
-          <AdboardChoice kind="team" saved={team.adboard_id} pending={pendingAdboard} onPending={setPendingAdboard} />
+        {/* what else the team takes into its matches: its advertising board and its ball */}
+        <TabsContent value="other">
+          <div className="grid items-start gap-4 lg:grid-cols-2">
+            <AdboardChoice kind="team" saved={team.adboard_id} pending={pendingAdboard} onPending={setPendingAdboard} />
+            <EquipmentChoice kind="ball" owner={team.name} values={team.values} fields={entity.form.fields} setField={entity.setField} />
+          </div>
         </TabsContent>
         <TabsContent value="raw">
           <Section title={t('tab.raw')}>

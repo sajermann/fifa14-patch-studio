@@ -10,6 +10,12 @@ import { I18nProvider, onLanguageChange, useI18n } from '@/i18n'
 import { ThemeProvider } from '@/lib/theme'
 import { AdboardPage } from '@/pages/AdboardPage'
 import { AdboardsPage } from '@/pages/AdboardsPage'
+import { BallPage } from '@/pages/BallPage'
+import { BallsPage } from '@/pages/BallsPage'
+import { BootPage } from '@/pages/BootPage'
+import { BootsPage } from '@/pages/BootsPage'
+import { GlovePage } from '@/pages/GlovePage'
+import { GlovesPage } from '@/pages/GlovesPage'
 import { CountriesPage } from '@/pages/CountriesPage'
 import { CountryPage } from '@/pages/CountryPage'
 import { LeaguePage } from '@/pages/LeaguePage'
@@ -94,6 +100,12 @@ const router = createBrowserRouter([
           { path: 'stadiums/:id', element: <StadiumPage /> },
           { path: 'adboards', element: <AdboardsPage /> },
           { path: 'adboards/:id', element: <AdboardPage /> },
+          { path: 'boots', element: <BootsPage /> },
+          { path: 'boots/:id', element: <BootPage /> },
+          { path: 'gloves', element: <GlovesPage /> },
+          { path: 'gloves/:id', element: <GlovePage /> },
+          { path: 'balls', element: <BallsPage /> },
+          { path: 'balls/:id', element: <BallPage /> },
           { path: 'teams', element: <TeamsPage /> },
           { path: 'teams/:id', element: <TeamPage /> },
           { path: 'players', element: <PlayersPage /> },

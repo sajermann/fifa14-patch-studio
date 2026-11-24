@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { AlertTriangle, ArrowLeftRight, ExternalLink, Megaphone, Plus, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeftRight, Megaphone, Plus, X } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '@/api/client'
@@ -133,11 +133,6 @@ export function AdboardChoice({ kind, saved, pending, onPending }: { kind: 'team
       ) : (
         <p className="text-sm text-muted-foreground">{t('adboard.none')}</p>
       )}
-      <Button variant="link" size="sm" className="mt-2 px-0" asChild>
-        <Link to="/adboards">
-          <ExternalLink /> {t('adboard.manage')}
-        </Link>
-      </Button>
       <PickerDialog
         open={picking}
         onOpenChange={(o) => {

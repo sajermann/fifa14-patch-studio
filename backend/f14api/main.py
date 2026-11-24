@@ -1539,6 +1539,7 @@ def job_status():
 
 from . import player_routes  # noqa: E402,F401 - the player routes (before the interface's catch-all)
 from . import adboard_routes  # noqa: E402,F401 - the advertising boards (before the interface's catch-all)
+from . import equipment_routes  # noqa: E402,F401 - boots, gloves and balls (before the interface's catch-all)
 
 
 # ---- bulk delete (the lists' checkboxes) ----------------------------------------------------------------------------
@@ -1557,6 +1558,8 @@ def bulk_delete(body: BulkDeleteBody):
     resets = {'country': reset_country, 'league': reset_league, 'team': reset_team,
               'player': player_routes.reset_player, 'stadium': reset_stadium,  # (no created stadiums yet)
               'adboard': adboard_routes.reset_adboard}  # a game board: its own picture again
+    for gear in ('boot', 'glove', 'ball'):  # a created item leaves the project, a game item is restored
+        deletes[gear] = resets[gear] = (lambda kind: lambda oid: equipment_routes.delete_equipment(kind, oid))(gear)
     if body.kind not in resets:
         raise ApiError(400, 'bad_request', 'kind')
     deleted, reset, skipped = [], [], []

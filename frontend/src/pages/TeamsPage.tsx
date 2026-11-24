@@ -92,7 +92,7 @@ export function TeamsPage() {
         />
         <BulkActions kind="team" selection={selection} invalidate={['teams', 'team', 'leagues', 'league', 'players']} />
       </FilterBar>
-      <ScrollTable>
+      <ScrollTable loading={!data}>
         <TableHeader>
           <TableRow>
             <TableHead className="w-8">

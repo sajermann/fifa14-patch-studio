@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useI18n } from '@/i18n'
 import { useFrom } from '@/lib/back'
-import { ALL, FilterBar, FilterSelect, LIST_PAGE, ScrollTable, SearchInput } from '@/lib/list'
+import { ALL, FilterBar, FilterSelect, LIST_PAGE, ScrollTable, SearchInput, SortHead, useLocalSort } from '@/lib/list'
 import { toast } from '@/lib/notify'
 
 /** The advertising boards (as the Street Studio's balls and gloves): the user's, then the game's (original or
@@ -28,11 +28,20 @@ export function AdboardsPage() {
   const [q, setQ] = useState('')
   const [origin, setOrigin] = useState(ALL)
   const query = q.trim().toLowerCase()
-  const boards = (data?.items ?? []).filter(
+  const filtered = (data?.items ?? []).filter(
     (b) =>
       (nameOf(b).toLowerCase().includes(query) || String(b.id).includes(query)) &&
       (origin === ALL || (origin === 'project' ? b.is_new : origin === 'edited' ? b.edited : !b.is_new)),
   )
+  const sorted = useLocalSort(filtered, {
+    name: (b) => nameOf(b),
+    game: (b) => (b.is_new ? '' : where(b)),
+    teams: (b) => b.teams.length,
+    leagues: (b) => b.leagues.length,
+    created_at: (b) => b.created_at,
+    updated_at: (b) => b.updated_at,
+  })
+  const boards = sorted.rows
   // the user's boards can be deleted, the game's edited ones restored, in bulk
   const pickable = boards.filter((b) => b.is_new || b.edited).map((b) => b.id)
   const selection = useListSelection(pickable, pickable)
@@ -74,18 +83,18 @@ export function AdboardsPage() {
         />
         <BulkActions kind="adboard" selection={selection} invalidate={['adboards', 'adboard', 'team', 'league']} />
       </FilterBar>
-      <ScrollTable>
+      <ScrollTable loading={isLoading}>
         <TableHeader>
           <TableRow>
             <TableHead className="w-8">
               <SelectAllCheckbox selection={selection} />
             </TableHead>
             <TableHead className="w-12" />
-            <TableHead data-grow>{t('col.name')}</TableHead>
-            <TableHead className="text-right">{t('adboards.colGame')}</TableHead>
-            <TableHead className="text-center">{t('adboards.colTeams')}</TableHead>
-            <TableHead className="text-center">{t('adboards.colLeagues')}</TableHead>
-            <DateHeads />
+            <SortHead field="name" label={t('col.name')} state={sorted.state} className="w-full" />
+            <SortHead field="game" label={t('adboards.colGame')} state={sorted.state} className="text-right" />
+            <SortHead field="teams" label={t('adboards.colTeams')} state={sorted.state} className="text-center" />
+            <SortHead field="leagues" label={t('adboards.colLeagues')} state={sorted.state} className="text-center" />
+            <DateHeads sort={sorted.state} />
             <TableHead className="w-28" />
           </TableRow>
         </TableHeader>

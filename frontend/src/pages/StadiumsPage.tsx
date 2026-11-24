@@ -63,7 +63,7 @@ export function StadiumsPage() {
         />
         <BulkActions kind="stadium" selection={selection} invalidate={['stadiums', 'stadium', 'teams', 'team', 'options']} />
       </FilterBar>
-      <ScrollTable>
+      <ScrollTable loading={!data}>
         <TableHeader>
           <TableRow>
             <TableHead className="w-8">

@@ -138,7 +138,7 @@ export interface Page<T> {
 }
 
 /** what the lists' bulk delete takes */
-export type BulkKind = 'country' | 'league' | 'team' | 'player' | 'stadium' | 'adboard'
+export type BulkKind = 'country' | 'league' | 'team' | 'player' | 'stadium' | 'adboard' | 'boot' | 'glove' | 'ball'
 
 export interface Ref {
   id: number
@@ -721,4 +721,53 @@ export interface AdboardBody {
   remove_picture?: boolean
   /** Create: a copy of this board (its picture; the game's own one for a game board not edited). */
   copy_of?: number
+}
+
+/** Boots, goalkeeper gloves and balls (f14mod.equipment). */
+export type EquipmentKind = 'boot' | 'glove' | 'ball'
+
+/** A boot, glove or ball: one the user created (is_new, its own code) or one of the game's (edited = a new name, files
+ * or picture). Players wear one (their boot and glove), teams play with one (their ball). */
+export interface Equipment extends EditForm, Dated {
+  kind: EquipmentKind
+  id: number
+  /** Its code in the game (players.shoetypecode, players.gkglovetypecode, teams.balltype). */
+  code: number
+  is_new: boolean
+  name: string
+  /** A game item: its own name in the game (in the shown language), null = it has none. */
+  game_name: string | null
+  credits: string
+  credits_url: string | null
+  hidden: boolean
+  /** The pack's files saved ('mesh', 'texture') and the ones a new item needs. */
+  files: string[]
+  needs: string[]
+  complete: boolean
+  /** The user's picture (its version), null = drawn from the files. */
+  picture: number | null
+  version: number
+  /** False for a new glove: the game's edit player screen does not list it. */
+  listed: boolean
+  /** Players (boot, glove) or teams (ball) wearing it. */
+  wearers: (Ref & { is_new: boolean })[]
+  wearer_count: number
+}
+
+export interface EquipmentList {
+  items: Equipment[]
+  /** Free codes left for new items. */
+  free: number
+}
+
+export interface EquipmentBody {
+  name: string
+  credits?: string
+  credits_url?: string | null
+}
+
+export interface EquipmentFiles {
+  mesh?: string
+  texture?: string
+  remove?: string[]
 }

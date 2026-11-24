@@ -223,25 +223,25 @@ export function LeaguePage() {
             <EntryDates entry={data} />
           </div>
         </div>
-        <div className="flex flex-wrap items-start gap-2">
-          <EditActions edited={data.edited && !data.is_new} entity={entity} />
-          {!data.game_hidden && (
-            <HideButton
-              variant="outline"
-              hidden={hide.hidden}
-              onToggle={hide.toggle}
-              hideHint={t(data.is_new ? 'leagues.hideHint' : 'leagues.originalHideHint')}
-              showHint={t(data.is_new ? 'leagues.showHint' : 'leagues.originalShowHint')}
-            />
-          )}
-          {data.is_new && (
-            <Button variant="outline" size="sm" onClick={() => setDeleting(true)}>
-              <Trash2 /> {t('common.delete')}
-            </Button>
-          )}
-          <span className="self-center">
-            <EntityIssues kind="league" id={id} />
-          </span>
+        <div className="flex flex-col items-end justify-between">
+          <div className="flex flex-wrap gap-2">
+            <EditActions edited={data.edited && !data.is_new} entity={entity} />
+            {!data.game_hidden && (
+              <HideButton
+                variant="outline"
+                hidden={hide.hidden}
+                onToggle={hide.toggle}
+                hideHint={t(data.is_new ? 'leagues.hideHint' : 'leagues.originalHideHint')}
+                showHint={t(data.is_new ? 'leagues.showHint' : 'leagues.originalShowHint')}
+              />
+            )}
+            {data.is_new && (
+              <Button variant="outline" size="sm" onClick={() => setDeleting(true)}>
+                <Trash2 /> {t('common.delete')}
+              </Button>
+            )}
+          </div>
+          <EntityIssues kind="league" id={id} />
         </div>
       </div>
       <p className="text-sm text-muted-foreground">{t('league.freeHint')}</p>

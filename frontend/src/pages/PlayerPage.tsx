@@ -23,6 +23,7 @@ import { EditActions, FieldsEditor, useEntityForm, useFieldLabel } from '@/compo
 import { HideButton, OutOfPatchBadge, usePendingHide } from '@/components/common/HideButton'
 import { Photo } from '@/components/common/pictures'
 import { EntityIssues, Stepper } from '@/components/common/form'
+import { EquipmentChoice } from '@/components/equipment/EquipmentChoice'
 import { PlayerAccessories } from '@/components/player/PlayerAccessories'
 import { PlayerLook } from '@/components/player/PlayerLook'
 import { PlayerPhoto, type PendingPhoto } from '@/components/player/PlayerPhoto'
@@ -180,22 +181,22 @@ export function PlayerPage() {
             <EntryDates entry={data} />
           </div>
         </div>
-        <div className="flex flex-wrap items-start gap-2">
-          <EditActions edited={data.edited && !data.is_new} entity={entity} />
-          <Button variant="outline" size="sm" title={t('player.copyHint')} disabled={copy.isPending} onClick={() => copy.mutate()}>
-            {copy.isPending ? <Loader2 className="animate-spin" /> : <Copy />} {t('player.copy')}
-          </Button>
-          {data.is_new && (
-            <>
-              <HideButton variant="outline" hidden={hide.hidden} onToggle={hide.toggle} hideHint={t('players.hideHint')} showHint={t('players.showHint')} />
-              <Button variant="outline" size="sm" onClick={() => setDeleting(true)}>
-                <Trash2 /> {t('common.delete')}
-              </Button>
-            </>
-          )}
-          <span className="self-center">
-            <EntityIssues kind="player" id={id} />
-          </span>
+        <div className="flex flex-col items-end justify-between">
+          <div className="flex flex-wrap gap-2">
+            <EditActions edited={data.edited && !data.is_new} entity={entity} />
+            <Button variant="outline" size="sm" title={t('player.copyHint')} disabled={copy.isPending} onClick={() => copy.mutate()}>
+              {copy.isPending ? <Loader2 className="animate-spin" /> : <Copy />} {t('player.copy')}
+            </Button>
+            {data.is_new && (
+              <>
+                <HideButton variant="outline" hidden={hide.hidden} onToggle={hide.toggle} hideHint={t('players.hideHint')} showHint={t('players.showHint')} />
+                <Button variant="outline" size="sm" onClick={() => setDeleting(true)}>
+                  <Trash2 /> {t('common.delete')}
+                </Button>
+              </>
+            )}
+          </div>
+          <EntityIssues kind="player" id={id} />
         </div>
       </div>
       {data.is_new && !NAME_FIELDS.some((k) => String(fields[k] ?? '').trim()) && <p className="text-sm text-amber-600 dark:text-amber-400">{t('player.nameRequired')}</p>}
@@ -237,6 +238,17 @@ export function PlayerPage() {
           />
         </TabsContent>
         <TabsContent value="accessories" className="space-y-4">
+          <div className="grid items-start gap-4 lg:grid-cols-2">
+            <EquipmentChoice kind="boot" owner={data.name} values={data.values} fields={fields} setField={entity.setField} />
+            <EquipmentChoice
+              kind="glove"
+              owner={data.name}
+              values={data.values}
+              fields={fields}
+              setField={entity.setField}
+              preferredPosition={(typeof fields.preferredposition1 === 'number' ? fields.preferredposition1 : data.values.preferredposition1) as number | null}
+            />
+          </div>
           <PlayerAccessories player={data} fields={fields} setField={entity.setField} options={options?.accessories} />
           <CodeGroup player={data} group="animations" fields={fields} setField={entity.setField} title={t('fieldGroup.animations')} description={t('code.hint')} />
         </TabsContent>
