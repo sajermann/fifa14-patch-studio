@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { HideButton, OutOfPatchBadge, useHide } from '@/components/common/HideButton'
 import { NewPlayerDialog, nameFields, type NewPlayer } from '@/components/player/NewPlayerDialog'
 import { toast } from '@/lib/notify'
+import { cn } from '@/lib/utils'
 import { useFrom } from '@/lib/back'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
@@ -120,7 +121,7 @@ export function PlayersPage() {
         </TableHeader>
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
           {data?.items.map((p) => (
-            <TableRow key={p.id} className="text-muted-foreground">
+            <TableRow key={p.id} className={cn(!p.edited && !p.is_new && 'text-muted-foreground')}>
               <TableCell>{own(p) && <RowCheckbox selection={selection} value={p.id} />}</TableCell>
               <TableCell>
                 <Photo id={p.id} size={64} available={p.has_photo} className="size-8" />
