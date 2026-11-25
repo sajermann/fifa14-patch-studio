@@ -8,6 +8,7 @@ import { FillScroll, OriginalBadge, Section } from '@/components/common/detail'
 import { HiddenByProjectBadge, OutOfPatchBadge } from '@/components/common/HideButton'
 import { PickerDialog } from '@/components/common/PickerDialog'
 import { LeagueImage } from '@/components/common/pictures'
+import { LeagueAdboard } from '@/components/adboard/AdboardChoice'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { EntityIssues } from '@/components/common/form'
@@ -89,6 +90,7 @@ export function TeamLeagues({
               <TableHead className="w-48 text-right">{t('col.country')}</TableHead>
               <TableHead className="w-28 text-center">{t('col.level')}</TableHead>
               <TableHead className="w-28 text-center">{t('col.teams')}</TableHead>
+              <TableHead className="w-28 text-center">{t('col.adboards')}</TableHead>
               <TableHead className="w-28 text-center">{t('col.id')}</TableHead>
               <TableHead className="w-28 text-center">{t('roster.inPatch')}</TableHead>
               <TableHead className="w-32" />
@@ -98,7 +100,7 @@ export function TeamLeagues({
           <TableBody className={rows.isFetching ? 'opacity-70' : undefined}>
             {ids.length === 0 && (
               <TableRow>
-                <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
+                <TableCell colSpan={10} className="py-8 text-center text-muted-foreground">
                   {t('team.noLeagues')}
                 </TableCell>
               </TableRow>
@@ -122,6 +124,9 @@ export function TeamLeagues({
                   <TableCell className="text-right">{l?.country ?? '—'}</TableCell>
                   <TableCell className="text-center tabular-nums">{l?.level ?? '—'}</TableCell>
                   <TableCell className="text-center tabular-nums">{l?.team_count ?? '—'}</TableCell>
+                  <TableCell>
+                    <LeagueAdboard id={l?.adboard_id ?? null} />
+                  </TableCell>
                   <TableCell className="text-center tabular-nums">{lid}</TableCell>
                   <TableCell className="text-center">
                     <Switch

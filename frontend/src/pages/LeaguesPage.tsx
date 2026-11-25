@@ -7,6 +7,7 @@ import { CreateDialog } from '@/components/common/create'
 import { toast } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 import { useFrom } from '@/lib/back'
+import { LeagueAdboard } from '@/components/adboard/AdboardChoice'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
 import { DateCells, DateHeads } from '@/components/common/dates'
@@ -108,6 +109,7 @@ export function LeaguesPage() {
             <SortHead field="country" label={t('col.country')} state={sortState} className="text-right" />
             <SortHead field="level" label={t('col.level')} state={sortState} className="text-center" />
             <SortHead field="team_count" label={t('col.teams')} state={sortState} className="text-center" />
+            <TableHead className="text-center">{t('col.adboards')}</TableHead>
             <SortHead field="id" label={t('col.id')} state={sortState} className="text-center" />
             <DateHeads sort={sortState} />
             <TableHead className="w-28" />
@@ -133,6 +135,9 @@ export function LeaguesPage() {
               </TableCell>
               <TableCell className="text-center tabular-nums">{l.level ?? '—'}</TableCell>
               <TableCell className="text-center tabular-nums">{l.team_count}</TableCell>
+              <TableCell>
+                <LeagueAdboard id={l.adboard_id} />
+              </TableCell>
               <TableCell className="text-center text-muted-foreground tabular-nums">{l.id}</TableCell>
               <DateCells entry={l} />
               <TableCell>
@@ -153,7 +158,7 @@ export function LeaguesPage() {
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={11} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={12} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>

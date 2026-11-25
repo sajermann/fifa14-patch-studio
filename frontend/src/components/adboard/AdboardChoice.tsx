@@ -43,6 +43,20 @@ export function AdboardThumb({ board, width = 48, className }: { board: Pick<Adb
   )
 }
 
+/** The league's board in a league list (the leagues screen, a country's leagues): its picture and name, or a dash (the game's boards). */
+export function LeagueAdboard({ id }: { id: number | null }) {
+  const { t } = useI18n()
+  const nameOf = useAdboardName()
+  const board = useAdboards().data?.items.find((b) => b.id === id)
+  if (id === null) return <span className="block text-center text-muted-foreground" title={t('adboard.none')}>—</span>
+  return (
+    <span className="flex items-center justify-center gap-2" title={board ? nameOf(board) : undefined}>
+      <AdboardThumb board={board} width={14} />
+      <span className="max-w-40 truncate text-xs">{board ? nameOf(board) : `#${id}`}</span>
+    </span>
+  )
+}
+
 /** Where the game itself shows one of its boards: the competitions of its table (named when they are leagues of the
  * database) and, for the default board, everything the table lacks. */
 export function useCompetitionsText() {

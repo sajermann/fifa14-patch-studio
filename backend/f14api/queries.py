@@ -303,6 +303,7 @@ def leagues(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAUL
         shown_in = [c for c in dict.fromkeys([r['country_id'], *r['extra_countries']]) if c]
         gone = countries_hidden | set(r['hidden_in_countries'])
         r['hidden_by_countries'] = bool(shown_in) and all(c in gone for c in shown_in)
+        r['adboard_id'] = adboard_of(con, 'league', r['id'])  # the league's board (None = the game's boards)
     return out
 
 

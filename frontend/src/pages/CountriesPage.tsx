@@ -104,7 +104,6 @@ export function CountriesPage() {
             <SortHead field="name" label={t('col.name')} state={sortState} />
             <SortHead field="confederation" label={t('col.confederation')} state={sortState} className="text-right" />
             <SortHead field="league_count" label={t('col.leagues')} state={sortState} className="text-center" />
-            <SortHead field="player_count" label={t('col.players')} state={sortState} className="text-center" />
             <SortHead field="id" label={t('col.id')} state={sortState} className="text-center" />
             <DateHeads sort={sortState} />
             <TableHead className="w-28" />
@@ -125,7 +124,6 @@ export function CountriesPage() {
               </TableCell>
               <TableCell className="text-right">{confederation(c.confederation)}</TableCell>
               <TableCell className="text-center tabular-nums">{c.league_count}</TableCell>
-              <TableCell className="text-center tabular-nums">{c.player_count}</TableCell>
               <TableCell className="text-center text-muted-foreground tabular-nums">{c.id}</TableCell>
               <DateCells entry={c} />
               <TableCell>
@@ -144,7 +142,7 @@ export function CountriesPage() {
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={11} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={10} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>

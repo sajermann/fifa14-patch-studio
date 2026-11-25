@@ -24,6 +24,7 @@ import { ALL, EditActions, FieldsEditor, NamesGrid, useEntityForm } from '@/comp
 import { GameHiddenBadge, HiddenByProjectBadge, HideButton, OutOfPatchBadge, usePendingHide } from '@/components/common/HideButton'
 import { PickerDialog, type PickerItem } from '@/components/common/PickerDialog'
 import { CountryFlag, LeagueImage, readPicture } from '@/components/common/pictures'
+import { LeagueAdboard } from '@/components/adboard/AdboardChoice'
 import { LoadingBlock } from '@/components/layout/LoadingBlock'
 import { hasMessage, useI18n, type MessageKey } from '@/i18n'
 import { BackButton, useBack, useFrom, useTabParam } from '@/lib/back'
@@ -33,6 +34,7 @@ import { useStatus, useToken } from '@/state/queries'
 import { useConfederationName } from './CountriesPage'
 
 const TABS = ['data', 'leagues', 'raw'] as const
+
 
 /** The flag picture chosen (or removed) but not saved yet: Save sends it with the rest of the form. */
 type PendingFlag = { data: string; url: string } | 'remove' | null
@@ -317,10 +319,11 @@ export function CountryPage() {
               <Table>
                 <TableHeader className="sticky top-0 z-10 shadow-[0_1px_0_var(--border)] [&_th]:bg-card">
                   <TableRow>
-                    <TableHead className="w-12" />
-                    <TableHead>{t('col.name')}</TableHead>
+                    <TableHead className="w-12 min-w-12" />
+                    <TableHead className="w-full">{t('col.name')}</TableHead>
                     <TableHead className="w-28 text-center">{t('col.level')}</TableHead>
                     <TableHead className="w-28 text-center">{t('col.teams')}</TableHead>
+                    <TableHead className="w-28 text-center">{t('col.adboards')}</TableHead>
                     <TableHead className="w-28 text-center">{t('col.id')}</TableHead>
                     <TableHead className="w-28 text-center">{t('roster.inPatch')}</TableHead>
                     <TableHead className="w-32" />
@@ -335,7 +338,7 @@ export function CountryPage() {
                     return (
                       <TableRow key={lid}>
                         <TableCell>
-                          <LeagueImage id={lid} size={64} version={l?.own_logo} available={!!l?.has_logo} className="size-8" />
+                          <LeagueImage id={lid} size={64} version={l?.own_logo} available={!!l?.has_logo} className="size-8 shrink-0" />
                         </TableCell>
                         <TableCell>
                           <Link to={`/leagues/${lid}`} state={from.state} className={cn('font-medium underline-offset-4 hover:underline', leagueOut || hiddenHere ? 'text-muted-foreground' : 'text-foreground')}>
@@ -348,6 +351,9 @@ export function CountryPage() {
                         </TableCell>
                         <TableCell className="text-center tabular-nums">{l?.level ?? '—'}</TableCell>
                         <TableCell className="text-center tabular-nums">{l?.team_count ?? '—'}</TableCell>
+                        <TableCell>
+                          <LeagueAdboard id={l?.adboard_id ?? null} />
+                        </TableCell>
                         <TableCell className="text-center tabular-nums">{lid}</TableCell>
                         <TableCell className="text-center">
                           <Switch
@@ -371,7 +377,7 @@ export function CountryPage() {
                   })}
                   {leagueIds.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
+                      <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
                         {t('country.noLeagues')}
                       </TableCell>
                     </TableRow>

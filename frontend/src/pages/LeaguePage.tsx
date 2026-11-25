@@ -417,6 +417,7 @@ export function LeaguePage() {
                     <TableHead>{t('col.name')}</TableHead>
                     <TableHead className="w-28 text-center">{t('col.overall')}</TableHead>
                     <TableHead className="w-28 text-center">{t('col.players')}</TableHead>
+                    <TableHead className="w-28 text-center">{t('col.kits')}</TableHead>
                     <TableHead className="w-28 text-center">{t('roster.inPatch')}</TableHead>
                     <TableHead className="w-32" />
                     <TableHead className="w-16" />
@@ -425,7 +426,7 @@ export function LeaguePage() {
                 <TableBody className={teamRows.isFetching ? 'opacity-70' : undefined}>
                   {teamIds.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                      <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
                         {t('league.noTeams')}
                       </TableCell>
                     </TableRow>
@@ -449,6 +450,7 @@ export function LeaguePage() {
                           <OverallBadge value={tm?.overall ?? null} />
                         </TableCell>
                         <TableCell className="text-center tabular-nums">{tm?.player_count ?? '—'}</TableCell>
+                        <TableCell className="text-center tabular-nums">{tm?.kit_count ?? '—'}</TableCell>
                         <TableCell className="text-center">
                           <Switch
                             checked={!hiddenTeamIds.includes(tid)}

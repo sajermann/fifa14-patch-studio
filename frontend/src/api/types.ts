@@ -164,6 +164,8 @@ export interface LeagueRow extends Dated {
   has_logo: number | boolean
   is_new: boolean
   team_count: number
+  /** The advertising board of the league, null = the game's boards. */
+  adboard_id: number | null
   edited: boolean
   /** Left out of the patch (kept in the project). */
   hidden: boolean
