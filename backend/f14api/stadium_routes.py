@@ -3,11 +3,12 @@ of a downloaded stadium), its scene files, delete; and the menu pictures of any 
 game's stadiums (main.save_stadium). Registered by main (imported before the interface's catch-all route)."""
 import base64
 import binascii
+import json
 from typing import Optional
 
 from pydantic import BaseModel
 
-from f14mod import fifa14, images, stadium_files
+from f14mod import fields, fifa14, images, stadium_files
 from f14mod.project import MAX_STADIUM_ID
 
 from . import queries
@@ -53,8 +54,9 @@ def _game_stadium(con, sid: Optional[int]) -> bool:
 
 @app.post('/api/stadiums')
 def create_stadium(body: NewStadiumBody):
-    """A new stadium with the first free id: a copy of a game stadium (its row, scene and pictures) or the scene of a
-    downloaded stadium's folder over the row of the stadium it replaced (or the generic stadium)."""
+    """A new stadium with the first free id: a copy of a game stadium (its row, scene and pictures), the scene of a
+    downloaded stadium's folder over the row of the stadium it replaced (or the generic stadium), or, with neither,
+    from scratch (blank: it stays out of the patch until it gets a folder)."""
     _required_name('stadium', body.names)
     scene = None
     if body.folder:
@@ -67,13 +69,27 @@ def create_stadium(body: NewStadiumBody):
         if body.template is not None and not _game_stadium(con, body.template):
             raise ApiError(400, 'field_out_of_range', 'template')
         template = body.template
-        if template is None:  # the folder's stadium replaced one of the game's: its row fits the scene
-            template = replaced if scene is not None and _game_stadium(con, replaced) else fifa14.TEMPLATE_STADIUM
+        if template is None and scene is not None:  # the folder's stadium replaced one of the game's: its row fits
+            template = replaced if _game_stadium(con, replaced) else fifa14.TEMPLATE_STADIUM
     p = project()
     p.create('stadium', sid, names)  # the database name comes from the full name (builder.add_created)
     p.set_stadium_source(sid, template)
     if scene:
         p.set_stadium_scene(sid, scene)
+        p.set_stadium_folder_source(sid, replaced)
+    return _detail(sid)
+
+
+class HiddenBody(BaseModel):
+    hidden: bool
+
+
+@app.put('/api/stadiums/{sid}/hidden')
+def set_stadium_hidden(sid: int, body: HiddenBody):
+    """Hide: a created stadium is left out of the patch (kept in the project; its teams play in their game stadium
+    meanwhile). The game's stadiums are not hidden."""
+    _created(sid)
+    project().set_hidden('stadium', sid, body.hidden)
     return _detail(sid)
 
 
@@ -85,20 +101,46 @@ def delete_stadium(sid: int):
     return {'deleted': sid}
 
 
+def _stadium(sid: int) -> None:
+    """A stadium of the game or one the user created."""
+    with db() as con:
+        if con.execute('SELECT 1 FROM v_stadiums WHERE id = ?', (sid,)).fetchone() is None:
+            raise ApiError(404, 'not_found')
+
+
 @app.put('/api/stadiums/{sid}/scene')
 def set_stadium_scene(sid: int, body: FolderBody):
-    """The scene of a downloaded stadium's folder (replaces the one it had)."""
-    _created(sid)
-    _replaced, scene = _read_folder(body.folder)
+    """The scene of a downloaded stadium's folder (replaces the one it had; a game stadium's goes into the patch
+    under its id)."""
+    _stadium(sid)
+    replaced, scene = _read_folder(body.folder)
     project().set_stadium_scene(sid, scene)
+    project().set_stadium_folder_source(sid, replaced)
     return _detail(sid)
+
+
+@app.get('/api/stadiums/{sid}/defaults')
+def stadium_defaults(sid: int):
+    """The values a stadium can be filled with: those of the game stadium its folder was made for (they fit its 3D:
+    e.g. where the boards stand), else the generic stadium's."""
+    _stadium(sid)
+    folder = project().stadium_folder_source(sid)
+    with db() as con:
+        source = folder if _game_stadium(con, folder) else fifa14.TEMPLATE_STADIUM
+        row = con.execute('SELECT raw FROM stadiums WHERE id = ?', (source,)).fetchone()
+        name = con.execute(f'SELECT {queries._stadium_name()} FROM v_stadiums s WHERE s.id = :id',  # noqa: SLF001
+                           {'lang': lang(), 'id': source}).fetchone()
+    raw = json.loads(row[0]) if row and row[0] else {}
+    return {'id': source, 'name': name[0] if name else None,
+            'values': {f: raw.get(f) for f in fields.STADIUM_REQUIRED if raw.get(f) is not None}}
 
 
 @app.delete('/api/stadiums/{sid}/scene')
 def remove_stadium_scene(sid: int):
-    """Back to the scene of the stadium it starts from."""
-    _created(sid)
+    """Back to the game's 3D (a game stadium) or the one of the stadium it starts from."""
+    _stadium(sid)
     project().set_stadium_scene(sid, None)
+    project().set_stadium_folder_source(sid, None)
     return _detail(sid)
 
 
@@ -106,9 +148,7 @@ def _picture_variant(sid: int, variant: int) -> None:
     """A stadium (the game's or a created one) and one of its menu picture variants."""
     if variant not in stadium_files.PICTURE_VARIANTS:
         raise ApiError(404, 'not_found')
-    with db() as con:
-        if con.execute('SELECT 1 FROM v_stadiums WHERE id = ?', (sid,)).fetchone() is None:
-            raise ApiError(404, 'not_found')
+    _stadium(sid)
 
 
 @app.put('/api/stadiums/{sid}/picture/{variant}')

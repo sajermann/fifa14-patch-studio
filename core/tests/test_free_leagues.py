@@ -304,3 +304,22 @@ def test_project_without_the_hidden_column_is_upgraded(tmp_path):
     con.close()
     project = Project(path)
     assert project.members(9) == [1] and project.all_hidden_members() == {}
+
+
+def test_copied_country_takes_the_rows_of_the_game_country(installed, tmp_path):
+    """A copy of a game country (field copy_of) gets that country's database row and its sound row (audionation);
+    one from scratch gets no sound row."""
+    project = Project(str(tmp_path / 'p.sqlite'))
+    project.create('country', 1, {'full': {'*': 'A01 Copy'}}, {'flag_from': 54, 'copy_of': 54})
+    project.create('country', 2, {'full': {'*': 'A02 Blank'}})
+    patch_dir = str(tmp_path / 'patch')
+    builder.build(catalog.open_game(installed), project, patch_dir)
+    with open(os.path.join(patch_dir, 'data', 'db', 'fifa_ng_db-meta.xml'), 'rb') as f:
+        meta = t3db.load_meta(f.read())
+    with open(os.path.join(patch_dir, 'data', 'db', 'fifa_ng_db.db'), 'rb') as f:
+        tables = t3db.read_tables(f.read(), meta)
+    nation = next(r for r in tables['nations']['rows'] if r['nationid'] == 1)
+    assert nation['confederation'] == next(n for n in fakegame.NATIONS if n['nationid'] == 54)['confederation']
+    audio = {r['nationid']: r for r in tables['audionation']['rows']}
+    assert audio[1]['chantregionindex'] == 9 and audio[1]['crowdbedsregionindex'] == 8
+    assert 2 not in audio and audio[54]['chantregionindex'] == 9

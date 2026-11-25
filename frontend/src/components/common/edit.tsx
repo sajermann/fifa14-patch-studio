@@ -20,7 +20,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import type { EditForm, FieldSpec, FieldValue, NameTable, Ref, RosterRow } from '@/api/types'
 import { FillScroll, Section } from '@/components/common/detail'
 import { PickerDialog, type PickerItem } from '@/components/common/PickerDialog'
-import { CountryFlag, Crest } from '@/components/common/pictures'
+import { CountryFlag, Crest, LeagueImage } from '@/components/common/pictures'
 import { hasMessage, useI18n, type MessageKey } from '@/i18n'
 import { toast } from '@/lib/notify'
 import { cn } from '@/lib/utils'
@@ -444,13 +444,15 @@ export function useFieldLabel() {
 }
 
 /** Lists long enough to need a search: chosen in the picker dialog (the app's Add dialog) instead of a select. */
-type PickKind = 'nation' | 'team'
+type PickKind = 'nation' | 'team' | 'league'
 
 const foldText = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
 
 function PickIcon({ kind, id, small }: { kind: PickKind; id: number; small?: boolean }) {
   return kind === 'nation' ? (
     <CountryFlag id={id} size={64} className={small ? 'h-3.5 w-5' : 'h-5 w-7'} />
+  ) : kind === 'league' ? (
+    <LeagueImage id={id} size={64} className={small ? 'size-4 object-contain' : 'size-7 object-contain'} />
   ) : (
     <Crest id={id} size={64} className={small ? 'size-4' : 'size-7'} />
   )
@@ -477,7 +479,7 @@ export function RefPickerDialog({
   const { t } = useI18n()
   const options = useOptions().data
   const [q, setQ] = useState('')
-  const all: Ref[] = (kind === 'nation' ? options?.nations : options?.teams) ?? []
+  const all: Ref[] = (kind === 'nation' ? options?.nations : kind === 'league' ? options?.leagues : options?.teams) ?? []
   const wanted = foldText(q.trim())
   const items = all.filter((r) => !exclude.includes(r.id) && (!wanted || foldText(r.name).includes(wanted) || String(r.id) === wanted))
   const toItem = (r: Ref): PickerItem<number> => ({ key: r.id, icon: <PickIcon kind={kind} id={r.id} />, title: r.name, subtitle: `ID ${r.id}` })
@@ -487,7 +489,12 @@ export function RefPickerDialog({
           { label: t('field.pick.newCountries'), items: items.filter((r) => r.is_new).map(toItem) },
           { label: t('field.pick.originalCountries'), items: items.filter((r) => !r.is_new).map(toItem) },
         ]
-      : [{ items: items.map(toItem) }]
+      : kind === 'league'
+        ? [
+            { label: t('field.pick.newLeagues'), items: items.filter((r) => r.is_new).map(toItem) },
+            { label: t('field.pick.originalLeagues'), items: items.filter((r) => !r.is_new).map(toItem) },
+          ]
+        : [{ items: items.map(toItem) }]
   return (
     <PickerDialog
       open={open}
@@ -496,8 +503,8 @@ export function RefPickerDialog({
         if (!o) setQ('')
       }}
       title={title}
-      description={t(kind === 'nation' ? 'field.pick.countryDescription' : 'field.pick.teamDescription')}
-      placeholder={t(kind === 'nation' ? 'countries.search' : 'teams.search')}
+      description={t(kind === 'nation' ? 'field.pick.countryDescription' : kind === 'league' ? 'field.pick.leagueDescription' : 'field.pick.teamDescription')}
+      placeholder={t(kind === 'nation' ? 'countries.search' : kind === 'league' ? 'leagues.search' : 'teams.search')}
       query={q}
       onQuery={setQ}
       groups={groups}

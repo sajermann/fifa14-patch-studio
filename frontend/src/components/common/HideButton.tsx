@@ -80,12 +80,13 @@ export function GameHiddenBadge({ country = false }: { country?: boolean }) {
   )
 }
 
-type HideKind = 'country' | 'league' | 'team' | 'player'
+type HideKind = 'country' | 'league' | 'team' | 'player' | 'stadium'
 const SETTERS: Record<HideKind, (id: number, hidden: boolean) => Promise<{ hidden: boolean }>> = {
   country: api.setCountryHidden,
   league: api.setLeagueHidden,
   team: api.setTeamHidden,
   player: api.setPlayerHidden,
+  stadium: api.setStadiumHidden,
 }
 
 /** Saves the Hide button at once (list rows). */

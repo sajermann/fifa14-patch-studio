@@ -92,6 +92,8 @@ export const api = {
   deleteStadium: (id: number) => request<{ deleted: number }>('DELETE', `/api/stadiums/${id}`),
   /** A created stadium's scene from a downloaded stadium's folder; remove = the template's again. */
   setStadiumScene: (id: number, folder: string) => request<StadiumDetail>('PUT', `/api/stadiums/${id}/scene`, { folder }),
+  removeStadiumScene: (id: number) => request<StadiumDetail>('DELETE', `/api/stadiums/${id}/scene`),
+  stadiumDefaults: (id: number) => request<{ id: number; name: string | null; values: Record<string, FieldValue> }>('GET', `/api/stadiums/${id}/defaults`),
   setStadiumPicture: (id: number, variant: number, data: string) => request<StadiumDetail>('PUT', `/api/stadiums/${id}/picture/${variant}`, { data }),
   removeStadiumPicture: (id: number, variant: number) => request<StadiumDetail>('DELETE', `/api/stadiums/${id}/picture/${variant}`),
   /** The stadium the team plays in; null = the game's again. */
@@ -131,7 +133,8 @@ export const api = {
   kitFonts: () => get<KitFonts>('/api/kit-fonts'),
   saveLeague: (id: number, names: NameTable, fields: Fields) => request<LeagueDetail>('PUT', `/api/leagues/${id}`, { names, fields }),
   resetLeague: (id: number) => request<LeagueDetail>('DELETE', `/api/leagues/${id}/edits`),
-  createLeague: (names: NameTable, fields: Fields) => post<LeagueDetail>('/api/leagues', { names, fields }),
+  createLeague: (names: NameTable, fields: Fields, template?: number, copyTeams = false) =>
+    post<LeagueDetail>('/api/leagues', { names, fields, template, copy_teams: copyTeams }),
   deleteLeague: (id: number) => request<{ deleted: number }>('DELETE', `/api/leagues/${id}`),
   saveLeagueTeams: (id: number, teamIds: number[], hiddenTeamIds: number[] = []) =>
     request<LeagueDetail>('PUT', `/api/leagues/${id}/teams`, { team_ids: teamIds, hidden_team_ids: hiddenTeamIds }),
@@ -147,9 +150,10 @@ export const api = {
   saveCountryLeagues: (id: number, leagueIds: number[], hiddenLeagueIds: number[]) =>
     request<CountryDetail>('PUT', `/api/countries/${id}/leagues`, { league_ids: leagueIds, hidden_league_ids: hiddenLeagueIds }),
   setTeamHidden: (id: number, hidden: boolean) => request<TeamDetail>('PUT', `/api/teams/${id}/hidden`, { hidden }),
+  setStadiumHidden: (id: number, hidden: boolean) => request<StadiumDetail>('PUT', `/api/stadiums/${id}/hidden`, { hidden }),
   countries: (p: ListParams) => get<Page<CountryRow>>(`/api/countries${query(p)}`),
   country: (id: number) => get<CountryDetail>(`/api/countries/${id}`),
-  createCountry: (names: NameTable, fields: Fields = {}) => post<CountryDetail>('/api/countries', { names, fields }),
+  createCountry: (names: NameTable, fields: Fields = {}, template?: number) => post<CountryDetail>('/api/countries', { names, fields, template }),
   saveCountry: (id: number, names: NameTable, fields: Fields) => request<CountryDetail>('PUT', `/api/countries/${id}`, { names, fields }),
   uploadCountryFlag: (id: number, data: string) => request<CountryDetail>('PUT', `/api/countries/${id}/flag`, { data }),
   removeCountryFlag: (id: number) => request<CountryDetail>('DELETE', `/api/countries/${id}/flag`),

@@ -7,6 +7,7 @@ import { AdboardThumb, GameBoardWarning, useAdboardName, useAdboards } from '@/c
 import { EntryDates } from '@/components/common/dates'
 import { OriginalBadge, Section } from '@/components/common/detail'
 import { EditActions, useEntityForm } from '@/components/common/edit'
+import { EntityIssues } from '@/components/common/form'
 import { HideButton, OutOfPatchBadge, usePendingHide } from '@/components/common/HideButton'
 import { readPicture } from '@/components/common/pictures'
 import { LoadingBlock } from '@/components/layout/LoadingBlock'
@@ -164,7 +165,8 @@ export function AdboardPage() {
             <EntryDates entry={data} />
           </div>
         </div>
-        <div className="flex flex-wrap items-start gap-2">
+        <div className="flex flex-col items-end justify-between">
+          <div className="flex flex-wrap gap-2">
           <EditActions edited={!isNew && data.edited} entity={entity} />
           <Button variant="outline" size="sm" title={t('adboards.copyHint')} disabled={copy.isPending || data.picture === null || entity.dirty} onClick={() => copy.mutate()}>
             {copy.isPending ? <Loader2 className="animate-spin" /> : <Copy />} {t('adboards.copy')}
@@ -177,6 +179,8 @@ export function AdboardPage() {
               </Button>
             </>
           )}
+          </div>
+          <EntityIssues kind="adboard" id={data.id} />
         </div>
       </div>
 

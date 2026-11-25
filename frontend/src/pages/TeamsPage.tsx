@@ -38,7 +38,6 @@ export function TeamsPage() {
     mutationFn: (n: NewTeam) =>
       api.createTeam({
         names: { full: { '*': n.name } },
-        fields: n.copyOf === null ? { teamcolor1: n.colors[0], teamcolor2: n.colors[1] } : {},
         template: n.copyOf ?? undefined,
         copy: n.copyOf !== null,
         copy_squad: n.copySquad,

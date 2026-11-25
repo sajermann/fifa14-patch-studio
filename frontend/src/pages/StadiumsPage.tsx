@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Landmark, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { cn } from '@/lib/utils'
 import { useFrom } from '@/lib/back'
 import { toast } from '@/lib/notify'
 import { Button } from '@/components/ui/button'
@@ -10,6 +11,8 @@ import { api } from '@/api/client'
 import { DateCells, DateHeads } from '@/components/common/dates'
 import { Badge, OriginalBadge } from '@/components/common/detail'
 import { StadiumImage } from '@/components/common/pictures'
+import { EntityIssues } from '@/components/common/form'
+import { HideButton, OutOfPatchBadge, useHide } from '@/components/common/HideButton'
 import { BulkActions, RowCheckbox, SelectAllCheckbox, SelectAllDialog, useListSelection } from '@/components/common/selection'
 import { NewStadiumDialog, type NewStadium } from '@/components/stadium/NewStadiumDialog'
 import { useI18n } from '@/i18n'
@@ -31,8 +34,9 @@ export function StadiumsPage() {
   // the project's ones can be picked: a created one is deleted, an edited one goes back to the game's
   const selection = useListSelection((data?.items ?? []).filter((r) => r.edited || r.is_new).map((r) => r.id), data?.own_ids ?? [])
   const [creating, setCreating] = useState(false)
+  const hide = useHide('stadium', ['stadiums', 'stadium'])
   const create = useMutation({
-    mutationFn: (s: NewStadium) => api.createStadium({ names: { full: { '*': s.name } }, folder: s.folder, template: s.template }),
+    mutationFn: (s: NewStadium) => api.createStadium({ names: { full: { '*': s.name } }, template: s.template }),
     onSuccess: (stadium) => {
       for (const k of ['stadiums', 'options', 'status']) void qc.invalidateQueries({ queryKey: [k] })
       setCreating(false)
@@ -98,10 +102,12 @@ export function StadiumsPage() {
             <SortHead field="name" label={t('col.name')} state={sortState} />
             <SortHead field="country" label={t('col.country')} state={sortState} />
             <TableHead>{t('col.homeTeam')}</TableHead>
-            <SortHead field="capacity" label={t('col.capacity')} state={sortState} className="text-right" />
+            <SortHead field="capacity" label={t('col.capacity')} state={sortState} className="text-center" />
             <SortHead field="team_count" label={t('col.teams')} state={sortState} className="text-center" />
             <SortHead field="id" label={t('col.id')} state={sortState} className="text-center" />
             <DateHeads sort={sortState} />
+            <TableHead className="w-28" />
+            <TableHead className="w-16" />
           </TableRow>
         </TableHeader>
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
@@ -119,25 +125,40 @@ export function StadiumsPage() {
               </TableCell>
               <TableCell data-grow>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Link to={`/stadiums/${s.id}`} state={from.state} className="font-medium text-foreground underline-offset-4 hover:underline">
+                  <Link to={`/stadiums/${s.id}`} state={from.state} className={cn('font-medium underline-offset-4 hover:underline', s.hidden ? 'text-muted-foreground' : 'text-foreground')}>
                     {s.name}
                   </Link>
                   {!s.is_new && <OriginalBadge edited={s.edited} />}
                   {!s.has_3d && <Badge>{t('stadiums.no3d')}</Badge>}
+                  {s.hidden && <OutOfPatchBadge />}
                 </div>
                 {s.language_name && s.language_name !== s.name && <div className="text-xs text-muted-foreground">{s.language_name}</div>}
               </TableCell>
               <TableCell>{s.country ?? '—'}</TableCell>
               <TableCell>{s.home_team ?? '—'}</TableCell>
-              <TableCell className="text-right tabular-nums">{s.capacity?.toLocaleString() ?? '—'}</TableCell>
+              <TableCell className="text-center tabular-nums">{s.capacity?.toLocaleString() ?? '—'}</TableCell>
               <TableCell className="text-center tabular-nums">{s.team_count}</TableCell>
               <TableCell className="text-center text-muted-foreground tabular-nums">{s.id}</TableCell>
               <DateCells entry={s} />
+              <TableCell>
+                {s.is_new && (
+                  <HideButton
+                    hidden={s.hidden}
+                    disabled={hide.isPending && hide.variables?.id === s.id}
+                    onToggle={() => hide.mutate({ id: s.id, hidden: !s.hidden })}
+                    hideHint={t('stadiums.hideHint')}
+                    showHint={t('stadiums.showHint')}
+                  />
+                )}
+              </TableCell>
+              <TableCell>
+                <EntityIssues kind="stadium" id={s.id} />
+              </TableCell>
             </TableRow>
           ))}
           {data && data.items.length === 0 && (
             <TableRow>
-              <TableCell colSpan={10} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={12} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>

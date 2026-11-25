@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Landmark, Loader2, Plus, Trash2, Undo2 } from 'lucide-react'
+import { Landmark, Loader2, Plus, Trash2, Undo2, Wand2 } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
@@ -18,6 +18,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api } from '@/api/client'
 import { EntryDates } from '@/components/common/dates'
 import { OriginalBadge, Section } from '@/components/common/detail'
+import { EntityIssues } from '@/components/common/form'
+import { HideButton, OutOfPatchBadge, usePendingHide } from '@/components/common/HideButton'
 import { EditActions, FieldsEditor, NamesGrid, RefPickerDialog, useEntityForm } from '@/components/common/edit'
 import { Crest, StadiumImage } from '@/components/common/pictures'
 import { Stadium3D, StadiumDatabase, StadiumDetails } from '@/components/common/stadium'
@@ -30,6 +32,7 @@ import { useOptions, useStatus, useToken } from '@/state/queries'
 
 const TABS = ['overview', 'data', 'raw'] as const
 const GROUPS = ['info', 'conditions', 'pitch', 'goal', 'stands']
+const MENU_PICTURES = [0, 1, 3, 4] // a created stadium shows all four, filled or not
 
 /** One stadium (the game's or one the user created): what the extractor shows (3D, data, pictures, files) and its
  * edit form, like the league screen. The Overview tab is laid out as the team's stadium tab (data and pictures on top,
@@ -57,12 +60,14 @@ export function StadiumPage() {
   const [scene, setScene] = useState<PendingScene>(null)
   const [pictures, setPictures] = useState<PendingPictures>({})
   const [deleting, setDeleting] = useState(false)
+  const hide = usePendingHide(data?.hidden)
   const navigate = useNavigate()
   const qc = useQueryClient()
   const clearPending = () => {
     setMoving([])
     setScene(null)
     setPictures({})
+    hide.clear()
   }
   const entity = useEntityForm({
     data,
@@ -70,7 +75,8 @@ export function StadiumPage() {
     invalidate: ['stadiums', 'teams', 'team', 'options'],
     save: async (f) => {
       let saved = await api.saveStadium(id, f.names, f.fields)
-      if (scene) saved = await api.setStadiumScene(id, scene)
+      if (scene === 'remove') saved = await api.removeStadiumScene(id)
+      else if (scene) saved = await api.setStadiumScene(id, scene)
       for (const [v, p] of Object.entries(pictures)) {
         saved = p === 'remove' ? await api.removeStadiumPicture(id, Number(v)) : await api.setStadiumPicture(id, Number(v), p.data)
       }
@@ -78,6 +84,7 @@ export function StadiumPage() {
         for (const tid of moving) await api.setTeamStadium(tid, id)
         saved = await api.stadium(id)
       }
+      if (hide.pending !== null) saved = await api.setStadiumHidden(id, hide.pending)
       clearPending()
       return saved
     },
@@ -85,10 +92,32 @@ export function StadiumPage() {
       clearPending()
       return api.resetStadium(id)
     },
-    extraDirty: moving.length > 0 || scene !== null || Object.keys(pictures).length > 0,
+    extraDirty: moving.length > 0 || scene !== null || Object.keys(pictures).length > 0 || hide.pending !== null,
     onDiscard: clearPending,
     invalid: (f) => !!data?.is_new && !Object.values(f.names.full ?? {}).some((v) => v?.trim()),
   })
+  // from scratch: fill the blank fields with the values of the stadium its folder was made for (or the generic one);
+  // a game stadium with a folder made for another stadium: take all of that stadium's values (they fit the 3D)
+  const [filling, setFilling] = useState(false)
+  const fill = async (all = false) => {
+    setFilling(true)
+    try {
+      const found = await api.stadiumDefaults(id)
+      let count = 0
+      for (const [name, value] of Object.entries(found.values)) {
+        const current = entity.form.fields[name] ?? data?.saved[name] ?? data?.values[name]
+        if (all ? current !== value : current === null || current === undefined || current === '') {
+          entity.setField(name, value)
+          count++
+        }
+      }
+      toast.success(t('stadium.filled', { count, name: found.name ?? `#${found.id}` }))
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setFilling(false)
+    }
+  }
   const remove = useMutation({
     mutationFn: () => api.deleteStadium(id),
     onSuccess: () => {
@@ -121,17 +150,24 @@ export function StadiumPage() {
               <h1 className="min-w-0 text-2xl font-semibold break-words">{data.name}</h1>
               <span className="shrink-0 text-sm text-muted-foreground tabular-nums">{[data.country, `ID ${data.id}`].filter(Boolean).join(' · ')}</span>
               {!data.is_new && <OriginalBadge edited={data.edited} />}
+              {hide.hidden && <OutOfPatchBadge alert />}
             </div>
             <EntryDates entry={data} />
           </div>
         </div>
-        <div className="flex flex-wrap items-start gap-2">
-          <EditActions edited={data.edited && !data.is_new} entity={entity} />
-          {data.is_new && (
-            <Button variant="outline" size="sm" onClick={() => setDeleting(true)}>
-              <Trash2 /> {t('common.delete')}
-            </Button>
-          )}
+        <div className="flex flex-col items-end justify-between">
+          <div className="flex flex-wrap gap-2">
+            <EditActions edited={data.edited && !data.is_new} entity={entity} />
+            {data.is_new && (
+              <>
+                <HideButton variant="outline" hidden={hide.hidden} onToggle={hide.toggle} hideHint={t('stadiums.hideHint')} showHint={t('stadiums.showHint')} />
+                <Button variant="outline" size="sm" onClick={() => setDeleting(true)}>
+                  <Trash2 /> {t('common.delete')}
+                </Button>
+              </>
+            )}
+          </div>
+          <EntityIssues kind="stadium" id={id} />
         </div>
       </div>
       <Tabs {...tabs} className="flex min-h-0 flex-1 flex-col">
@@ -143,13 +179,13 @@ export function StadiumPage() {
         {/* as the team's stadium tab: the data and pictures on top, then the teams beside the 3D (always open) */}
         <TabsContent value="overview" className="min-h-0 flex-1 space-y-4 overflow-auto">
           <StadiumDetails
-            stadium={data}
+            stadium={data.is_new ? { ...data, pictures: MENU_PICTURES } : data}
             title={t('section.details')}
             grid
-            action={data.is_new && <StadiumFolderButton scene={scene} setScene={setScene} />}
+            action={<StadiumFolderButton scene={scene} setScene={setScene} />}
             notice={
               <>
-                {data.is_new && <StadiumSceneNotice stadium={data} scene={scene} />}
+                <StadiumSceneNotice stadium={data} scene={scene} setScene={setScene} />
                 <p className="mb-3 text-xs text-muted-foreground">{t('stadium.picturesHint')}</p>
               </>
             }
@@ -181,17 +217,15 @@ export function StadiumPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-10" />
-                    <TableHead>{t('col.name')}</TableHead>
-                    <TableHead>{t('col.league')}</TableHead>
-                    <TableHead>{t('col.customName')}</TableHead>
-                    <TableHead className="w-32" />
+                    <TableHead className="w-full">{t('col.name')}</TableHead>
+                    <TableHead className="text-right">{t('col.customName')}</TableHead>
+                    <TableHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {teamIds.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                      <TableCell colSpan={3} className="py-8 text-center text-muted-foreground">
                         {t('stadiums.noTeams')}
                       </TableCell>
                     </TableRow>
@@ -199,31 +233,29 @@ export function StadiumPage() {
                   {data.teams.map((tm) => (
                     <TableRow key={tm.id}>
                       <TableCell>
-                        <Crest id={tm.id} size={64} available={tm.has_crest || tm.is_new} className="size-7" />
+                        <div className="flex items-center gap-2">
+                          <Crest id={tm.id} size={64} available={tm.has_crest || tm.is_new} className="size-7 shrink-0" />
+                          <Link to={`/teams/${tm.id}?tab=stadium`} state={from.state} className="font-medium underline-offset-4 hover:underline">
+                            {tm.name}
+                          </Link>
+                          {!tm.is_new && <OriginalBadge edited={tm.edited} />}
+                        </div>
                       </TableCell>
-                      <TableCell>
-                        <Link to={`/teams/${tm.id}?tab=stadium`} state={from.state} className="font-medium underline-offset-4 hover:underline">
-                          {tm.name}
-                        </Link>{' '}
-                        {!tm.is_new && <OriginalBadge edited={tm.edited} />}
-                      </TableCell>
-                      <TableCell>{tm.league ?? '—'}</TableCell>
-                      <TableCell>{tm.stadium_custom_name ?? '—'}</TableCell>
+                      <TableCell className="text-right">{tm.stadium_custom_name ?? '—'}</TableCell>
                       <TableCell />
                     </TableRow>
                   ))}
                   {moving.map((tid) => (
                     <TableRow key={tid}>
                       <TableCell>
-                        <Crest id={tid} size={64} className="size-7" />
+                        <div className="flex items-center gap-2">
+                          <Crest id={tid} size={64} className="size-7 shrink-0" />
+                          <span className="font-medium">{teamNames.get(tid) ?? `#${tid}`}</span>
+                          <span className="text-xs text-amber-600 dark:text-amber-400">{t('stadium.teamPending')}</span>
+                        </div>
                       </TableCell>
-                      <TableCell>
-                        <span className="font-medium">{teamNames.get(tid) ?? `#${tid}`}</span>{' '}
-                        <span className="text-xs text-amber-600 dark:text-amber-400">{t('stadium.teamPending')}</span>
-                      </TableCell>
-                      <TableCell>—</TableCell>
-                      <TableCell>—</TableCell>
-                      <TableCell>
+                      <TableCell className="text-right">—</TableCell>
+                      <TableCell className="text-right">
                         <Button variant="ghost" size="sm" onClick={() => setMoving(moving.filter((x) => x !== tid))}>
                           <Undo2 /> {t('common.discard')}
                         </Button>
@@ -237,6 +269,25 @@ export function StadiumPage() {
           </div>
         </TabsContent>
         <TabsContent value="data" className="min-h-0 flex-1 space-y-4 overflow-auto">
+          {data.template === null && (
+            // from scratch: every field starts blank; the stadium enters the patch once they are all filled
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed p-3">
+              <p className="min-w-0 flex-1 basis-80 text-sm text-muted-foreground">{t('stadium.fillHint')}</p>
+              <Button variant="outline" size="sm" disabled={filling} onClick={() => fill()}>
+                {filling ? <Loader2 className="animate-spin" /> : <Wand2 />} {t('stadium.fill')}
+              </Button>
+            </div>
+          )}
+          {!data.is_new && data.own_scene && data.folder_stadium !== null && data.folder_stadium !== data.id && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed p-3">
+              <p className="min-w-0 flex-1 basis-80 text-sm text-muted-foreground">
+                {t('stadium.folderDataHint', { name: data.folder_stadium_name ?? `#${data.folder_stadium}` })}
+              </p>
+              <Button variant="outline" size="sm" disabled={filling} onClick={() => fill(true)}>
+                {filling ? <Loader2 className="animate-spin" /> : <Wand2 />} {t('stadium.folderData', { name: data.folder_stadium_name ?? `#${data.folder_stadium}` })}
+              </Button>
+            </div>
+          )}
           <NamesGrid
             kind="stadium"
             columns={data.name_keys}

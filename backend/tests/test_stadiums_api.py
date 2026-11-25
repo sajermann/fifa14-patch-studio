@@ -32,6 +32,27 @@ def test_created_stadium_crud(client, tmp_path):
     assert bad.status_code == 400 and bad.json()['detail']['code'] == 'stadium_no_stadium'
     assert client.post('/api/stadiums', json={'names': {'full': {'*': 'A01'}}, 'template': 9999}).status_code == 400
 
+    # from scratch: blank, with the warnings that keep it out of the patch; deleted again
+    r = client.post('/api/stadiums', json={'names': {'full': {'*': 'A00 Scratch'}}})
+    blank = r.json()
+    assert blank['template'] is None and blank['capacity'] is None and blank['country'] is None
+    assert blank['values']['cameraheight'] is None and blank['conditions'] == []
+    assert blank['files'] == [] and blank['pictures'] == [] and blank['times'] == []
+    codes = {i['code'] for i in client.get('/api/issues').json()['issues'] if i['id'] == blank['id']}
+    assert codes == {'stadium_without_scene', 'stadium_without_pictures', 'stadium_missing_fields'}
+    defaults = client.get(f"/api/stadiums/{blank['id']}/defaults").json()
+    assert defaults['id'] == 158 and 'values' in defaults  # the generic stadium (not in the fake game)
+    assert client.delete(f"/api/stadiums/{blank['id']}").status_code == 200
+
+    # a game stadium takes a downloaded stadium's folder (its 3D), and goes back to the game's
+    r = client.put('/api/stadiums/3/scene', json={'folder': _folder(str(tmp_path / 'game'))})
+    assert r.status_code == 200, r.text
+    game_stadium = r.json()
+    assert game_stadium['own_scene'] and game_stadium['edited'] and game_stadium['folder_stadium'] == 158
+    assert game_stadium['times'] == [1, 3] and 'data/sceneassets/stadium/stadium_3.rx3' in [f['path'] for f in game_stadium['files']]
+    r = client.delete('/api/stadiums/3/scene')
+    assert not r.json()['own_scene'] and r.json()['folder_stadium'] is None and not r.json()['edited']
+
     # a copy of the game's stadium 3
     r = client.post('/api/stadiums', json={'names': {'full': {'*': 'A01 Copy'}}, 'template': 3})
     assert r.status_code == 200, r.text
@@ -77,3 +98,17 @@ def test_created_stadium_crud(client, tmp_path):
     assert sorted(r.json()['deleted']) == [266, sid]
     assert client.get(f'/api/stadiums/{sid}').status_code == 404
     assert client.get(f'/api/teams/{fakegame.SMALL_TEAM}').json()['stadium_changed'] is False
+
+
+def test_hide_created_stadium(client):
+    """Hide: a created stadium is left out of the patch (listed as hidden, no warnings); a game stadium is not hidden."""
+    sid = client.post('/api/stadiums', json={'names': {'full': {'*': 'A01 Hidden'}}}).json()['id']
+    assert client.put('/api/stadiums/3/hidden', json={'hidden': True}).status_code == 400
+    assert any(i['id'] == sid for i in client.get('/api/issues').json()['issues'])
+    stadium = client.put(f'/api/stadiums/{sid}/hidden', json={'hidden': True}).json()
+    assert stadium['hidden']
+    row = next(r for r in client.get('/api/stadiums', params={'ids': str(sid)}).json()['items'] if r['id'] == sid)
+    assert row['hidden']
+    assert not any(i['id'] == sid and i['kind'] == 'stadium' for i in client.get('/api/issues').json()['issues'])
+    assert not client.put(f'/api/stadiums/{sid}/hidden', json={'hidden': False}).json()['hidden']
+    client.delete(f'/api/stadiums/{sid}')

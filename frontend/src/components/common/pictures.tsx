@@ -58,10 +58,11 @@ function GameImage({ url, alt, className, fallback, available = true, zoom = fal
 }
 
 /** A team's crest (`version` = when the user's picture was saved, so a new one is fetched). */
-export function Crest({ id, size = 64, className, available, version }: { id: number; size?: number; className?: string; available?: boolean; version?: number | null }) {
+/** A team's crest (`plain` = a copied team's choice not saved yet: true = the plain crest, false = the copied one). */
+export function Crest({ id, size = 64, className, available, version, plain }: { id: number; size?: number; className?: string; available?: boolean; version?: number | null; plain?: boolean }) {
   return (
     <GameImage
-      url={`/api/image/crest/${id}?size=${size}${version ? `&own=${version}` : ''}`}
+      url={`/api/image/crest/${id}?size=${size}${version ? `&own=${version}` : ''}${plain === undefined ? '' : `&plain=${plain}`}`}
       alt=""
       className={className}
       available={available}

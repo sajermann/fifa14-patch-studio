@@ -126,3 +126,70 @@ def test_kit_print_options(client):
     fonts = client.get('/api/kit-fonts').json()
     assert fonts['name'] == [{'id': 2, 'name': None}] and fonts['number'] == {'1': [1, 2]}
     assert fonts['colors'][0] == {'id': 1, 'rgb': [250, 250, 250]}  # the color the digits really show
+
+
+def test_blank_team(client):
+    """From scratch without a template: blank fields (the tactics at 50), no stadium, warnings, out of the patch."""
+    team = client.post('/api/teams', json={'names': {'full': {'*': 'A01 Blank'}},
+                                           'league_ids': [fakegame.PLAIN_LEAGUE]}).json()
+    tid = team['id']
+    assert team['blank'] and team['template'] is None and not team['copied'] and team['roster'] == []
+    values = team['values']
+    assert all(values[f] is None for f in ('teamcolor1', 'teamcolor2', 'teamcolor3', 'domesticprestige',
+                                           'internationalprestige', 'rivalteam', 'transferbudget', 'balltype',
+                                           'formation', 'captainid'))
+    assert values['busbuildupspeed'] == 50 and values['buspositioning'] == 1
+    assert team['stadium_ids'] == [] and team['overall'] is None
+    assert client.get(f'/api/image/crest/{tid}').status_code == 200  # the plain crest, in neutral colors
+    issues = {i['code']: i for i in client.get('/api/issues').json()['issues'] if i['id'] == tid}
+    assert set(issues) >= {'team_missing_fields', 'team_without_stadium', 'roster_too_small'}
+    assert all(i['severity'] == 'warning' for i in issues.values())
+    assert issues['team_missing_fields']['params']['count'] == 9
+    job = _build(client)
+    assert job['state'] == 'done', job
+    assert 'team' not in job['result']['database'].get('created', {})
+
+
+def test_copy_goes_into_the_leagues_and_its_crest_can_be_removed(client):
+    """A copy joins the leagues of the team it copies: out of the patch where the league already has as many teams
+    as in the game; its copied crest can give way to the plain one (field plain_crest)."""
+    team = client.post('/api/teams', json={'names': {'full': {'*': 'A01 Copy'}}, 'template': fakegame.TEAM,
+                                           'copy': True}).json()
+    tid = team['id']
+    league = client.get(f'/api/leagues/{fakegame.LEAGUE}').json()
+    assert tid in league['team_ids'] and tid in league['hidden_team_ids']  # the game's league already had its 1 team
+    # a league the user created is never full: the copy is in the patch there
+    created = client.post('/api/leagues', json={'names': {'full': {'*': 'A01 League'}}}).json()['id']
+    client.put(f'/api/leagues/{created}/teams', json={'team_ids': [fakegame.TEAM]})
+    other = client.post('/api/teams', json={'names': {'full': {'*': 'A02 Copy'}}, 'template': fakegame.TEAM,
+                                            'copy': True}).json()['id']
+    room = client.get(f'/api/leagues/{created}').json()
+    assert other in room['team_ids'] and other not in room['hidden_team_ids']
+
+    copied = client.get(f'/api/image/crest/{tid}').content
+    team = client.put(f'/api/teams/{tid}', json={'names': {'full': {'*': 'A01 Copy'}},
+                                                  'fields': {'plain_crest': 1}}).json()
+    assert team['saved']['plain_crest'] == 1
+    assert client.get(f'/api/image/crest/{tid}').content != copied
+    assert client.get(f'/api/image/crest/{tid}?plain=false').content == copied
+
+
+def test_country_and_league_copies(client):
+    blank = client.post('/api/countries', json={'names': {'full': {'*': 'A01 Country'}}}).json()
+    assert blank['saved'] == {} and blank['audio'] is None
+    country = client.post('/api/countries', json={'names': {'full': {'*': 'A02 Country'}}, 'template': 54}).json()
+    assert country['saved'] == {'flag_from': 54, 'copy_of': 54}
+    assert country['audio'] == {'nationid': country['id'], 'chantregionindex': 9, 'crowdbedsregionindex': 8}
+    again = client.post('/api/countries', json={'names': {'full': {'*': 'A03 Country'}},
+                                                'template': country['id']}).json()
+    assert again['saved'] == {'flag_from': 54, 'copy_of': 54}  # a copy of a copy: the game country's rows
+    scratch = client.post('/api/leagues', json={'names': {'full': {'*': 'A00 League'}}}).json()
+    assert 'level' not in scratch['saved'] or scratch['saved']['level'] != scratch['values']['level']
+    source = client.get(f'/api/leagues/{fakegame.LEAGUE}').json()
+    league = client.post('/api/leagues', json={'names': {'full': {'*': 'A03 League'}}, 'template': fakegame.LEAGUE,
+                                               'copy_teams': True}).json()
+    assert {**league['values'], **league['saved']}['countryid'] == 54 and fakegame.TEAM in league['team_ids']
+    assert (league['team_ids'], league['hidden_team_ids']) == (source['team_ids'], source['hidden_team_ids'])
+    assert league['own_logo']
+    empty = client.post('/api/leagues', json={'names': {'full': {'*': 'A04 League'}}, 'template': fakegame.LEAGUE}).json()
+    assert empty['team_ids'] == [] and {**empty['values'], **empty['saved']}['countryid'] == 54

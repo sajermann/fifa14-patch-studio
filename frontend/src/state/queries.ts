@@ -43,7 +43,7 @@ export function useProjectIssues() {
 }
 
 /** The problems of one league/team/player (optionally of one field). */
-export function useIssues(kind: 'league' | 'team' | 'player', id: number | undefined, field?: string) {
+export function useIssues(kind: 'league' | 'team' | 'player' | 'stadium' | 'adboard', id: number | undefined, field?: string) {
   const issues = useProjectIssues()
   return useMemo(
     () => issues.filter((i) => i.kind === kind && i.id === id && (field === undefined || i.field === field)),

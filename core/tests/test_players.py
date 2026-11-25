@@ -261,3 +261,28 @@ def test_fill_with_a_part_the_game_lacks_stops_the_build(installed, tmp_path):
     with pytest.raises(builder.BuildError) as e:
         _build(installed, tmp_path, project)
     assert e.value.code == 'player_face_fill'
+
+
+def test_blank_player_out_until_complete_then_neutral(installed, tmp_path):
+    """A player made from scratch (no template) is left out while nationality or position is missing; then his row
+    has the neutral values (fields.PLAYER_DEFAULTS), not the model player's."""
+    from f14mod import fields
+    project = Project(str(tmp_path / 'p.sqlite'))
+    project.create('player', NEW, fields={'name.common': 'A01 Blank', 'face': {'source': 'generic'}})
+    project.set_player_source(NEW, None)
+    squad = [{'player': p, 'jersey': i + 1, 'slot': 28} for i, p in enumerate(range(8004, 8016))]
+    project.set_roster(fakegame.TEAM, squad + [{'player': NEW, 'jersey': 50, 'slot': 28}])
+    assert project.incomplete_players() == {NEW}
+    _summary, tables, _patch = _build(installed, tmp_path, project)
+    assert not any(r['playerid'] == NEW for r in tables['players'])
+    assert not any(r['playerid'] == NEW for r in tables['teamplayerlinks'])
+
+    project.save('player', NEW, fields={'name.common': 'A01 Blank', 'face': {'source': 'generic'},
+                                        'nationality': 54, 'preferredposition1': 25})
+    assert project.incomplete_players() == set()
+    _summary, tables, _patch = _build(installed, tmp_path / 'b', project)
+    row = _row(tables, NEW)
+    assert (row['nationality'], row['preferredposition1']) == (54, 25)
+    for column, value in fields.player_blank_columns().items():
+        if value is not None and column in row and column not in ('nationality', 'preferredposition1'):
+            assert row[column] == value, column

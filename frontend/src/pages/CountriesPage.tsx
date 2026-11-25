@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
 import { DateCells, DateHeads } from '@/components/common/dates'
-import { CreateDialog } from '@/components/common/create'
+import { NewCountryDialog, type NewCountry } from '@/components/country/NewCountryDialog'
 import { OriginalBadge } from '@/components/common/detail'
 import { GameHiddenBadge, HiddenByProjectBadge, HideButton, OutOfPatchBadge, useHide } from '@/components/common/HideButton'
 import { CountryFlag } from '@/components/common/pictures'
@@ -45,7 +45,7 @@ export function CountriesPage() {
   const hide = useHide('country', ['countries', 'country', 'leagues'])
   const [creating, setCreating] = useState(false)
   const create = useMutation({
-    mutationFn: (name: string) => api.createCountry({ full: { '*': name } }),
+    mutationFn: (n: NewCountry) => api.createCountry({ full: { '*': n.name } }, {}, n.copyOf ?? undefined),
     onSuccess: (country) => {
       for (const k of ['countries', 'options', 'status']) void qc.invalidateQueries({ queryKey: [k] })
       setCreating(false)
@@ -152,16 +152,7 @@ export function CountriesPage() {
       {data && (
         <Pager page={data.page} pages={data.pages} total={data.total} size={data.size} onPage={(page, size) => list.update({ page, ...(size ? { size } : {}) }, false)} />
       )}
-      <CreateDialog
-        open={creating}
-        onOpenChange={setCreating}
-        title={t('countries.new')}
-        description={t('countries.newHint')}
-        label={t('countryName.full')}
-        maxLength={40}
-        pending={create.isPending}
-        onCreate={(name) => create.mutate(name)}
-      />
+      <NewCountryDialog open={creating} onOpenChange={setCreating} pending={create.isPending} onCreate={(n) => create.mutate(n)} />
       <SelectAllDialog selection={selection} />
     </div>
   )

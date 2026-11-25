@@ -3,9 +3,10 @@ import { Loader2, Plus } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
-import type { EquipmentKind } from "@/api/types";
+import type { Equipment, EquipmentKind } from "@/api/types";
 import { DateCells, DateHeads } from "@/components/common/dates";
 import { OriginalBadge } from "@/components/common/detail";
+import { NewItemDialog } from "@/components/common/NewItemDialog";
 import { HideButton, OutOfPatchBadge } from "@/components/common/HideButton";
 import {
   BulkActions,
@@ -88,10 +89,12 @@ export function EquipmentListPage({ kind }: { kind: EquipmentKind }) {
   const pickable = items.filter((e) => e.is_new || e.edited).map((e) => e.code);
   const selection = useListSelection(pickable, pickable);
   const created = (data?.items ?? []).filter((e) => e.is_new).length;
+  const [creating, setCreating] = useState(false);
   const create = useMutation({
-    mutationFn: () =>
-      api.createEquipment(kind, { name: k("defaultName", { n: created + 1 }) }),
+    mutationFn: (n: { name: string; copyOf: number | null }) =>
+      api.createEquipment(kind, { name: n.name, copy_of: n.copyOf ?? undefined }),
     onSuccess: (item) => {
+      setCreating(false);
       void qc.invalidateQueries({ queryKey: ["equipment", kind] });
       navigate(equipmentPath(kind, item.code), { state: from.state });
     },
@@ -124,11 +127,49 @@ export function EquipmentListPage({ kind }: { kind: EquipmentKind }) {
           <Button
             disabled={create.isPending || (!!data && !data.free)}
             title={data && !data.free ? k("slotsFull", { total }) : undefined}
-            onClick={() => create.mutate()}
+            onClick={() => setCreating(true)}
           >
             {create.isPending ? <Loader2 className="animate-spin" /> : <Plus />}{" "}
             {k("new")}
           </Button>
+          <NewItemDialog
+            open={creating}
+            onOpenChange={setCreating}
+            title={k("new")}
+            description={t("equipment.newHint")}
+            label={k("name")}
+            maxLength={60}
+            pending={create.isPending}
+            scratchHint={t("equipment.fromScratchHint")}
+            copyLabel={k("copyOf")}
+            copyHint={t("equipment.copyOfHint")}
+            chooseLabel={k("choose")}
+            placeholder={k("search")}
+            groups={(query) => {
+              const all = (data?.items ?? []).filter(
+                (e) => !query || nameOf(e).toLowerCase().includes(query) || String(e.code).includes(query),
+              );
+              const item = (e: Equipment) => ({
+                key: e.code,
+                icon: <EquipmentThumb kind={kind} item={e} />,
+                title: nameOf(e),
+                subtitle: t("equipment.code", { code: e.code }),
+              });
+              return [
+                { label: t("list.originProject"), items: all.filter((e) => e.is_new).map(item) },
+                { label: t("list.originOriginal"), items: all.filter((e) => !e.is_new).map(item) },
+              ];
+            }}
+            chosen={(code) => {
+              const e = data?.items.find((x) => x.code === code);
+              return (
+                <>
+                  <EquipmentThumb kind={kind} item={e} code={code} className="h-5 w-8" /> {e ? nameOf(e) : `#${code}`}
+                </>
+              );
+            }}
+            onCreate={(n) => create.mutate(n)}
+          />
         </div>
       </div>
       <FilterBar

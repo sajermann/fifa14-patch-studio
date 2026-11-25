@@ -60,9 +60,19 @@ Schema 14 (25/11/2026) adds the stadiums the user creates: kind `stadium` in `cr
 FIRST_OWN_STADIUM, above the clean game's), `stadium_sources` (the game stadium whose database row it starts from and
 whose scene and menu pictures it uses until it has its own) and `stadium_scene` (the scene files of a downloaded
 stadium: name = the game path with STADIUM_ID_MARK for the stadium id, data, and a digest so a change is found
-without reading the files). The menu pictures the user gives a stadium (the game's or a created one) are picture
+without reading the files). A stadium made from scratch has template NULL: blank (no scene, no pictures) until the
+user gives it a folder and fills the fields the game needs (fields.STADIUM_REQUIRED); until then it stays out of the
+patch (Project.incomplete_stadiums). `folder_stadium` = the game stadium the folder's files were made for (its row
+fits the scene: the screen offers its values). A game stadium can take a folder too: its row in `stadium_sources` has
+template NULL and the folder's stadium; its files go into the patch under its own id. The menu pictures the user gives a stadium (the game's or a created one) are picture
 slots STADIUM_PICTURE, one per variant. Older files open as they are (the new
 tables start empty).
+Since 25/11/2026 a team made from scratch has `team_sources.template` NULL (no table changes): blank like a stadium from
+scratch (fields.TEAM_REQUIRED, its stadium and squad empty, the tactics at fields.TEAM_DEFAULTS) and out of the patch
+until it has them (Project.incomplete_teams). Teams made from scratch before keep the model team they started from.
+Same for a player made from scratch since 25/11/2026: `player_sources.template` NULL, blank (fields.PLAYER_DEFAULTS,
+fields.PLAYER_REQUIRED empty) and out of the patch until those are filled (Project.incomplete_players); the ones made
+before keep the model player's values.
 """
 import json
 import sqlite3
@@ -72,6 +82,8 @@ SCHEMA_VERSION = 14
 DEFAULT_LANG = '*'
 KINDS = ('team', 'league', 'player', 'country', 'stadium', 'adboard', 'boot', 'glove', 'ball')
 EQUIPMENT_KINDS = ('boot', 'glove', 'ball')
+# the pack files a created item needs before it enters the patch (every glove wears the game's one glove mesh)
+EQUIPMENT_NEEDS = {'boot': ('mesh', 'texture'), 'glove': ('texture',), 'ball': ('mesh', 'texture')}
 NAME_TABLES = {'team': ('team_names', 'team_id'), 'league': ('league_names', 'league_id'),
                'country': ('country_names', 'country_id'), 'stadium': ('stadium_names', 'stadium_id')}
 
@@ -107,7 +119,7 @@ CREATE TABLE IF NOT EXISTS team_stadiums (team_id INTEGER PRIMARY KEY, stadium_i
 CREATE TABLE IF NOT EXISTS team_adboards (team_id INTEGER PRIMARY KEY, adboard_id INTEGER);
 CREATE TABLE IF NOT EXISTS league_adboards (league_id INTEGER PRIMARY KEY, adboard_id INTEGER);
 CREATE TABLE IF NOT EXISTS equipment_files (kind TEXT, id INTEGER, name TEXT, data BLOB, PRIMARY KEY (kind, id, name));
-CREATE TABLE IF NOT EXISTS stadium_sources (stadium_id INTEGER PRIMARY KEY, template INTEGER);
+CREATE TABLE IF NOT EXISTS stadium_sources (stadium_id INTEGER PRIMARY KEY, template INTEGER, folder_stadium INTEGER);
 CREATE TABLE IF NOT EXISTS stadium_scene (stadium_id INTEGER, name TEXT, data BLOB, digest TEXT,
                                           PRIMARY KEY (stadium_id, name));
 """
@@ -118,6 +130,7 @@ FIRST_OWN_ADBOARD = 1001  # the boards the user creates
 FIRST_OWN_STADIUM = 266  # the stadiums the user creates (the clean game's go up to 265; stadiumid has 9 bits)
 MAX_STADIUM_ID = 511
 STADIUM_ID_MARK = '#'  # stands for the stadium id in the names of stadium_scene
+STADIUM_SCENE_NAME = f'data/sceneassets/stadium/stadium_{STADIUM_ID_MARK}.rx3'  # the scene a stadium needs
 STADIUM_PICTURE = 'menu_{}'  # picture slot of a stadium's menu picture, per variant (0 1 3 4)
 BENCH, RESERVE = 28, 29  # team_rosters.slot of a substitute and of a player out of the squad
 
@@ -242,6 +255,8 @@ class Project:
                 con.execute('ALTER TABLE team_rosters ADD COLUMN hidden INTEGER DEFAULT 0')
             if 'hidden' not in {r[1] for r in con.execute('PRAGMA table_info(league_members)')}:  # schema 6 and older
                 con.execute('ALTER TABLE league_members ADD COLUMN hidden INTEGER DEFAULT 0')
+            if 'folder_stadium' not in {r[1] for r in con.execute('PRAGMA table_info(stadium_sources)')}:
+                con.execute('ALTER TABLE stadium_sources ADD COLUMN folder_stadium INTEGER')
             if not row or row[0] != str(SCHEMA_VERSION):  # opening an up-to-date project never writes to it (the
                 # patch's "up to date" compares the file: f14api.patch_info)
                 con.execute("INSERT OR REPLACE INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
@@ -336,6 +351,8 @@ class Project:
                 con.execute('DELETE FROM equipment_files WHERE kind = ? AND id = ?', (kind, oid))
             if kind == 'stadium':
                 con.execute('DELETE FROM stadium_scene WHERE stadium_id = ?', (oid,))
+                if not con.execute("SELECT 1 FROM created WHERE kind = 'stadium' AND id = ?", (oid,)).fetchone():
+                    con.execute('DELETE FROM stadium_sources WHERE stadium_id = ?', (oid,))  # a game stadium's folder
             con.commit()
         finally:
             con.close()
@@ -536,9 +553,97 @@ class Project:
         return self.hidden(kind) - set(self.created(kind))
 
     def visible(self) -> 'Project':
-        """The project without the hidden created entities (what the builder reads)."""
+        """The project without the hidden created entities and the created stadiums that cannot enter the game yet
+        (what the builder reads)."""
         out = {kind: self.hidden(kind) & set(self.created(kind)) for kind in KINDS}
-        return VisibleProject(self, out) if any(self.hidden(kind) for kind in KINDS) else self
+        out['stadium'] |= self.incomplete_stadiums()
+        out['team'] |= self.incomplete_teams()
+        out['player'] |= self.incomplete_players()
+        for kind in EQUIPMENT_KINDS:
+            out[kind] |= self.incomplete_equipment(kind)
+        return VisibleProject(self, out) if any(self.hidden(kind) for kind in KINDS) or any(out.values()) else self
+
+    def incomplete_stadiums(self) -> set[int]:
+        """Created stadiums made from scratch still without a 3D scene or a field the game needs: left out of the
+        patch."""
+        con = self.connect()
+        try:
+            scratch = [r[0] for r in con.execute(
+                "SELECT c.id FROM created c LEFT JOIN stadium_sources s ON s.stadium_id = c.id "
+                "WHERE c.kind = 'stadium' AND s.template IS NULL")]
+            scenes = {r[0] for r in con.execute('SELECT stadium_id FROM stadium_scene WHERE name = ?',
+                                                (STADIUM_SCENE_NAME,))}
+        finally:
+            con.close()
+        return {sid for sid in scratch if sid not in scenes or self.missing_stadium_fields(sid)}
+
+    def incomplete_teams(self) -> set[int]:
+        """Created teams made from scratch (blank, no template) still missing something every team of the game has:
+        left out of the patch until it is set (missing_team_parts)."""
+        con = self.connect()
+        try:
+            scratch = [r[0] for r in con.execute(
+                "SELECT c.id FROM created c JOIN team_sources s ON s.team_id = c.id "
+                "WHERE c.kind = 'team' AND s.template IS NULL AND s.copy = 0")]
+        finally:
+            con.close()
+        return {tid for tid in scratch if self.missing_team_parts(tid)}
+
+    def missing_team_parts(self, team_id: int) -> dict:
+        """What a team made from scratch still needs: {'fields': fields.TEAM_REQUIRED not saved, 'stadium': no stadium
+        chosen, 'players': players in its squad (fewer than a lineup)}; empty = complete."""
+        from .fields import TEAM_REQUIRED
+        saved = self.fields('team', team_id)
+        out = {}
+        missing = [f for f in TEAM_REQUIRED if saved.get(f) is None]
+        if missing:
+            out['fields'] = missing
+        if self.team_stadium(team_id) is None:
+            out['stadium'] = True
+        con = self.connect()
+        try:
+            players = con.execute(
+                "SELECT r.player_id FROM team_rosters r WHERE r.team_id = ? AND COALESCE(r.hidden, 0) = 0 AND NOT EXISTS "
+                "(SELECT 1 FROM hidden h WHERE h.kind = 'player' AND h.id = r.player_id)", (team_id,)).fetchall()
+        finally:
+            con.close()
+        out_of_patch = self.incomplete_players()
+        players = len([r for r in players if r[0] not in out_of_patch])
+        if players < 11:
+            out['players'] = players
+        return out
+
+    def incomplete_equipment(self, kind: str) -> set[int]:
+        """Created boots, gloves or balls still without the files they need (EQUIPMENT_NEEDS): left out of the
+        patch (no row in the game's lists, no files) until they have them."""
+        return {code for code in self.created(kind)
+                if not all(n in self.equipment_files(kind, code) for n in EQUIPMENT_NEEDS[kind])}
+
+    def blank_players(self) -> set[int]:
+        """Created players made from scratch (no template): blank until the user fills fields.PLAYER_REQUIRED."""
+        con = self.connect()
+        try:
+            return {r[0] for r in con.execute(
+                "SELECT c.id FROM created c JOIN player_sources s ON s.player_id = c.id "
+                "WHERE c.kind = 'player' AND s.template IS NULL")}
+        finally:
+            con.close()
+
+    def missing_player_fields(self, player_id: int) -> list[str]:
+        """The fields a player made from scratch still needs (fields.PLAYER_REQUIRED not saved yet)."""
+        from .fields import PLAYER_REQUIRED
+        saved = self.fields('player', player_id)
+        return [f for f in PLAYER_REQUIRED if saved.get(f) is None]
+
+    def incomplete_players(self) -> set[int]:
+        """Players made from scratch still missing a required field: left out of the patch until it is saved."""
+        return {pid for pid in self.blank_players() if self.missing_player_fields(pid)}
+
+    def missing_stadium_fields(self, stadium_id: int) -> list[str]:
+        """The fields a stadium made from scratch still needs (fields.STADIUM_REQUIRED not saved yet)."""
+        from .fields import STADIUM_REQUIRED
+        saved = self.fields('stadium', stadium_id)
+        return [f for f in STADIUM_REQUIRED if saved.get(f) is None]
 
     # ---- teams of a league ------------------------------------------------------------------------------------
 
@@ -595,7 +700,8 @@ class Project:
     # ---- teams: source, squad, kits ---------------------------------------------------------------------------
 
     @_dated
-    def set_team_source(self, team_id: int, template: int, copy: bool) -> None:
+    def set_team_source(self, team_id: int, template: int | None, copy: bool) -> None:
+        """template None = made from scratch (blank: fields.TEAM_REQUIRED unset, out of the patch until filled)."""
         con = self.connect()
         try:
             con.execute('INSERT OR REPLACE INTO team_sources VALUES (?, ?, ?)', (team_id, template, int(copy)))
@@ -603,8 +709,8 @@ class Project:
         finally:
             con.close()
 
-    def team_source(self, team_id: int) -> tuple[int, bool] | None:
-        """(template team, crest and kits copied) of a created team."""
+    def team_source(self, team_id: int) -> tuple[int | None, bool] | None:
+        """(template team, crest and kits copied) of a created team; template None = made from scratch (blank)."""
         con = self.connect()
         try:
             r = con.execute('SELECT template, copy FROM team_sources WHERE team_id = ?', (team_id,)).fetchone()
@@ -777,7 +883,8 @@ class Project:
     # ---- players: source and face files ------------------------------------------------------------------------
 
     @_dated
-    def set_player_source(self, player_id: int, template: int) -> None:
+    def set_player_source(self, player_id: int, template: int | None) -> None:
+        """template None = made from scratch (blank, see fields.PLAYER_DEFAULTS)."""
         con = self.connect()
         try:
             con.execute('INSERT OR REPLACE INTO player_sources VALUES (?, ?)', (player_id, template))
@@ -817,12 +924,32 @@ class Project:
     # ---- stadiums the user creates -----------------------------------------------------------------------------
 
     @_dated
-    def set_stadium_source(self, stadium_id: int, template: int) -> None:
-        """The game stadium a created stadium starts from (its row; its scene and pictures until it has its own)."""
+    def set_stadium_source(self, stadium_id: int, template: int | None) -> None:
+        """The game stadium a created stadium starts from (its row; its scene and pictures until it has its own);
+        None = from scratch (blank)."""
         con = self.connect()
         try:
-            con.execute('INSERT OR REPLACE INTO stadium_sources VALUES (?, ?)', (stadium_id, template))
+            con.execute('INSERT INTO stadium_sources (stadium_id, template) VALUES (?, ?) '
+                        'ON CONFLICT (stadium_id) DO UPDATE SET template = excluded.template', (stadium_id, template))
             con.commit()
+        finally:
+            con.close()
+
+    def set_stadium_folder_source(self, stadium_id: int, folder_stadium: int | None) -> None:
+        """The game stadium the files of the stadium's folder were made for."""
+        con = self.connect()
+        try:
+            con.execute('INSERT INTO stadium_sources (stadium_id, folder_stadium) VALUES (?, ?) ON CONFLICT (stadium_id) '
+                        'DO UPDATE SET folder_stadium = excluded.folder_stadium', (stadium_id, folder_stadium))
+            con.commit()
+        finally:
+            con.close()
+
+    def stadium_folder_source(self, stadium_id: int) -> int | None:
+        con = self.connect()
+        try:
+            r = con.execute('SELECT folder_stadium FROM stadium_sources WHERE stadium_id = ?', (stadium_id,)).fetchone()
+            return r[0] if r else None
         finally:
             con.close()
 
@@ -849,6 +976,14 @@ class Project:
         finally:
             con.close()
         self.save('stadium', stadium_id, self.names('stadium', stadium_id), self.fields('stadium', stadium_id))
+
+    def with_stadium_scene(self) -> list[int]:
+        """The stadiums (created or the game's) with scene files of their own."""
+        con = self.connect()
+        try:
+            return [r[0] for r in con.execute('SELECT DISTINCT stadium_id FROM stadium_scene ORDER BY stadium_id')]
+        finally:
+            con.close()
 
     def stadium_scene_list(self, stadium_id: int) -> dict[str, int]:
         """{name: size} of the stadium's scene files (without reading them)."""

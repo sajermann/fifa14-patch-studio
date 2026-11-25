@@ -44,7 +44,7 @@ def _detail(con, pid: int) -> dict:
 
 class CreatePlayerBody(BaseModel):
     fields: dict = {}  # at least a name (name.first/name.last/name.common)
-    template: Optional[int] = None  # copy of this player (game or project); None = from scratch (the model player)
+    template: Optional[int] = None  # copy of this player (game or project); None = from scratch (blank)
     team: Optional[int] = None  # a team he joins at once
 
 
@@ -75,8 +75,9 @@ def _has_game_face(pid: int) -> bool:
 
 @app.post('/api/players')
 def create_player(body: CreatePlayerBody):
-    """A new player: from scratch (the values of a plain player of the game, a generic head) or a copy of a player
-    (his values, his face and photo); his own id from 300001; optionally straight into a team."""
+    """A new player: from scratch (blank: fields.PLAYER_REQUIRED empty, everything else at fields.PLAYER_DEFAULTS, a
+    generic head; out of the patch until the required fields are saved) or a copy of a player (his values, his face
+    and photo); his own id from 300001; optionally straight into a team."""
     if not any((body.fields.get(k) or '').strip() for k in ('name.first', 'name.last', 'name.common')):
         raise ApiError(400, 'name_required')
     p = project()
@@ -91,8 +92,8 @@ def create_player(body: CreatePlayerBody):
         pid = queries.free_player_id(con, _taken_ids())
         if pid > fifa14.MAX_PLAYER_ID:
             raise ApiError(400, 'too_many_players')
-        if source is None:
-            template, start = _model_player(con), {'face': {'source': 'generic'}}
+        if source is None:  # from scratch: no template (the model player's row only for the columns not shown)
+            template, start = None, {'face': {'source': 'generic'}}
         else:  # a copy: the values the source shows now (game + project), his face and photo
             template = source['template'] if source['is_new'] else body.template
             start = {k: v for k, v in {**source['values'], **source['saved']}.items()
@@ -100,8 +101,11 @@ def create_player(body: CreatePlayerBody):
             if 'face' not in source['saved']:
                 start['face'] = {'source': 'player', 'player': body.template} if source['game_face'] \
                     else {'source': 'generic'}
-        values = fields.original_values('player', json.loads(
-            con.execute('SELECT raw FROM players WHERE id = ?', (template,)).fetchone()[0]))
+        model = con.execute('SELECT raw FROM players WHERE id = ?', (template or _model_player(con),)).fetchone()[0]
+        raw = json.loads(model)
+        if template is None:
+            raw.update(fields.player_blank_columns())
+        values = fields.original_values('player', raw)
         kept = _clean_fields(con, 'player', pid, {**start, **body.fields},
                              {'values': {**values, **{k: '' for k in fields.NAME_FIELDS}, 'face': None}, 'roster': []})
     p.create('player', pid, fields=kept)

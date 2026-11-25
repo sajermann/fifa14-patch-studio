@@ -72,3 +72,23 @@ def test_team_ball(client):
     assert game_ball['wearer_count'] == 0
     client.delete(f"/api/equipment/ball/{ball['code']}")
     assert 'balltype' not in client.get(f'/api/teams/{fakegame.TEAM}').json()['saved']
+
+
+def test_blank_and_copied_items(client):
+    """New from scratch: just a name, out of the patch with a warning until it has its files; a copy of a game boot
+    takes its files (complete at once); a board from scratch has no picture (warning)."""
+    blank = client.post('/api/equipment/boot', json={'name': 'B02'}).json()
+    # the fake game's boot mesh is not a real one: only its texture passes the checks (the clean game's all pass)
+    copy = client.post('/api/equipment/boot', json={'name': 'B03', 'copy_of': fakegame.GAME_BOOT}).json()
+    assert not blank['complete'] and blank['files'] == [] and copy['files'] == ['texture']
+    assert client.post('/api/equipment/boot', json={'name': 'B04', 'copy_of': 254}).status_code == 404
+    client.put(f"/api/equipment/boot/{copy['code']}", json={'name': 'B03', 'credits': 'C03'})
+    again = client.post('/api/equipment/boot', json={'name': 'B05', 'copy_of': copy['code']}).json()
+    assert again['files'] == ['texture'] and again['credits'] == 'C03' and again['name'] == 'B05'
+    board = client.post('/api/adboards', json={'name': 'P01'}).json()
+    issues = {(i['code'], i['id']): i for i in client.get('/api/issues').json()['issues']}
+    assert issues[('equipment_without_files', blank['code'])]['name'] == 'B02'
+    assert ('adboard_without_picture', board['id']) in issues
+    for code in (blank['code'], copy['code'], again['code']):
+        client.post('/api/bulk-delete', json={'kind': 'boot', 'ids': [code]})
+    client.delete(f"/api/adboards/{board['id']}")

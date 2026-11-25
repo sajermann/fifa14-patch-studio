@@ -162,3 +162,31 @@ def test_face_packs_and_options(client, tmp_path):
     # only what the database can store (hairtypecode has 7 bits, eyecolorcode 3)
     assert all(c <= 127 for c in options['codes']['hairtypecode']) and all(c <= 8 for c in options['codes']['eyecolorcode'])
     client.put('/api/settings', json={'face_pack_dirs': []})
+
+
+def test_blank_player(client):
+    """From scratch: nationality and position blank (a warning, out of the patch), everything else neutral."""
+    from conftest import wait
+    new = client.post('/api/players', json={'fields': {'name.first': 'A01', 'name.last': 'Blank'}}).json()
+    pid, values = new['id'], new['values']
+    assert new['template'] is None and values['nationality'] is None and values['preferredposition1'] is None
+    assert values['finishing'] == 50 and values['potential'] == 50 and values['height'] == 180
+    assert values['birthdate'] == '1990-01-01' and values['traits'] == [] and values['preferredposition2'] == -1
+    issues = [i for i in client.get('/api/issues').json()['issues'] if i['id'] == pid]
+    assert [(i['code'], i['severity'], i['params'].get('fields')) for i in issues] == \
+        [('player_missing_fields', 'warning', ['nationality', 'preferredposition1']),
+         ('player_without_team', 'warning', None)]
+
+    def build():
+        client.post('/api/patch/build')
+        wait(lambda: client.get('/api/job').json()['state'] != 'running')
+        return client.get('/api/job').json()
+    job = build()
+    assert job['state'] == 'done', job
+    assert 'player' not in (job['result']['database'] or {}).get('created', {})
+    client.put(f'/api/players/{pid}', json={'fields': {'name.first': 'A01', 'name.last': 'Blank', 'nationality': 54,
+                                                       'preferredposition1': 25}})
+    assert [i['code'] for i in client.get('/api/issues').json()['issues'] if i['id'] == pid] == ['player_without_team']
+    job = build()
+    assert job['state'] == 'done' and job['result']['database']['created']['player'] >= 1, job
+    client.delete(f'/api/players/{pid}')

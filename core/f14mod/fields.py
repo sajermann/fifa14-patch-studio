@@ -105,6 +105,30 @@ PLAYER = [
     FieldSpec('face', 'face', 'face'),
 ]
 
+# a player made from scratch (no template): these start blank and he stays out of the patch until they are saved
+# (Project.incomplete_players); everything else starts at a neutral value: the ratings at the middle (50), the other
+# numbers at an average, each choice at a middle option, the look/animation codes at their first value, fixed dates,
+# no traits and the generic head
+PLAYER_REQUIRED = ('nationality', 'preferredposition1')
+PLAYER_DEFAULTS = {
+    **{f.name: 50 for f in PLAYER if f.kind == 'int' and (f.min, f.max) == (1, 99)},
+    'height': 180, 'weight': 75, 'contractvaliduntil': 2015,
+    'preferredfoot': 1, 'skillmoves': 1, 'weakfootabilitytypecode': 3, 'internationalrep': 1,
+    'attackingworkrate': 1, 'defensiveworkrate': 1, 'isretiring': 0,
+    **{f.name: f.min for f in PLAYER if f.kind == 'code'},
+    **{f'preferredposition{i}': -1 for i in (2, 3, 4)},
+    'birthdate': '1990-01-01', 'playerjointeamdate': '2013-07-01',
+}
+
+
+def player_blank_columns() -> dict:
+    """The database columns of a player made from scratch: PLAYER_DEFAULTS as the row holds them (dates as days), no
+    traits, and PLAYER_REQUIRED empty (None)."""
+    out = {name: (_to_days(v) if BY_NAME['player'][name].kind == 'date' else v) for name, v in PLAYER_DEFAULTS.items()}
+    out.update({'trait1': 0, 'trait2': 0, **{name: None for name in PLAYER_REQUIRED}})
+    return out
+
+
 TEAM = [
     *(FieldSpec(f'teamcolor{i}', 'colors', 'color') for i in (1, 2, 3)),
     FieldSpec('domesticprestige', 'club', 'int', 0, 20),
@@ -124,7 +148,17 @@ TEAM = [
     FieldSpec('formation', 'lineup', 'select', options=tuple(range(1, 34))),
     # the ball of the team's home matches (f14mod.equipment)
     FieldSpec('balltype', 'equipment', 'code', 0, 255),
+    # a copied team whose copied crest was removed: the plain crest (short name and colors) instead; edited on the
+    # crest tab, not with the other fields
+    FieldSpec('plain_crest', 'crest', 'select', options=(0, 1)),
 ]
+# a team made from scratch (no template): these start blank and the team stays out of the patch until they are saved
+# (Project.incomplete_teams); every team of the game has them
+TEAM_REQUIRED = ('teamcolor1', 'teamcolor2', 'teamcolor3', 'domesticprestige', 'internationalprestige', 'rivalteam',
+                 'transferbudget', 'balltype', 'formation')
+# ... and these start at a neutral value (the middle of the tactics sliders, the first option of each choice)
+TEAM_DEFAULTS = {**{f.name: 50 for f in TEAM if f.group == 'tactics' and f.kind == 'int'},
+                 **{f.name: f.options[0] for f in TEAM if f.group == 'tactics' and f.kind == 'select'}}
 
 LEAGUE = [
     FieldSpec('leaguename', 'info', 'text', max_length=60),
@@ -134,10 +168,14 @@ LEAGUE = [
     # countries of the league (own or extra) where it is left out of the patch; edited on the country's screen only
     FieldSpec('hidden_in_countries', 'countries', 'nations', 1, 255),
 ]
-NO_COLUMN = {'extra_countries', 'hidden_in_countries', 'flag_from', 'formation', 'traits', 'face'}  # fields the builder uses itself (not written as columns)
+NO_COLUMN = {'extra_countries', 'hidden_in_countries', 'flag_from', 'copy_of', 'formation', 'traits', 'face',
+             'plain_crest'}  # fields the builder uses itself (not written as columns)
 
 COUNTRY = [
     FieldSpec('flag_from', 'info', 'nation', 1, fifa14.MAX_NATION_ID, optional=True),  # whose flag is copied
+    # a created country copied from a game country: its database row (confederation...) and its sound row
+    # (audionation: commentary and crowd) are that country's; set when it is created, not on a screen
+    FieldSpec('copy_of', 'source', 'nation', 1, fifa14.MAX_NATION_ID, optional=True),
 ]
 
 # the columns of a stadiums row (ranges = the bits of each column in the game's database); the
@@ -172,6 +210,8 @@ STADIUM = [
     FieldSpec('cameraheight', 'stands', 'int', 0, 31),
     FieldSpec('camerazoom', 'stands', 'int', 0, 15),
 ]
+# what a stadium made from scratch needs before it enters the patch (the database name comes from its full name)
+STADIUM_REQUIRED = tuple(f.name for f in STADIUM if not f.optional and f.name != 'name')
 
 SPECS = {'player': PLAYER, 'team': TEAM, 'league': LEAGUE, 'country': COUNTRY, 'stadium': STADIUM}
 BY_NAME = {kind: {s.name: s for s in specs} for kind, specs in SPECS.items()}
@@ -198,7 +238,8 @@ def original_values(kind: str, raw: dict, names: dict | None = None) -> dict:
         if spec.name in NAME_FIELDS:
             out[spec.name] = (names or {}).get(NAME_KEYS[spec.name]) or ''
         elif spec.kind == 'color':
-            out[spec.name] = [raw.get(f'{spec.name}{c}') for c in 'rgb']
+            rgb = [raw.get(f'{spec.name}{c}') for c in 'rgb']
+            out[spec.name] = None if all(v is None for v in rgb) else rgb  # blank: a team made from scratch
         elif spec.kind == 'date':
             out[spec.name] = _to_iso(raw.get(spec.name))
         elif spec.kind == 'nations':

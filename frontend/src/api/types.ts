@@ -64,7 +64,7 @@ export interface Issue {
 export interface ProjectIssue {
   code: string
   severity: 'error' | 'warning'
-  kind: 'league' | 'team' | 'player' | null
+  kind: 'league' | 'team' | 'player' | 'stadium' | null
   id: number | null
   entity: string | null // 'team:123'
   field: string | null
@@ -241,6 +241,8 @@ export interface StadiumRow extends Dated {
   edited: boolean
   /** a stadium the user created */
   is_new: boolean
+  /** a created stadium left out of the patch (Hide) */
+  hidden: boolean
 }
 
 /** A team that plays in the stadium (the user's choices included). */
@@ -257,6 +259,8 @@ export interface StadiumTeam {
 /** The stadium screen: what the extractor shows, the edit form and the teams that play in it. */
 export interface StadiumDetail extends StadiumInfo, EditForm, Dated {
   is_new: boolean
+  /** a created stadium left out of the patch (Hide) */
+  hidden: boolean
   /** a created stadium: the game stadium it starts from (its row; its scene and pictures until it has its own) */
   template: number | null
   template_name: string | null
@@ -264,6 +268,9 @@ export interface StadiumDetail extends StadiumInfo, EditForm, Dated {
   own_scene: boolean
   /** the menu pictures (variants) the user replaced, on any stadium */
   own_pictures: number[]
+  /** the game stadium the files of the stadium's folder were made for (its data fit them), or null */
+  folder_stadium: number | null
+  folder_stadium_name: string | null
   name_keys: string[]
   languages: string[]
   original_names: NameTable
@@ -776,6 +783,8 @@ export interface EquipmentBody {
   name: string
   credits?: string
   credits_url?: string | null
+  /** Create: a copy of this item (its files; a created one's picture and credits too). */
+  copy_of?: number
 }
 
 export interface EquipmentFiles {

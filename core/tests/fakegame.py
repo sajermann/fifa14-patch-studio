@@ -482,6 +482,8 @@ def _tables():
     players, names, links = _players()
     return {'leagues': LEAGUES, 'teams': TEAMS, 'leagueteamlinks': LEAGUE_TEAM_LINKS, 'players': players,
             'playernames': names, 'teamplayerlinks': links, 'nations': NATIONS, 'teamkits': _kits(),
+            # the country's commentary and crowd (a copied country takes its row)
+            'audionation': [{'nationid': 54, 'chantregionindex': 9, 'crowdbedsregionindex': 8}],
             # a name edited in the database wins over the name table
             'editedplayernames': [{'playerid': KEEPER, 'firstname': 'Edited', 'surname': 'Keeper',
                                    'commonname': '', 'playerjerseyname': 'EDITED'}],

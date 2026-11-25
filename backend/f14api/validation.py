@@ -7,8 +7,9 @@ differs from what the screen shows. Entities left out of the patch (Hide) are no
 import json
 import sqlite3
 
-from f14mod import facefill, facepack, fifa14
+from f14mod import facefill, facepack, fields, fifa14
 from f14mod.builder import STARTERS
+from f14mod.project import ADBOARD_PICTURE, EQUIPMENT_NEEDS, STADIUM_SCENE_NAME
 
 from . import queries
 
@@ -30,9 +31,15 @@ def issues(con: sqlite3.Connection, lang: str) -> list[dict]:
     for kind, oid, field, value in con.execute('SELECT kind, id, field, value FROM p.fields'):
         saved.setdefault((kind, oid), {})[field] = json.loads(value)
     states = league_states(con, hidden, created, saved)
-    _teams(con, out, hidden, created, saved, states)
+    # players made from scratch still missing a required field are out of the patch: their teams count without them
+    blank = {r[0] for r in con.execute('SELECT player_id FROM p.player_sources WHERE template IS NULL')}
+    incomplete = {('player', pid) for k, pid in created if k == 'player' and pid in blank and
+                  any(saved.get(('player', pid), {}).get(f) is None for f in fields.PLAYER_REQUIRED)}
+    _teams(con, out, hidden | incomplete, created, saved, states)
     _leagues(con, out, hidden, created, saved, states)
     _players(con, out, hidden, created, saved)
+    _stadiums(con, out, hidden, created, saved)
+    _boards_and_equipment(con, out, hidden, created)
     _league_links(con, out)
     _names(con, out, lang)
     return out
@@ -66,6 +73,19 @@ def _teams(con, out, hidden, created, saved, states):
         rosters.setdefault(r[0], []).append(r[1:])
     roster_set = {r[0] for r in con.execute('SELECT team_id FROM p.team_rosters_set')}
     sources = {r[0]: bool(r[1]) for r in con.execute('SELECT team_id, copy FROM p.team_sources')}
+    # made from scratch: out of the patch (a warning, not an error) until it has what every team of the game has
+    blank = {r[0] for r in con.execute('SELECT team_id FROM p.team_sources WHERE template IS NULL AND copy = 0')}
+    with_stadium = {r[0] for r in con.execute('SELECT team_id FROM p.team_stadiums')}
+    for kind, tid in sorted(created):
+        if kind != 'team' or tid not in blank or (kind, tid) in hidden:
+            continue
+        values = saved.get(('team', tid), {})
+        missing = [f for f in fields.TEAM_REQUIRED if values.get(f) is None]
+        if missing:
+            out.append(_issue('team_missing_fields', 'warning', 'team', tid, 'fields', count=len(missing),
+                              fields=missing))
+        if tid not in with_stadium:
+            out.append(_issue('team_without_stadium', 'warning', 'team', tid, 'stadium'))
     links: dict[int, list[tuple[int, bool]]] = {}
     for lid, tid, out_here in con.execute('SELECT league_id, team_id, hidden FROM v_league_teams'):
         links.setdefault(tid, []).append((lid, bool(out_here)))
@@ -77,14 +97,15 @@ def _teams(con, out, hidden, created, saved, states):
     for tid in sorted(roster_set | {i for k, i in created if k == 'team'}):
         if ('team', tid) in hidden:
             continue
+        severity = 'warning' if tid in blank else 'error'  # a blank team without players is left out instead
         if tid not in roster_set:  # a created team without its own squad: the copied team's, or none
             if not sources.get(tid):
-                out.append(_issue('roster_too_small', 'error', 'team', tid, 'players', count=0, min=STARTERS))
+                out.append(_issue('roster_too_small', severity, 'team', tid, 'players', count=0, min=STARTERS))
             continue
         rows = [r for r in rosters.get(tid, []) if not r[4] and ('player', r[0]) not in hidden]
         squad = rows[:fifa14.MAX_SQUAD]  # the rest stays out of the patch (builder.lineup)
         if len(rows) < STARTERS:
-            out.append(_issue('roster_too_small', 'error', 'team', tid, 'players', count=len(rows), min=STARTERS))
+            out.append(_issue('roster_too_small', severity, 'team', tid, 'players', count=len(rows), min=STARTERS))
         elif len(rows) > fifa14.MAX_SQUAD:
             out.append(_issue('roster_too_large', 'warning', 'team', tid, 'players', count=len(rows),
                               max=fifa14.MAX_SQUAD))
@@ -137,6 +158,14 @@ def _leagues(con, out, hidden, created, saved, states):
 
 def _players(con, out, hidden, created, saved):
     in_team = {r[0] for r in con.execute('SELECT DISTINCT player_id FROM v_team_players WHERE hidden = 0')}
+    # made from scratch: out of the patch (a warning) until the required fields are saved
+    blank = {r[0] for r in con.execute('SELECT player_id FROM p.player_sources WHERE template IS NULL')}
+    for kind, pid in sorted(created):
+        if kind == 'player' and pid in blank and (kind, pid) not in hidden:
+            missing = [f for f in fields.PLAYER_REQUIRED if saved.get(('player', pid), {}).get(f) is None]
+            if missing:
+                out.append(_issue('player_missing_fields', 'warning', 'player', pid, 'fields', count=len(missing),
+                                  fields=missing))
     files = {}
     for pid, name in con.execute('SELECT player_id, name FROM p.player_files'):
         files.setdefault(pid, set()).add(name)
@@ -158,6 +187,45 @@ def _players(con, out, hidden, created, saved):
             out.append(_issue('face_incomplete', 'warning', 'player', pid, 'face', parts=parts))
 
 
+def _stadiums(con, out, hidden, created, saved):
+    """A stadium made from scratch enters the patch only with its 3D (a stadium's folder) and every field the game
+    needs; without menu pictures the game's menus show it with none."""
+    sources = {r[0]: r[1] for r in con.execute('SELECT stadium_id, template FROM p.stadium_sources')}
+    scenes = {r[0] for r in con.execute('SELECT stadium_id FROM p.stadium_scene WHERE name = ?', (STADIUM_SCENE_NAME,))}
+    pictures = {r[0] for r in con.execute("SELECT id FROM p.pictures WHERE kind = 'stadium'")}
+    menus = {r[0] for r in con.execute("SELECT DISTINCT stadium_id FROM p.stadium_scene WHERE name LIKE 'data/ui/%'")}
+    for kind, sid in sorted(created):
+        if kind != 'stadium' or (kind, sid) in hidden or sources.get(sid) is not None:
+            continue
+        if sid not in scenes:
+            out.append(_issue('stadium_without_scene', 'warning', 'stadium', sid, 'scene'))
+        values = saved.get(('stadium', sid), {})
+        missing = [f for f in fields.STADIUM_REQUIRED if values.get(f) is None]
+        if missing:
+            out.append(_issue('stadium_missing_fields', 'warning', 'stadium', sid, 'fields', count=len(missing)))
+        if sid not in pictures and sid not in menus:
+            out.append(_issue('stadium_without_pictures', 'warning', 'stadium', sid, 'pictures'))
+
+
+def _boards_and_equipment(con, out, hidden, created):
+    """A created board without its picture, or a created boot/glove/ball without the files it needs, is left out of
+    the patch (builder.write_adboards, Project.incomplete_equipment)."""
+    pictures = {r[0] for r in con.execute(f"SELECT id FROM p.pictures WHERE kind = 'adboard' AND slot = ?",
+                                          (ADBOARD_PICTURE,))}
+    files: dict[tuple[str, int], set[str]] = {}
+    for kind, oid, name in con.execute('SELECT kind, id, name FROM p.equipment_files'):
+        files.setdefault((kind, oid), set()).add(name)
+    for kind, oid in sorted(created):
+        if (kind, oid) in hidden:
+            continue
+        if kind == 'adboard' and oid not in pictures:
+            out.append(_issue('adboard_without_picture', 'warning', 'adboard', oid, 'picture'))
+        elif kind in EQUIPMENT_NEEDS:
+            missing = [n for n in EQUIPMENT_NEEDS[kind] if n not in files.get((kind, oid), set())]
+            if missing:
+                out.append(_issue('equipment_without_files', 'warning', kind, oid, 'files', count=len(missing)))
+
+
 def _league_links(con, out):
     """Every team-league link of the game has a 12-bit key (builder.write_members)."""
     changed = {r[0] for r in con.execute('SELECT league_id FROM p.league_members_set')}
@@ -171,9 +239,14 @@ def _names(con, out, lang):
     """The shown name of each entity with a problem (the list links to it)."""
     sql = {'team': f'SELECT {queries._team_name("full")} FROM v_teams t WHERE t.id = :id',  # noqa: SLF001
            'league': f'SELECT {queries._league_name()} FROM v_leagues l WHERE l.id = :id',  # noqa: SLF001
-           'player': f'SELECT {queries._player_name()} FROM v_players pl WHERE pl.id = :id'}  # noqa: SLF001
+           'player': f'SELECT {queries._player_name()} FROM v_players pl WHERE pl.id = :id',  # noqa: SLF001
+           'stadium': f'SELECT {queries._stadium_name()} FROM v_stadiums s WHERE s.id = :id'}  # noqa: SLF001
     cache = {}
     for i in out:
+        if i['kind'] in ('adboard', 'boot', 'glove', 'ball'):  # their name is a field of the project
+            row = con.execute("SELECT json_extract(value, '$') FROM p.fields WHERE kind = ? AND id = ? AND "
+                              "field = 'name'", (i['kind'], i['id'])).fetchone()
+            i['name'] = row[0] if row else None
         if i['kind'] in sql:
             key = (i['kind'], i['id'])
             if key not in cache:

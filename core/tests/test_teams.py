@@ -175,3 +175,51 @@ def test_kit_print_keeps_the_kit_file(installed, tmp_path):
     assert (row['shortsnumberplacementcode'], row['jerseynamelayouttype']) == (0, 1)
     assert row.get('jerseybacknameplacementcode', 0) == 0
     assert not os.path.exists(os.path.join(patch_dir, *teamkits.KIT_FILE.format(fakegame.TEAM, 0).split('/')))
+
+
+def test_blank_team_stays_out_until_complete(installed, tmp_path):
+    """A team made from scratch (no template) starts blank: out of the patch until it has every required field, a
+    stadium and a lineup; then its row has the neutral tactics, not the model team's values."""
+    from f14mod import fields
+    project = Project(str(tmp_path / 'p.sqlite'))
+    project.create('team', NEW, {'full': {'*': 'A01 Blank'}})
+    project.set_team_source(NEW, None, False)
+    project.set_roster(NEW, [])
+    project.set_members(fakegame.PLAIN_LEAGUE, [fakegame.SMALL_TEAM, NEW])
+    assert project.missing_team_parts(NEW) == {'fields': list(fields.TEAM_REQUIRED), 'stadium': True, 'players': 0}
+    assert project.incomplete_teams() == {NEW}
+    summary, tables, _ = _build(installed, tmp_path, project)
+    assert not any(r['teamid'] == NEW for r in tables['teams'])
+    assert not any(r['teamid'] == NEW for r in tables['leagueteamlinks'])
+
+    files = catalog.open_game(installed)
+    source = __import__('f14mod.fifa14', fromlist=['Fifa14Source']).Fifa14Source(installed, files=files)
+    squad = [link['playerid'] for link in source.team_links[fakegame.TEAM]][:14]
+    project.set_roster(NEW, [{'player': pid, 'jersey': i + 1, 'slot': 29} for i, pid in enumerate(squad)])
+    project.set_team_stadium(NEW, 3)
+    project.save('team', NEW, fields={'teamcolor1': [1, 2, 3], 'teamcolor2': [4, 5, 6], 'teamcolor3': [7, 8, 9],
+                                      'domesticprestige': 3, 'internationalprestige': 2,
+                                      'rivalteam': fakegame.SMALL_TEAM, 'transferbudget': 1000,
+                                      'balltype': fakegame.GAME_BALL, 'formation': 8, 'busbuildupspeed': 70})
+    assert project.missing_team_parts(NEW) == {} and project.incomplete_teams() == set()
+    summary, tables, _ = _build(installed, tmp_path / 'b', project)
+    team = next(r for r in tables['teams'] if r['teamid'] == NEW)
+    assert (team['teamcolor1r'], team['teamcolor2b'], team['balltype']) == (1, 6, fakegame.GAME_BALL)
+    assert team['captainid'] in squad  # blank: the last starter (builder.write_rosters), not the model's captain
+    assert next(r for r in tables['teamstadiumlinks'] if r['teamid'] == NEW)['stadiumid'] == 3
+    assert summary['database']['created']['team'] == 1
+
+
+def test_copy_with_plain_crest(installed, tmp_path):
+    """A copy whose copied crest was removed (plain_crest) gets the plain crest, not the copied team's files."""
+    project = Project(str(tmp_path / 'p.sqlite'))
+    project.create('team', NEW, {'full': {'*': 'A01 Copy'}, 'abbr3': {'*': 'ACP'}},
+                   {'plain_crest': 1, 'teamcolor1': [0, 0, 200], 'teamcolor2': [255, 255, 255]})
+    project.set_team_source(NEW, fakegame.TEAM, True)
+    _, _, patch_dir = _build(installed, tmp_path, project)
+    files = catalog.open_game(installed)
+    copied = files.read(teamkits.CREST_FILE.format('crest', fakegame.TEAM))
+    crest = _file(patch_dir, teamkits.CREST_FILE.format('crest', NEW))
+    assert crest != copied
+    r, g, b = images.decode_dds(crest).convert('RGB').getpixel((32, 20))
+    assert r < 10 and g < 10 and b > 180  # color 1 (DXT rounds it)

@@ -3,9 +3,12 @@ import { Loader2, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '@/api/client'
+import type { Adboard } from '@/api/types'
 import { AdboardThumb, useAdboardName, useAdboards, useCompetitionsText } from '@/components/adboard/AdboardChoice'
 import { DateCells, DateHeads } from '@/components/common/dates'
 import { OriginalBadge } from '@/components/common/detail'
+import { EntityIssues } from '@/components/common/form'
+import { NewItemDialog } from '@/components/common/NewItemDialog'
 import { HideButton, OutOfPatchBadge } from '@/components/common/HideButton'
 import { BulkActions, RowCheckbox, SelectAllCheckbox, SelectAllDialog, useListSelection } from '@/components/common/selection'
 import { Button } from '@/components/ui/button'
@@ -45,9 +48,11 @@ export function AdboardsPage() {
   // the user's boards can be deleted, the game's edited ones restored, in bulk
   const pickable = boards.filter((b) => b.is_new || b.edited).map((b) => b.id)
   const selection = useListSelection(pickable, pickable)
+  const [creating, setCreating] = useState(false)
   const create = useMutation({
-    mutationFn: () => api.createAdboard({ name: t('adboards.defaultName', { n: (data?.items.filter((b) => b.is_new).length ?? 0) + 1 }) }),
+    mutationFn: (n: { name: string; copyOf: number | null }) => api.createAdboard({ name: n.name, copy_of: n.copyOf ?? undefined }),
     onSuccess: (board) => {
+      setCreating(false)
       void qc.invalidateQueries({ queryKey: ['adboards'] })
       navigate(`/adboards/${board.id}`, { state: from.state })
     },
@@ -65,9 +70,40 @@ export function AdboardsPage() {
           <h1 className="text-2xl font-semibold">{t('adboards.title')}</h1>
           <p className="text-sm text-muted-foreground">{t('adboards.subtitle')}</p>
         </div>
-        <Button disabled={create.isPending} onClick={() => create.mutate()}>
+        <Button disabled={create.isPending} onClick={() => setCreating(true)}>
           {create.isPending ? <Loader2 className="animate-spin" /> : <Plus />} {t('adboards.new')}
         </Button>
+        <NewItemDialog
+          open={creating}
+          onOpenChange={setCreating}
+          title={t('adboards.new')}
+          description={t('adboards.newHint')}
+          label={t('adboards.name')}
+          maxLength={60}
+          pending={create.isPending}
+          scratchHint={t('adboards.fromScratchHint')}
+          copyLabel={t('adboards.copyOf')}
+          copyHint={t('adboards.copyOfHint')}
+          chooseLabel={t('adboards.choose')}
+          placeholder={t('adboards.search')}
+          groups={(query) => {
+            const all = (data?.items ?? []).filter((b) => !query || nameOf(b).toLowerCase().includes(query) || String(b.id).includes(query))
+            const item = (b: Adboard) => ({ key: b.id, icon: <AdboardThumb board={b} width={20} />, title: nameOf(b), subtitle: `ID ${b.id}` })
+            return [
+              { label: t('adboards.originProject'), items: all.filter((b) => b.is_new).map(item) },
+              { label: t('list.originOriginal'), items: all.filter((b) => !b.is_new).map(item) },
+            ]
+          }}
+          chosen={(id) => {
+            const b = data?.items.find((x) => x.id === id)
+            return (
+              <>
+                <AdboardThumb board={b} width={12} /> {b ? nameOf(b) : `#${id}`}
+              </>
+            )
+          }}
+          onCreate={(n) => create.mutate(n)}
+        />
       </div>
       <FilterBar active={!!q || origin !== ALL} onClear={() => (setQ(''), setOrigin(ALL))}>
         <SearchInput value={q} onChange={setQ} placeholder={t('adboards.search')} />
@@ -96,6 +132,7 @@ export function AdboardsPage() {
             <SortHead field="leagues" label={t('adboards.colLeagues')} state={sorted.state} className="text-center" />
             <DateHeads sort={sorted.state} />
             <TableHead className="w-28" />
+            <TableHead className="w-16" />
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -115,7 +152,6 @@ export function AdboardsPage() {
                     {nameOf(b)}
                   </Link>
                   {!b.is_new && <OriginalBadge edited={b.edited} />}
-                  {b.is_new && b.picture === null && <span className="text-xs text-amber-600 dark:text-amber-400">{t('adboards.noPicture')}</span>}
                   {b.hidden && <OutOfPatchBadge />}
                 </span>
               </TableCell>
@@ -132,11 +168,14 @@ export function AdboardsPage() {
               <TableCell>
                 {b.is_new && <HideButton hidden={b.hidden} onToggle={() => hide.mutate({ id: b.id, hidden: !b.hidden })} hideHint={t('adboards.hideHint')} showHint={t('adboards.showHint')} />}
               </TableCell>
+              <TableCell>
+                <EntityIssues kind="adboard" id={b.id} />
+              </TableCell>
             </TableRow>
           ))}
           {!isLoading && boards.length === 0 && (
             <TableRow>
-              <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={10} className="py-10 text-center text-muted-foreground">
                 {t('list.empty')}
               </TableCell>
             </TableRow>

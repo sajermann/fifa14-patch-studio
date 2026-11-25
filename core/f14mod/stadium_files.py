@@ -21,7 +21,7 @@ import struct
 
 from PIL import Image
 
-from . import images
+from . import fifa14, images
 from .project import STADIUM_ID_MARK, STADIUM_PICTURE
 
 # {regex of a file name: game path with {id} and the regex groups}
@@ -169,16 +169,22 @@ def own_name(name: str, sid: int) -> str:
     return _moved(name, STADIUM_ID_MARK, sid)
 
 
+def _template(project, sid: int) -> int | None:
+    """Whose files a stadium uses where it has none of its own: a created stadium's template (None from scratch),
+    a game stadium's own."""
+    return project.stadium_source(sid) if project.is_created('stadium', sid) else sid
+
+
 def stadium_file(files, project, sid: int, path: str) -> bytes | None:
-    """A file of a created stadium (`path` = its game path under `sid`): its own (the folder the user gave), else the
-    one of the stadium it starts from."""
+    """A file of a stadium (`path` = its game path under `sid`): its own (the folder the user gave), else the one of
+    the stadium it starts from (a game stadium: its own in the game; the menu pictures only, once it has a folder)."""
     mark = _marked(path, sid)
     own = project.stadium_scene_file(sid, mark)
     if own is not None:
         return _glares_renamed(own, STADIUM_ID_MARK, sid) if path.endswith('.lnx') else own
     if project.stadium_scene_list(sid) and not mark.startswith('data/ui/'):
         return None  # a stadium of its own takes nothing of the template's scene
-    template = project.stadium_source(sid)
+    template = _template(project, sid)
     if template is None:
         return None
     data = files.read(_moved(path, sid, template))
@@ -188,7 +194,8 @@ def stadium_file(files, project, sid: int, path: str) -> bytes | None:
 
 
 class CreatedStadiumFiles:
-    """The game's files with a created stadium's own files under its id (the 3D preview reads it like the game)."""
+    """The game's files with a stadium's own files under its id (the 3D preview reads it like the game): a created
+    stadium's, or a game stadium's folder (then nothing of the game's own scene)."""
 
     def __init__(self, files, project, sid: int):
         self.files, self.project, self.sid = files, project, sid
@@ -205,7 +212,7 @@ class CreatedStadiumFiles:
             mark = _marked(path, self.sid)
             if own and not mark.startswith('data/ui/'):
                 return mark in own
-            template = self.project.stadium_source(self.sid)
+            template = _template(self.project, self.sid)
             return mark in own or (template is not None and self.files.exists(_moved(path, self.sid, template)))
         return self.files.exists(path)
 
@@ -246,10 +253,22 @@ def patch_files(files, project, sid: int) -> dict[str, bytes]:
         data = stadium_file(files, project, sid, path)
         if data is not None:
             out[path] = data
-    out.update(_draw_pictures(project, sid, out.get))
+    # a stadium without menu archives (made from scratch) draws the user's pictures into the generic stadium's
+    out.update(_draw_pictures(project, sid, lambda p: out.get(p) or files.read(_moved(p, sid, fifa14.TEMPLATE_STADIUM))))
     return out
 
 
-def game_picture_files(files, project, sid: int) -> dict[str, bytes]:
-    """{game path: archive} of a game stadium's menu pictures the user changed."""
-    return _draw_pictures(project, sid, files.read)
+def game_stadium_files(files, project, sid: int) -> dict[str, bytes]:
+    """{game path: bytes} of a game stadium the user changed: the files of the folder the user gave it (under its id)
+    and the menu pictures the user replaced (drawn into the folder's archives, else the game's)."""
+    out = {}
+    for name in project.stadium_scene_list(sid):
+        data = project.stadium_scene_file(sid, name)
+        out[own_name(name, sid)] = _glares_renamed(data, STADIUM_ID_MARK, sid) if name.endswith('.lnx') else data
+    out.update(_draw_pictures(project, sid, lambda p: out.get(p) or files.read(p)))
+    return out
+
+
+def has_own_files(project, sid: int) -> bool:
+    """The stadium (the game's) reads its files through StadiumFiles: it has a folder of its own."""
+    return bool(project.stadium_scene_list(sid))

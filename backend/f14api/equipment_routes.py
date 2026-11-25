@@ -149,6 +149,7 @@ class EquipmentBody(BaseModel):
     name: str = ''
     credits: str = ''
     credits_url: Optional[str] = None
+    copy_of: Optional[int] = None  # creating: a copy of this item (its files, picture and credits); None = blank
 
 
 def _clean(kind: str, body: EquipmentBody, required: bool) -> dict:
@@ -165,14 +166,43 @@ def _clean(kind: str, body: EquipmentBody, required: bool) -> dict:
 
 @app.post('/api/equipment/{kind}')
 def create_equipment(kind: str, body: EquipmentBody):
-    """A new item with the first free code of the game."""
+    """A new item with the first free code of the game: blank (just its name: out of the patch until it gets its
+    files) or a copy of an item (a created one: its files, picture and credits; one of the game's: its files)."""
     _kind(kind)
     p = project()
+    if body.copy_of is not None and not _exists(kind, body.copy_of):
+        raise ApiError(404, 'not_found')
     free = equipment.free_codes(game.files(), kind, p.created(kind))
     if not free:
         raise ApiError(409, 'equipment_no_free_code')
-    p.create(kind, free[0], fields=_clean(kind, body, True))
-    return _detail(kind, free[0])
+    code, values = free[0], _clean(kind, body, True)
+    files, picture = {}, None
+    if body.copy_of is not None:
+        source = body.copy_of
+        if p.is_created(kind, source):
+            files = p.equipment_files(kind, source)
+            values = {**{k: v for k, v in p.fields(kind, source).items() if k in ('credits', 'credits_url')}, **values}
+        else:  # the game's files, checked as a pack's (the game's formats are kept as they are)
+            game_files = game.files()
+            for name, path, check in (('mesh', equipment.mesh_path(kind, source), equipment.check_mesh),
+                                      ('texture', equipment.texture_path(kind, source), equipment.check_texture)):
+                if name == 'mesh' and kind == 'glove':
+                    continue
+                data = game_files.read(path)
+                if data is None:
+                    continue
+                try:
+                    files[name] = check(kind, data)
+                except equipment.EquipmentError:
+                    pass  # the copy goes without it (the screen asks for it)
+        own = p.picture(kind, source, EQUIPMENT_PICTURE)
+        picture = own[0] if own else None
+    p.create(kind, code, fields=values)
+    if files:
+        p.set_equipment_files(kind, code, files)
+    if picture:
+        p.set_picture(kind, code, EQUIPMENT_PICTURE, picture)
+    return _detail(kind, code)
 
 
 @app.put('/api/equipment/{kind}/{code}')

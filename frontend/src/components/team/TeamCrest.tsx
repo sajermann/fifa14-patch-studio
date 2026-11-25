@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query'
-import { Loader2, Trash2, Upload } from 'lucide-react'
+import { Loader2, Trash2, Undo2, Upload } from 'lucide-react'
 import { useRef } from 'react'
 import type { FieldValue, TeamDetail } from '@/api/types'
 import { Section } from '@/components/common/detail'
@@ -16,7 +16,9 @@ const FALLBACK = [0, 0, 0]
 
 /** The team's crest and colors, laid out like the Street Studio's tab: the crest (the user's picture, which the patch
  * draws every size from and puts on generic kits, or the game's; a team made from scratch without one gets a plain
- * shield with its short name) and the three team colors. */
+ * shield with its short name, and so does a copied team whose copied crest is removed: field `plain_crest`) and the
+ * three team colors. Under the crest: Upload when there is none to replace, else Replace (and Remove when there is
+ * something to remove). */
 export function TeamCrest({
   team,
   pending,
@@ -42,6 +44,16 @@ export function TeamCrest({
     onError: (e: Error) => toast.error(e.message),
   })
   const hasOwn = pending === 'remove' ? false : !!pending || !!team.own_crest
+  const copy = team.is_new && team.copied
+  const plainValue = 'plain_crest' in fields ? fields.plain_crest : team.saved.plain_crest
+  const plain = copy && plainValue === 1 // the copied crest removed: the plain one
+  // a crest the user can replace: the copied team's, or a game team's own
+  const shown = hasOwn || (copy && !plain) || (!team.is_new && team.has_crest)
+  const upload = (
+    <Button variant="outline" size="sm" disabled={choose.isPending} onClick={() => input.current?.click()}>
+      <Upload /> {t(shown ? 'common.replace' : 'team.crestUpload')}
+    </Button>
+  )
   const color = (column: string): number[] => {
     const edited = fields[column]
     const value = Array.isArray(edited) ? edited : team.values[column]
@@ -66,7 +78,7 @@ export function TeamCrest({
             ) : pending && pending !== 'remove' ? (
               <img src={pending.url} alt="" className="max-h-40 max-w-full object-contain" />
             ) : team.has_crest || team.is_new || hasOwn ? (
-              <Crest id={team.id} size={256} available version={pending === 'remove' ? null : team.own_crest} className="max-h-40 max-w-full" />
+              <Crest id={team.id} size={256} available version={pending === 'remove' ? null : team.own_crest} plain={copy ? plain : undefined} className="max-h-40 max-w-full" />
             ) : (
               <span className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
                 <Upload /> {t('image.clickOrDrop')}
@@ -84,18 +96,28 @@ export function TeamCrest({
               e.target.value = ''
             }}
           />
-          <p className="text-xs text-muted-foreground">{hasOwn ? t('team.crestOwn') : t(team.is_new && !team.copied ? 'team.crestPlain' : 'team.crestGame')}</p>
+          <p className="text-xs text-muted-foreground">
+            {hasOwn ? t('team.crestOwn') : t(team.is_new && (!team.copied || plain) ? 'team.crestPlain' : copy ? 'team.crestCopied' : 'team.crestGame')}
+          </p>
           {pending && <p className="text-xs text-amber-600 dark:text-amber-400">{t(pending === 'remove' ? 'team.crestRemovePending' : 'team.crestPending')}</p>}
-          {hasOwn && (
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" disabled={choose.isPending} onClick={() => input.current?.click()}>
-                <Upload /> {t('common.replace')}
-              </Button>
+          <div className="flex justify-end gap-2">
+            {upload}
+            {hasOwn ? (
               <Button variant="outline" size="sm" onClick={() => setPending(team.own_crest ? 'remove' : null)}>
                 <Trash2 /> {t('common.remove')}
               </Button>
-            </div>
-          )}
+            ) : copy && !plain ? (
+              <Button variant="outline" size="sm" onClick={() => setField('plain_crest', 1)}>
+                <Trash2 /> {t('common.remove')}
+              </Button>
+            ) : (
+              plain && (
+                <Button variant="outline" size="sm" onClick={() => setField('plain_crest', null)}>
+                  <Undo2 /> {t('team.crestBackToCopied')}
+                </Button>
+              )
+            )}
+          </div>
         </div>
       </Section>
       <Section title={t('team.colors')}>

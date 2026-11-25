@@ -3,7 +3,7 @@ import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
-import { CreateDialog } from '@/components/common/create'
+import { NewLeagueDialog, type NewLeague } from '@/components/league/NewLeagueDialog'
 import { toast } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 import { useFrom } from '@/lib/back'
@@ -37,7 +37,7 @@ export function LeaguesPage() {
   const qc = useQueryClient()
   const [creating, setCreating] = useState(false)
   const create = useMutation({
-    mutationFn: (name: string) => api.createLeague({ full: { '*': name } }, {}),
+    mutationFn: (n: NewLeague) => api.createLeague({ full: { '*': n.name } }, {}, n.copyOf ?? undefined, n.copyTeams),
     onSuccess: (league) => {
       for (const k of ['leagues', 'options', 'status']) void qc.invalidateQueries({ queryKey: [k] })
       setCreating(false)
@@ -165,16 +165,7 @@ export function LeaguesPage() {
           )}
         </TableBody>
       </ScrollTable>
-      <CreateDialog
-        open={creating}
-        onOpenChange={setCreating}
-        title={t('league.new')}
-        description={t('league.newHint')}
-        label={t('leagueName.full')}
-        maxLength={60}
-        pending={create.isPending}
-        onCreate={(name) => create.mutate(name)}
-      />
+      <NewLeagueDialog open={creating} onOpenChange={setCreating} pending={create.isPending} onCreate={(n) => create.mutate(n)} />
       {data && (
         <Pager
           page={data.page}

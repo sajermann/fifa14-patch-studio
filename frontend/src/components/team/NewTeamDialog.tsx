@@ -16,11 +16,7 @@ export interface NewTeam {
   name: string
   copyOf: number | null
   copySquad: boolean
-  colors: [number[], number[]]
 }
-
-const hex = (rgb: number[]) => `#${rgb.map((v) => v.toString(16).padStart(2, '0')).join('')}`
-const rgb = (value: string) => [1, 3, 5].map((i) => parseInt(value.slice(i, i + 2), 16))
 
 /** Dialog: search the teams of the game and the project (the Add dialog), picking one. */
 export function TeamPickerDialog({ open, onOpenChange, title, description, onPick, exclude = [] }: { open: boolean; onOpenChange: (o: boolean) => void; title: string; description: string; onPick: (team: TeamRow) => void; exclude?: number[] }) {
@@ -63,14 +59,14 @@ export function TeamPickerDialog({ open, onOpenChange, title, description, onPic
   )
 }
 
-/** "New team": from scratch (its two colors; the crest and generic kits are drawn from them) or a copy of a team
- * (its crest, kits and formation, and its squad when asked). */
+/** "New team": from scratch (blank, like a stadium from scratch: its data, formation, stadium and squad are set on its
+ * screen, and it stays out of the patch until they are) or a copy of a team (its crest, kits and formation, and its
+ * squad when asked). */
 export function NewTeamDialog({ open, onOpenChange, pending, onCreate }: { open: boolean; onOpenChange: (o: boolean) => void; pending: boolean; onCreate: (team: NewTeam) => void }) {
   const { t } = useI18n()
   const [mode, setMode] = useState<'scratch' | 'copy'>('scratch')
   const [copyOf, setCopyOf] = useState<TeamRow | null>(null)
   const [copySquad, setCopySquad] = useState(true)
-  const [colors, setColors] = useState<[number[], number[]]>([[20, 60, 200], [255, 255, 255]])
   const [picking, setPicking] = useState(false)
   const choice = (value: 'scratch' | 'copy', label: string, hint: string) => (
     <button
@@ -95,27 +91,13 @@ export function NewTeamDialog({ open, onOpenChange, pending, onCreate }: { open:
         label={t('team.newName')}
         maxLength={30}
         pending={pending}
-        onCreate={(name) => (mode === 'copy' && !copyOf ? setPicking(true) : onCreate({ name, copyOf: mode === 'copy' ? (copyOf?.id ?? null) : null, copySquad, colors }))}
+        onCreate={(name) => (mode === 'copy' && !copyOf ? setPicking(true) : onCreate({ name, copyOf: mode === 'copy' ? (copyOf?.id ?? null) : null, copySquad }))}
       >
         <div className="flex gap-2 pt-2">
           {choice('scratch', t('team.fromScratch'), t('team.fromScratchHint'))}
           {choice('copy', t('team.copyOf'), t('team.copyOfHint'))}
         </div>
-        {mode === 'scratch' ? (
-          <div className="flex flex-wrap items-center gap-4 pt-1">
-            {[0, 1].map((i) => (
-              <label key={i} className="flex items-center gap-2 text-sm">
-                <input
-                  type="color"
-                  className="h-8 w-12 cursor-pointer rounded border bg-transparent"
-                  value={hex(colors[i])}
-                  onChange={(e) => setColors((c) => (i === 0 ? [rgb(e.target.value), c[1]] : [c[0], rgb(e.target.value)]))}
-                />
-                {t(i === 0 ? 'team.color1' : 'team.color2')}
-              </label>
-            ))}
-          </div>
-        ) : (
+        {mode === 'copy' && (
           <div className="space-y-2 pt-1">
             <Button type="button" variant="outline" className="w-full justify-between font-normal" onClick={() => setPicking(true)}>
               <span className="flex min-w-0 items-center gap-2">

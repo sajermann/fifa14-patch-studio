@@ -201,7 +201,8 @@ def test_free_country_and_league_crud(client):
     assert rows[54]['confederation'] == 1 and rows[54]['player_count'] > 0 and rows[52]['player_count'] == 0
     assert rows[cid]['player_count'] == 0
     detail = client.get('/api/countries/54').json()
-    assert detail['confederation'] == 1 and detail['national_team'] is None and detail['audio'] is None
+    assert detail['confederation'] == 1 and detail['national_team'] is None
+    assert detail['audio'] == {'nationid': 54, 'chantregionindex': 9, 'crowdbedsregionindex': 8}
     made = client.get(f'/api/countries/{cid}').json()
     assert made['national_team'] is None
     # its database row is the one the patch writes: the model country's, with its own id and name
@@ -448,7 +449,7 @@ def test_generate_players_creates_random_strikers(client):
     assert r.status_code == 200, r.text
     made = r.json()
     assert [p['name'] for p in made] == ['Player 01', 'Player 02', 'Player 03']
-    assert all(p['is_new'] and p['position'] == 25 and p['saved']['finishing'] == 50 for p in made)
+    assert all(p['is_new'] and p['position'] == 25 and p['values']['finishing'] == 50 for p in made)
     assert all(p['saved']['face']['source'] == 'generic' for p in made)
     faces = {'0_0_0_0_0_4', '2_1_3_5_2_8'}  # the generic face textures of the fake game
     for _ in range(5):  # the face codes are drawn together: always a face texture the game has

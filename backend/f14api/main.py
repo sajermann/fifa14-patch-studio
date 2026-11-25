@@ -275,7 +275,7 @@ def filter_options():
         return {
             # sorted outside: inside the select, fold(name) would sort by the table's own name column
             'leagues': [dict(r) for r in con.execute(
-                f'SELECT * FROM (SELECT l.id, {queries._league_name()} AS name FROM v_leagues l) '  # noqa: SLF001
+                f'SELECT * FROM (SELECT l.id, {queries._league_name()} AS name, l.is_new FROM v_leagues l) '  # noqa: SLF001
                 'ORDER BY fold(name)', {'lang': lang()})],
             'positions': [{'id': i, 'name': n} for i, n in enumerate(fifa14.POSITIONS[:28])],
             'languages': queries.languages(con),
@@ -499,6 +499,19 @@ def country_detail(cid: int):
 class CreateBody(BaseModel):
     names: dict[str, dict[str, str]] = {}
     fields: dict = {}
+    template: Optional[int] = None  # a copy of this country / league (None = from scratch, blank)
+    copy_teams: bool = False  # a league copy: its teams too (they stay in both leagues)
+
+
+def _game_picture_png(path: str) -> bytes | None:
+    """A picture of the game (a league's logo) as PNG, to copy it into the project; None when there is none."""
+    data = game.files().read(path)
+    if data is None:
+        return None
+    try:
+        return images.normalize_picture(images.png(images.decode_dds(data)))
+    except (images.UNREADABLE, images.PictureError):
+        return None
 
 
 def _required_name(kind: str, names: dict):
@@ -508,14 +521,33 @@ def _required_name(kind: str, names: dict):
 
 @app.post('/api/countries')
 def create_country(body: CreateBody):
+    """A new country: from scratch (just its name, no flag) or a copy of a country (its flag: the copied country's own
+    picture, else the flag it shows; its database row, e.g. the confederation, and its sound row: field copy_of)."""
     _required_name('country', body.names)
+    picture = None
     with db() as con:
         cid = queries.free_country_id(con)
         if cid is None:
             raise ApiError(409, 'limit_countries', str(fifa14.MAX_NATION_ID))
         names = _clean_names('country', body.names, {}, set(queries.languages(con)))
-        kept = _clean_fields(con, 'country', cid, body.fields, {'values': fields.original_values('country', {})})
+        wanted = dict(body.fields)
+        if body.template is not None:
+            if queries.country(con, lang(), body.template) is None:
+                raise ApiError(400, 'unknown_country', str(body.template))
+            own = project().picture('country', body.template, 'flag')
+            if own:
+                picture = own[0]
+            else:  # the flag the copied country shows: the one it copies itself, else its own game flag
+                source = project().fields('country', body.template).get('flag_from')
+                wanted.setdefault('flag_from', source or body.template)
+            # its database and sound rows: the game country's (a created one: the game country it was copied from)
+            root = project().fields('country', body.template).get('copy_of')                 if project().is_created('country', body.template) else body.template
+            if root:
+                wanted.setdefault('copy_of', root)
+        kept = _clean_fields(con, 'country', cid, wanted, {'values': fields.original_values('country', {})})
     project().create('country', cid, names, kept)
+    if picture is not None:
+        project().set_picture('country', cid, 'flag', picture)
     with db() as con:
         return queries.country(con, lang(), cid)
 
@@ -607,12 +639,39 @@ def create_league(body: CreateBody):
             raise ApiError(409, 'limit_leagues', str(fifa14.MAX_LEAGUE_ID))
         names = _clean_names('league', body.names, {}, set(queries.languages(con)))
         values = {'leaguename': None, 'level': None, 'countryid': None}
-        kept = _clean_fields(con, 'league', lid, body.fields, {'values': values})
+        wanted, logo, teams, hidden = dict(body.fields), None, [], set()
+        if body.template is not None:  # a copy: its level, countries and logo (and its teams when asked)
+            source = queries.league(con, lang(), body.template)
+            if source is None:
+                raise ApiError(400, 'unknown_league', str(body.template))
+            current = {**source['values'], **source['saved']}
+            for name in ('level', 'countryid', 'extra_countries'):
+                if current.get(name) is not None:
+                    wanted.setdefault(name, current[name])
+            own = project().picture('league', body.template, 'logo')
+            logo = own[0] if own else _game_picture_png(fifa14.LEAGUE_IMAGES['logo'].format(body.template))
+            if body.copy_teams:
+                rows = con.execute('SELECT team_id, hidden FROM v_league_teams WHERE league_id = ? ORDER BY ord, '
+                                   'team_id', (body.template,)).fetchall()
+                teams = list(dict.fromkeys(r[0] for r in rows))
+                hidden = {r[0] for r in rows if r[1]}
+                links = con.execute('SELECT COUNT(*) FROM v_league_teams').fetchone()[0]
+                if links + len(teams) > fifa14.MAX_LEAGUE_LINKS:
+                    raise ApiError(409, 'limit_league_links', str(fifa14.MAX_LEAGUE_LINKS))
+        kept = _clean_fields(con, 'league', lid, wanted, {'values': values})
         kept.setdefault('countryid', 0)  # no country yet: added to one in the country's page (hidden until then)
         kept.setdefault('level', 1)
         kept.setdefault('leaguename', _first_text(names.get('full', {}))[:60])
     project().create('league', lid, names, kept)
-    project().set_members(lid, [])
+    # a value the new league's row already has is not kept (as on Save: else the screen opens with changes to save)
+    with db() as con:
+        shown = queries.league(con, lang(), lid)['values']
+    same = [k for k in ('level', 'countryid', 'extra_countries') if k in kept and kept[k] == shown.get(k)]
+    if same:
+        project().save('league', lid, names, {k: v for k, v in kept.items() if k not in same})
+    project().set_members(lid, teams, hidden)
+    if logo is not None:
+        project().set_picture('league', lid, 'logo', logo)
     with db() as con:
         return queries.league(con, lang(), lid)
 
@@ -746,16 +805,19 @@ def _picture(kind: str, oid: int, path: Optional[str], size: Optional[int], deco
 
 
 @app.get('/api/image/crest/{tid}')
-def crest_image(tid: int, size: Optional[int] = None, game_only: bool = False):
+def crest_image(tid: int, size: Optional[int] = None, game_only: bool = False, plain: Optional[bool] = None):
     """The team's crest: the user's picture, else the game's file (a created team: the one of the team it copies, or
-    the plain crest with its short name). `game_only` skips the user's picture."""
+    the plain crest with its short name). `game_only` skips the user's picture; `plain` = a copied team's choice not
+    saved yet (true: the plain crest instead of the copied one)."""
     own = None if game_only else project().picture('team', tid, 'crest')
     if own:
         return _png_response(images.fit(images.decode_png(own[0]), (256, 256)), size)
     source = project().team_source(tid)
     if source and project().is_created('team', tid):
         template, copy = source
-        if copy:
+        if plain is None:
+            plain = project().fields('team', tid).get('plain_crest') == 1
+        if copy and not plain:
             return _picture('crest', template, fifa14.CREST.format(template), size)
         with db() as con:
             team = _team(con, tid)
@@ -773,7 +835,7 @@ def stadium_image(sid: int, variant: int, size: Optional[int] = None):
     own = stadium_routes.own_image(sid, variant, size)  # the user's picture of this variant (any stadium)
     if own is not None:
         return own
-    if project().is_created('stadium', sid):
+    if project().is_created('stadium', sid) or stadium_files.has_own_files(project(), sid):
         return stadium_routes.created_image(sid, variant, size)
     with db() as con:
         path = queries.stadium_picture_path(con, sid, variant)
@@ -793,7 +855,8 @@ def preview_stadium(sid: int, tod: int = 1):
         raise ApiError(404, 'not_found')
     files = game.files()
     key = (game.token, sid, tod)
-    if project().is_created('stadium', sid):  # a created stadium: its own scene, else the one it starts from
+    if project().is_created('stadium', sid) or stadium_files.has_own_files(project(), sid):
+        # a created stadium: its own scene, else the one it starts from; a game stadium: the folder the user gave it
         files = stadium_files.CreatedStadiumFiles(files, project(), sid)
         key = (*key, project().stadium_source(sid), project().stadium_scene_digest(sid))
     if key not in _stadium_models:
@@ -964,8 +1027,9 @@ def set_team_hidden(tid: int, body: HiddenBody):
 
 class CreateTeamBody(BaseModel):
     names: dict[str, dict[str, str]] = {}
-    fields: dict = {}  # e.g. the colors of a team made from scratch
-    template: Optional[int] = None  # the team it starts from (its values; its crest and kits too when `copy`)
+    fields: dict = {}  # values to start with (a team made from scratch starts blank)
+    template: Optional[int] = None  # the team it starts from (its values; its crest and kits too when `copy`);
+    #                                 None = from scratch: blank, out of the patch until complete
     copy: bool = False  # a copy of `template`: its crest, kits, formation (and squad with `copy_squad`)
     copy_squad: bool = False
     league_ids: list[int] = []
@@ -980,30 +1044,52 @@ def _team(con, tid: int) -> dict:
 
 @app.post('/api/teams')
 def create_team(body: CreateTeamBody):
-    """A new team: made from scratch (the values of a model team, a plain crest with its short name, generic kits,
-    no players) or a copy of a team of the game (its crest, kits and formation; its squad when asked)."""
+    """A new team: made from scratch (blank like a stadium from scratch: the fields of fields.TEAM_REQUIRED, its
+    stadium and squad empty, the tactics neutral; a plain crest with its short name and generic kits; it stays out of
+    the patch until it has them all) or a copy of a team of the game (its values, crest, kits and formation; its squad
+    when asked)."""
     _required_name('team', body.names)
-    template = body.template if body.template is not None else teamkits.MODEL_TEAM
+    template = body.template
+    if template is None and body.copy:
+        raise ApiError(400, 'unknown_team', 'None')
     with db() as con:
-        if not con.execute('SELECT 1 FROM teams WHERE id = ?', (template,)).fetchone():
+        if template is not None and not con.execute('SELECT 1 FROM teams WHERE id = ?', (template,)).fetchone():
             raise ApiError(400, 'unknown_team', str(template))
         for lid in body.league_ids:
             if queries.league(con, lang(), lid) is None:
                 raise ApiError(400, 'unknown_league', str(lid))
         tid = queries.free_team_id(con)
         names = _clean_names('team', body.names, {}, set(queries.languages(con)))
-        values = fields.original_values('team', json.loads(
+        values = {} if template is None else fields.original_values('team', json.loads(
             con.execute('SELECT raw FROM teams WHERE id = ?', (template,)).fetchone()[0]))
         kept = _clean_fields(con, 'team', tid, body.fields, {'values': values, 'roster': []})
+        # a copy also goes into the leagues of the team it copies; in a game league that already has as many teams
+        # as in the game it is listed but left out of the patch there (the user decides)
+        copied = [r[0] for r in con.execute(
+            'SELECT league_id FROM v_league_teams WHERE team_id = ? AND hidden = 0 ORDER BY league_id',
+            (template,))] if body.copy else []
+        leagues = list(dict.fromkeys([*body.league_ids, *copied]))
         members = {lid: [r[0] for r in con.execute(
             'SELECT team_id FROM v_league_teams WHERE league_id = ? ORDER BY ord, team_id', (lid,))]
-            for lid in body.league_ids}
+            for lid in leagues}
+        full = set()
+        for lid in copied:
+            if lid in body.league_ids:
+                continue
+            game_count = con.execute('SELECT COUNT(*) FROM league_teams WHERE league_id = ?', (lid,)).fetchone()[0]
+            shown = con.execute('SELECT COUNT(*) FROM v_league_teams WHERE league_id = ? AND hidden = 0',
+                                (lid,)).fetchone()[0]
+            if game_count and shown >= game_count:
+                full.add(lid)
     project().create('team', tid, names, kept)
     project().set_team_source(tid, template, body.copy)
     if not (body.copy and body.copy_squad):
         project().set_roster(tid, [])
     for lid, team_ids in members.items():
-        project().set_members(lid, team_ids + [tid])
+        hidden = None
+        if lid in full:  # the teams already out of the patch there, and the copy
+            hidden = project().all_hidden_members().get(lid, set()) | {tid}
+        project().set_members(lid, team_ids + [tid], hidden=hidden)
     with db() as con:
         return _team(con, tid)
 
@@ -1235,7 +1321,7 @@ def _team_crest(team: dict, tid: int, pending=None):
     found = project().picture('team', tid, 'crest') if pending is None else None
     if found:
         return images.decode_png(found[0])
-    if team['is_new'] and not team['copied']:
+    if team['is_new'] and (not team['copied'] or team['saved'].get('plain_crest') == 1):
         color = lambda n, default: team['saved'].get(f'teamcolor{n}') or team['values'].get(f'teamcolor{n}') or default  # noqa: E731
         return teamkits.plain_crest(team.get('abbr3') or '', color(1, [200, 200, 200]), color(2, [255, 255, 255]))
     data = game.files().read(teamkits.CREST_FILE.format('crest', team['template'] or tid))

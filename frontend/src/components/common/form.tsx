@@ -135,7 +135,7 @@ export function FieldIssues({ issues }: { issues: ProjectIssue[] }) {
 }
 
 /** Error/warning counts of a league/team/player, with the messages in a tooltip (lists and edit screens). */
-export function EntityIssues({ kind, id }: { kind: 'league' | 'team' | 'player'; id: number }) {
+export function EntityIssues({ kind, id }: { kind: 'league' | 'team' | 'player' | 'stadium' | 'adboard'; id: number }) {
   const issues = useIssues(kind, id)
   const errors = issues.filter((i) => i.severity === 'error').length
   const warnings = issues.length - errors

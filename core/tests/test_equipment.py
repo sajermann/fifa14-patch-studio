@@ -157,3 +157,17 @@ def test_triangles_list_and_strip():
     assert equipment.triangles([0, 1, 2, 2, 3, 4, 4, 5, 6]).tolist() == [[0, 1, 2], [2, 3, 4], [4, 5, 6]]
     # a strip (balls): every other triangle turned back, the degenerate joins dropped
     assert equipment.triangles([0, 1, 2, 3, 3, 4, 4, 5, 6]).tolist() == [[0, 1, 2], [2, 1, 3], [4, 5, 6]]
+
+
+def test_item_without_its_files_stays_out(game, tmp_path):
+    """A created boot still missing a file it needs (Project.incomplete_equipment) is not listed nor written."""
+    files = GameFiles(game)
+    p = Project(str(tmp_path / 'p.sqlite'))
+    boot = equipment.free_codes(files, 'boot')[0]
+    p.create('boot', boot, fields={'name': 'B01'})
+    p.set_equipment_files('boot', boot, {'texture': fakegame.equipment_textures('boot', (0, 0, 200))})
+    assert p.incomplete_equipment('boot') == {boot}
+    summary = builder.build(files, p, str(tmp_path / 'out'), worker_count=1)
+    assert 'equipment' not in summary
+    assert not os.path.exists(os.path.join(str(tmp_path / 'out'), 'data', 'sceneassets', 'shoe',
+                                           f'shoe_{boot}_0_textures.rx3'))

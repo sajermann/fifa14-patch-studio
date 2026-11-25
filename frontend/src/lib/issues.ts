@@ -14,14 +14,27 @@ export function facePartsText(t: TFunction, parts: readonly string[]) {
 /** Validation message in the interface language (by code + params), else the code. */
 export function issueText(t: TFunction, issue: ProjectIssue) {
   const key = `issue.${issue.code}`
-  const params = Array.isArray(issue.params.parts) ? { ...issue.params, parts: facePartsText(t, issue.params.parts as string[]) } : issue.params
+  const params: Record<string, string | number | string[]> = { ...issue.params }
+  if (Array.isArray(issue.params.parts)) params.parts = facePartsText(t, issue.params.parts as string[])
+  // the missing fields of a team made from scratch, by their labels ("Color 1, Rival")
+  if (Array.isArray(issue.params.fields))
+    params.fields = (issue.params.fields as string[]).map((f) => (hasMessage(`field.${f}`) ? t(`field.${f}` as MessageKey) : f)).join(', ')
   return hasMessage(key) ? t(key as MessageKey, params) : issue.code
 }
 
-/** The page of the league/team/player of an issue, with its label ("Time: Nome"); null for a project-wide issue. */
+/** The page of the league/team/player/stadium of an issue, with its label ("Time: Nome"); null for a project-wide issue. */
 export function issueLink(t: TFunction, issue: ProjectIssue) {
   if (!issue.kind || issue.id === null) return null
   const name = issue.name || `#${issue.id}`
-  const label = { league: 'issues.linkLeague', team: 'issues.linkTeam', player: 'issues.linkPlayer' }[issue.kind] as MessageKey
+  const label = {
+    league: 'issues.linkLeague',
+    team: 'issues.linkTeam',
+    player: 'issues.linkPlayer',
+    stadium: 'issues.linkStadium',
+    adboard: 'issues.linkAdboard',
+    boot: 'issues.linkBoot',
+    glove: 'issues.linkGlove',
+    ball: 'issues.linkBall',
+  }[issue.kind] as MessageKey
   return { label: t(label, { name }), to: `/${issue.kind}s/${issue.id}` }
 }

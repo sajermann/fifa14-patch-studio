@@ -351,16 +351,20 @@ def _shown_name(names: dict, key: str = 'full') -> str:
 def add_created(db: Database, project: Project) -> dict:
     """Rows of the countries and leagues the user created (before the saved fields are written over them)."""
     added = {}
-    nations = _table(db, 'nations')
+    nations, audio = _table(db, 'nations'), _table(db, 'audionation')
     for nid in project.created('country'):
         if nations is None or nations.find(nationid=nid):
             raise BuildError('country_id_taken', str(nid))
-        row = _model_row(nations, 'nationid', fifa14.TEMPLATE_NATION)
+        # a copy of a game country starts from its row and its sound row; one from scratch from the model country's
+        copy_of = project.fields('country', nid).get('copy_of')
+        row = _model_row(nations, 'nationid', copy_of or fifa14.TEMPLATE_NATION)
         name = _shown_name(project.names('country', nid)) or f'Country {nid}'
         for column, value in (('nationid', nid), ('nationname', name[:44]), ('top_tier', 0), ('teamid', -1)):
             if _has(nations, column):
                 nations.set(row, column, value)
         nations.records.append(row)
+        if copy_of and audio is not None and audio.find(nationid=copy_of) and not audio.find(nationid=nid):
+            _clone(audio, audio.find(nationid=copy_of)[0], nationid=nid)
         added['country'] = added.get('country', 0) + 1
     leagues = db.table('leagues')
     refs = _table(db, 'leaguerefereelinks')
@@ -382,11 +386,15 @@ def add_created(db: Database, project: Project) -> dict:
     for sid in project.created('stadium'):
         if stadiums is None or stadiums.find(stadiumid=sid):
             raise BuildError('stadium_id_taken', str(sid))
-        template = project.stadium_source(sid) or fifa14.TEMPLATE_STADIUM
+        source = project.stadium_source(sid)
+        template = source or fifa14.TEMPLATE_STADIUM
         row = _model_row(stadiums, 'stadiumid', template)
         name = _shown_name(project.names('stadium', sid)) or f'Stadium {sid}'
-        # a new stadium has no home team of its own (its teams come from teamstadiumlinks, checked in the game)
-        for column, value in (('stadiumid', sid), ('name', name[:60]), ('hometeamid', 0)):
+        # a new stadium has no home team of its own (its teams come from teamstadiumlinks, checked in the game); one
+        # from scratch enters only with every field the game needs saved (Project.incomplete_stadiums): those are
+        # written after; the generic row keeps the columns the screen does not edit (the same in every game stadium)
+        blank = [] if source is not None else [('countrycode', 0)]
+        for column, value in (('stadiumid', sid), ('name', name[:60]), ('hometeamid', 0), *blank):
             if _has(stadiums, column):
                 stadiums.set(row, column, value)
         stadiums.records.append(row)
@@ -406,7 +414,10 @@ def write_members(db: Database, project: Project) -> int:
     if not members:
         return 0
     out = project.all_hidden_members()  # a team left out of the patch in a league has no link to it
-    members = {lid: [tid for tid in team_ids if tid not in out.get(lid, ())] for lid, team_ids in members.items()}
+    teams = db.table('teams')
+    present = {teams.get(r, 'teamid') for r in teams.records}  # a created team left out of the patch has no row
+    members = {lid: [tid for tid in team_ids if tid not in out.get(lid, ()) and tid in present]
+               for lid, team_ids in members.items()}
     links = db.table('leagueteamlinks')
     keep = [i for i, r in enumerate(links.records) if links.get(r, 'leagueid') not in members]
     if len(keep) + sum(len(v) for v in members.values()) > fifa14.MAX_LEAGUE_LINKS:
@@ -593,7 +604,16 @@ BENCH, RESERVE = 28, 29  # teamplayerlinks.position of a substitute and of a pla
 
 
 def _team_source(project: Project, tid: int) -> tuple[int, bool]:
-    return project.team_source(tid) or (teamkits.MODEL_TEAM, False)
+    """(the team whose rows and files a created team starts from, copied): a team made from scratch (no template)
+    starts from the model team's hidden columns and files, never from its values (see add_created_teams)."""
+    template, copy = project.team_source(tid) or (teamkits.MODEL_TEAM, False)
+    return (teamkits.MODEL_TEAM if template is None else template), copy
+
+
+def _blank_team(project: Project, tid: int) -> bool:
+    """A team made from scratch: no template (older projects made them from the model team, kept as they were)."""
+    source = project.team_source(tid)
+    return source is not None and source[0] is None
 
 
 def _next(table, column: str) -> int:
@@ -624,15 +644,20 @@ def add_created_teams(db: Database, project: Project) -> int:
         if teams.find(teamid=tid):
             raise BuildError('team_id_taken', str(tid))
         template, copy = _team_source(project, tid)
+        blank = _blank_team(project, tid)  # its stadium and formation are the user's (write_team_stadiums/_formations)
         if not copy and not project.roster(tid):
             raise BuildError('team_too_few_players', str(tid))
-        rows = teams.find(teamid=template) or teams.find(teamid=teamkits.MODEL_TEAM)
+        rows = teams.find(teamid=template) or teams.find(teamid=teamkits.MODEL_TEAM) or teams.records[:1]
         name = _shown_name(project.names('team', tid)) or f'Team {tid}'
-        _clone(teams, rows[0], teamid=tid, assetid=tid, teamname=name[:30])
-        for table in (stadiums, row_links):
+        row = _clone(teams, rows[0], teamid=tid, assetid=tid, teamname=name[:30])
+        if blank:  # the neutral values it starts with (the user's saved fields are written over them)
+            for column, value in fields.TEAM_DEFAULTS.items():
+                if _has(teams, column):
+                    teams.set(row, column, value)
+        for table in (row_links,) if blank else (stadiums, row_links):
             if table is not None and table.find(teamid=template):
                 _clone(table, table.find(teamid=template)[0], teamid=tid)
-        own = formations.find(teamid=template)
+        own = None if blank else formations.find(teamid=template)
         if own:
             _clone(formations, own[0], teamid=tid, formationid=_next(formations, 'formationid'))
         for r in [r for r in kits.records if kits.get(r, 'teamtechid') == template and kits.get(r, 'year') == 0]:
@@ -765,12 +790,17 @@ def add_created_players(db: Database, project: Project) -> int:
         return 0
     players = db.table('players')
     by_id = {players.get(r, 'playerid'): r for r in players.records}
+    blank = project.blank_players()
     for pid in created:
         if pid in by_id:
             raise BuildError('player_id_taken', str(pid))
         template = project.player_source(pid) or fifa14.MODEL_PLAYER
         model = by_id.get(template) or by_id.get(fifa14.MODEL_PLAYER) or players.records[0]
         by_id[pid] = _clone(players, model, playerid=pid)
+        if pid in blank:  # made from scratch: the neutral values (his saved fields are written over them)
+            for column, value in fields.player_blank_columns().items():
+                if value is not None and _has(players, column):
+                    players.set(by_id[pid], column, value)
     return len(created)
 
 
@@ -907,7 +937,8 @@ def team_files(files: GameFiles, db: Database, project: Project, builder: 'Patch
                     builder.put(f'{folder}/{new_name}', files.read(path))
                     counts['copied'] += 1
         crest = _picture(project, 'team', tid, 'crest')
-        if crest is None and tid in created and not copy:
+        plain = tid in created and (not copy or project.fields('team', tid).get('plain_crest') == 1)
+        if crest is None and plain:  # made from scratch, or a copy whose copied crest was removed
             names = with_derived_names('team', project.names('team', tid))
             crest = teamkits.plain_crest(_shown_name(names, 'abbr3'), _team_color(db, project, tid, 1),
                                          _team_color(db, project, tid, 2))
@@ -1056,15 +1087,15 @@ def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') 
 
 def write_stadiums(files: GameFiles, project: Project, builder: 'PatchBuilder') -> int:
     """The files of the stadiums the user created (f14mod.stadium_files): scene and menu pictures under their id;
-    and the menu pictures the user changed of the game's stadiums."""
+    and the game's stadiums the user changed: the folder given to them (their 3D) and their menu pictures."""
     created = project.created('stadium')
     for sid in created:
         for path, data in stadium_files.patch_files(files, project, sid).items():
             builder.put(path, data)
-    changed = set().union(*(project.with_picture('stadium', stadium_files.picture_slot(v))
-                            for v in stadium_files.PICTURE_VARIANTS)) - set(created)
+    changed = set().union(project.with_stadium_scene(), *(project.with_picture('stadium', stadium_files.picture_slot(v))
+                                                          for v in stadium_files.PICTURE_VARIANTS)) - set(created)
     for sid in sorted(changed):
-        for path, data in stadium_files.game_picture_files(files, project, sid).items():
+        for path, data in stadium_files.game_stadium_files(files, project, sid).items():
             builder.put(path, data)
     return len(created) + len(changed)
 

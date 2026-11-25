@@ -186,6 +186,57 @@ def test_created_stadium_without_files_copies_the_template(installed, tmp_path):
     assert out[f'data/sceneassets/fx/glares_{NEW}_0.lnx'] == f'<Effect name="glares_{NEW}_0">'.encode()
 
 
+def test_stadium_from_scratch_waits_for_its_folder(installed, tmp_path):
+    """Blank (no scene, no pictures, no capacity/year/country): out of the patch until it gets a folder."""
+    from f14mod import stadium_files
+    project = Project(str(tmp_path / 'project.sqlite'))
+    project.create('stadium', NEW, names={'full': {'*': 'A01 Scratch'}})
+    project.set_stadium_source(NEW, None)
+    project.set_team_stadium(fakegame.TEAM, NEW)
+    assert project.incomplete_stadiums() == {NEW}
+    patch_dir = str(tmp_path / 'patch')
+    builder.build(catalog.open_game(installed), project, patch_dir)
+    tables = _tables(patch_dir)
+    assert not any(r['stadiumid'] == NEW for r in tables['stadiums']['rows'])
+    assert {r['teamid']: r['stadiumid'] for r in tables['teamstadiumlinks']['rows']}[fakegame.TEAM] != NEW
+    assert not os.path.exists(os.path.join(patch_dir, 'data', 'sceneassets', 'stadium', f'stadium_{NEW}.rx3'))
+
+    project.set_stadium_scene(NEW, stadium_files.read_folder(_stadium_folder(str(tmp_path)))[1])
+    assert project.incomplete_stadiums() == {NEW}  # the 3D, but not the fields the game needs
+    values = {f.name: f.options[0] if f.options else max(f.min or 0, 1) for f in fields.STADIUM
+              if f.name in fields.STADIUM_REQUIRED}
+    project.save('stadium', NEW, project.names('stadium', NEW), {**values, 'capacity': 0, 'yearbuilt': 1999})
+    assert project.missing_stadium_fields(NEW) == [] and project.incomplete_stadiums() == set()
+    patch_dir = str(tmp_path / 'patch2')
+    builder.build(catalog.open_game(installed), project, patch_dir)
+    tables = _tables(patch_dir)
+    row = next(r for r in tables['stadiums']['rows'] if r['stadiumid'] == NEW)
+    assert (row['name'], row['capacity'], row['yearbuilt'], row['countrycode']) == ('A01 Scratch', 0, 1999, 0)
+    assert {r['teamid']: r['stadiumid'] for r in tables['teamstadiumlinks']['rows']}[fakegame.TEAM] == NEW
+
+
+def test_game_stadium_takes_a_folder(installed, tmp_path):
+    """A downloaded stadium's folder over one of the game's stadiums: its files under that stadium's id; reset = the
+    game's 3D again."""
+    from f14mod import stadium_files
+    project = Project(str(tmp_path / 'project.sqlite'))
+    folder_stadium, scene = stadium_files.read_folder(_stadium_folder(str(tmp_path)))
+    project.set_stadium_scene(3, scene)
+    project.set_stadium_folder_source(3, folder_stadium)
+    assert project.edited('stadium') == [3] and project.stadium_folder_source(3) == folder_stadium
+    patch_dir = str(tmp_path / 'patch')
+    summary = builder.build(catalog.open_game(installed), project, patch_dir)
+    assert summary['stadiums'] == 1
+
+    def loose(path):
+        with open(os.path.join(patch_dir, *path.split('/')), 'rb') as f:
+            return f.read()
+    assert loose('data/sceneassets/stadium/stadium_3.rx3') == b'A01 scene'
+    assert loose('data/sceneassets/fx/glares_3_1.lnx') == b'<Effect name="glares_3_1"><p index="158"/>'
+    project.reset('stadium', 3)
+    assert project.with_stadium_scene() == [] and project.stadium_folder_source(3) is None and not project.edited('stadium')
+
+
 def test_created_stadium_deleted(tmp_path):
     project = _created(tmp_path)
     assert project.counts() == {'new_stadium': 1, 'team': 1}
