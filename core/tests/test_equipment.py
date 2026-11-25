@@ -11,7 +11,7 @@ from f14mod import builder, equipment, rx3, t3db
 from f14mod.dbedit import Database, LanguageStrings
 from f14mod.fifa14 import META
 from f14mod.gamefs import DATABASE, GameFiles
-from f14mod.project import EQUIPMENT_PICTURE, Project
+from f14mod.project import SCHEMA_VERSION, EQUIPMENT_PICTURE, Project
 
 
 @pytest.fixture
@@ -72,7 +72,7 @@ def test_older_project_opens(tmp_path):
     p = Project(path)
     assert p.equipment_files('boot', 1) == {}
     con = sqlite3.connect(path)
-    assert con.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0] == '13'
+    assert con.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0] == str(SCHEMA_VERSION)
     con.close()
 
 

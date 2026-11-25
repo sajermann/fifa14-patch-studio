@@ -44,6 +44,15 @@ def fit(picture: Image.Image, size: tuple[int, int]) -> Image.Image:
     return canvas
 
 
+def cover(picture: Image.Image, size: tuple[int, int]) -> Image.Image:
+    """The picture scaled to cover all of `size`, centred (what passes the edges is cut)."""
+    pic = picture.convert('RGBA')
+    scale = max(size[0] / pic.width, size[1] / pic.height)
+    pic = pic.resize((max(size[0], round(pic.width * scale)), max(size[1], round(pic.height * scale))), Image.LANCZOS)
+    left, top = (pic.width - size[0]) // 2, (pic.height - size[1]) // 2
+    return pic.crop((left, top, left + size[0], top + size[1]))
+
+
 def decode_dds(data: bytes) -> Image.Image:
     with Image.open(io.BytesIO(data)) as img:
         return img.convert('RGBA')

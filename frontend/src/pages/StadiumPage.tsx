@@ -1,7 +1,17 @@
-import { useQuery } from '@tanstack/react-query'
-import { Landmark, Plus, Undo2 } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Landmark, Loader2, Plus, Trash2, Undo2 } from 'lucide-react'
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -11,16 +21,20 @@ import { OriginalBadge, Section } from '@/components/common/detail'
 import { EditActions, FieldsEditor, NamesGrid, RefPickerDialog, useEntityForm } from '@/components/common/edit'
 import { Crest, StadiumImage } from '@/components/common/pictures'
 import { Stadium3D, StadiumDatabase, StadiumDetails } from '@/components/common/stadium'
+import { StadiumFolderButton, StadiumPictureEdit, StadiumSceneNotice, type PendingPictures, type PendingScene } from '@/components/stadium/StadiumEdit'
 import { LoadingBlock } from '@/components/layout/LoadingBlock'
 import { useI18n } from '@/i18n'
 import { BackButton, useBack, useFrom, useTabParam } from '@/lib/back'
+import { toast } from '@/lib/notify'
 import { useOptions, useStatus, useToken } from '@/state/queries'
 
 const TABS = ['overview', 'data', 'raw'] as const
 const GROUPS = ['info', 'conditions', 'pitch', 'goal', 'stands']
 
-/** One stadium of the game: what the extractor shows (3D, data, pictures, files) and its edit form, like the league
- * screen. The teams added on the Overview tab move to this stadium when the form is saved. */
+/** One stadium (the game's or one the user created): what the extractor shows (3D, data, pictures, files) and its
+ * edit form, like the league screen. The Overview tab is laid out as the team's stadium tab (data and pictures on top,
+ * the 3D always open), with the teams that play there beside the 3D. The teams added on the Overview tab move to this stadium when the form is saved;
+ * a created stadium also has its 3D scene and menu picture (saved with the form) and a Delete button. */
 export function StadiumPage() {
   const { t } = useI18n()
   const id = Number(useParams().id)
@@ -36,40 +50,66 @@ export function StadiumPage() {
   const back = useBack({ to: '/stadiums', label: { key: 'nav.stadiums' } })
   const from = useFrom(data?.name ?? { key: 'nav.stadiums' })
   const teamNames = new Map((useOptions().data?.teams ?? []).map((r) => [r.id, r.name]))
-  const [open3d, setOpen3d] = useState(false)
   const [picking, setPicking] = useState(false)
   // teams moved to this stadium but not saved yet: Save moves them with the rest of the form
   const [moving, setMoving] = useState<number[]>([])
+  // a created stadium's 3D folder and the menu pictures (any stadium) chosen but not saved yet
+  const [scene, setScene] = useState<PendingScene>(null)
+  const [pictures, setPictures] = useState<PendingPictures>({})
+  const [deleting, setDeleting] = useState(false)
+  const navigate = useNavigate()
+  const qc = useQueryClient()
+  const clearPending = () => {
+    setMoving([])
+    setScene(null)
+    setPictures({})
+  }
   const entity = useEntityForm({
     data,
     queryKey,
     invalidate: ['stadiums', 'teams', 'team', 'options'],
     save: async (f) => {
       let saved = await api.saveStadium(id, f.names, f.fields)
+      if (scene) saved = await api.setStadiumScene(id, scene)
+      for (const [v, p] of Object.entries(pictures)) {
+        saved = p === 'remove' ? await api.removeStadiumPicture(id, Number(v)) : await api.setStadiumPicture(id, Number(v), p.data)
+      }
       if (moving.length) {
         for (const tid of moving) await api.setTeamStadium(tid, id)
         saved = await api.stadium(id)
       }
-      setMoving([])
+      clearPending()
       return saved
     },
     reset: () => {
-      setMoving([])
+      clearPending()
       return api.resetStadium(id)
     },
-    extraDirty: moving.length > 0,
-    onDiscard: () => setMoving([]),
+    extraDirty: moving.length > 0 || scene !== null || Object.keys(pictures).length > 0,
+    onDiscard: clearPending,
+    invalid: (f) => !!data?.is_new && !Object.values(f.names.full ?? {}).some((v) => v?.trim()),
+  })
+  const remove = useMutation({
+    mutationFn: () => api.deleteStadium(id),
+    onSuccess: () => {
+      for (const k of ['stadiums', 'stadium', 'teams', 'team', 'options', 'status']) void qc.invalidateQueries({ queryKey: [k] })
+      toast.success(t('stadium.deleted'))
+      navigate(back.to, { state: back.state })
+    },
+    onError: (e: Error) => {
+      setDeleting(false)
+      toast.error(e.message)
+    },
   })
   if (isLoading || !data) return <LoadingBlock />
   const teamIds = [...data.teams.map((tm) => tm.id), ...moving]
-  // the page never scrolls (as the extractor's): its boxes take the height left and scroll inside
   return (
     <div className="flex h-full min-h-[32rem] flex-col gap-4">
       <BackButton back={back} />
       <div className="flex flex-wrap justify-between gap-x-4 gap-y-3">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           {data.pictures.length ? (
-            <StadiumImage id={data.id} variant={data.pictures[0]} size={256} className="h-24 w-[150px] shrink-0 rounded-lg object-cover" />
+            <StadiumImage id={data.id} variant={data.pictures[0]} size={256} version={data.updated_at} className="h-24 w-[150px] shrink-0 rounded-lg object-cover" />
           ) : (
             <span className="inline-flex h-24 w-[150px] shrink-0 items-center justify-center rounded-lg bg-muted/40 text-muted-foreground/50">
               <Landmark className="size-6" />
@@ -80,13 +120,18 @@ export function StadiumPage() {
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
               <h1 className="min-w-0 text-2xl font-semibold break-words">{data.name}</h1>
               <span className="shrink-0 text-sm text-muted-foreground tabular-nums">{[data.country, `ID ${data.id}`].filter(Boolean).join(' · ')}</span>
-              <OriginalBadge edited={data.edited} />
+              {!data.is_new && <OriginalBadge edited={data.edited} />}
             </div>
             <EntryDates entry={data} />
           </div>
         </div>
         <div className="flex flex-wrap items-start gap-2">
-          <EditActions edited={data.edited} entity={entity} />
+          <EditActions edited={data.edited && !data.is_new} entity={entity} />
+          {data.is_new && (
+            <Button variant="outline" size="sm" onClick={() => setDeleting(true)}>
+              <Trash2 /> {t('common.delete')}
+            </Button>
+          )}
         </div>
       </div>
       <Tabs {...tabs} className="flex min-h-0 flex-1 flex-col">
@@ -95,13 +140,37 @@ export function StadiumPage() {
           <TabsTrigger value="data">{t('team.tab.data')}</TabsTrigger>
           <TabsTrigger value="raw">{t('tab.raw')}</TabsTrigger>
         </TabsList>
-        <TabsContent value="overview" className="flex min-h-0 flex-1 flex-col gap-4">
-          <Stadium3D stadium={data} open={open3d} setOpen={setOpen3d} className={open3d ? 'min-h-0 flex-1' : 'shrink-0'} />
-          <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-            <StadiumDetails stadium={data} title={t('section.details')} scroll className="h-full" />
+        {/* as the team's stadium tab: the data and pictures on top, then the teams beside the 3D (always open) */}
+        <TabsContent value="overview" className="min-h-0 flex-1 space-y-4 overflow-auto">
+          <StadiumDetails
+            stadium={data}
+            title={t('section.details')}
+            grid
+            action={data.is_new && <StadiumFolderButton scene={scene} setScene={setScene} />}
+            notice={
+              <>
+                {data.is_new && <StadiumSceneNotice stadium={data} scene={scene} />}
+                <p className="mb-3 text-xs text-muted-foreground">{t('stadium.picturesHint')}</p>
+              </>
+            }
+            picture={(v) => (
+              <StadiumPictureEdit
+                stadium={data}
+                variant={v}
+                pending={pictures[v]}
+                setPending={(p) => {
+                  const next = { ...pictures }
+                  if (p === undefined) delete next[v]
+                  else next[v] = p
+                  setPictures(next)
+                }}
+              />
+            )}
+          />
+          <div className="grid gap-4 lg:h-[70vh] lg:grid-cols-2">
             <Section
               scroll
-              className="h-full"
+              className="max-h-[70vh] lg:h-full lg:max-h-none"
               title={t('stadiums.teams', { count: teamIds.length })}
               action={
                 <Button size="sm" title={t('stadium.teamsHint')} onClick={() => setPicking(true)}>
@@ -164,6 +233,7 @@ export function StadiumPage() {
                 </TableBody>
               </Table>
             </Section>
+            <Stadium3D key={`${data.id}-${data.updated_at}`} stadium={data} open className="h-[70vh] lg:h-full" />
           </div>
         </TabsContent>
         <TabsContent value="data" className="min-h-0 flex-1 space-y-4 overflow-auto">
@@ -192,6 +262,20 @@ export function StadiumPage() {
           setPicking(false)
         }}
       />
+      <AlertDialog open={deleting} onOpenChange={(o) => !remove.isPending && setDeleting(o)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('stadium.deleteTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('stadium.deleteText')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={remove.isPending}>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" disabled={remove.isPending} onClick={(e) => (e.preventDefault(), remove.mutate())}>
+              {remove.isPending ? <Loader2 className="animate-spin" /> : <Trash2 />} {t('common.delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

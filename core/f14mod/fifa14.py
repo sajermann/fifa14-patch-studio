@@ -71,6 +71,7 @@ MAX_LEAGUE_LINKS = 4095    # leagueteamlinks.artificialkey has 12 bits: every te
 MAX_SQUAD = 41             # players a team shows in the game (more appear as "undefined")
 TEMPLATE_LEAGUE = 76       # Rest of World: the model row of a new league (no career, no competition)
 TEMPLATE_NATION = 211      # Rest of World: the model row and the default flag of a new country
+TEMPLATE_STADIUM = 158     # Estadio de las Artes (generic): the model row of a new stadium
 
 
 def new_league_values(lid: int) -> dict:

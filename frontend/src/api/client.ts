@@ -87,6 +87,13 @@ export const api = {
   stadium: (id: number) => get<StadiumDetail>(`/api/stadiums/${id}`),
   saveStadium: (id: number, names: NameTable, fields: Fields) => request<StadiumDetail>('PUT', `/api/stadiums/${id}`, { names, fields }),
   resetStadium: (id: number) => request<StadiumDetail>('DELETE', `/api/stadiums/${id}/edits`),
+  /** A new stadium: a copy of a game stadium (template) or the scene of a downloaded stadium's folder. */
+  createStadium: (body: { names: NameTable; template?: number | null; folder?: string | null }) => post<StadiumDetail>('/api/stadiums', body),
+  deleteStadium: (id: number) => request<{ deleted: number }>('DELETE', `/api/stadiums/${id}`),
+  /** A created stadium's scene from a downloaded stadium's folder; remove = the template's again. */
+  setStadiumScene: (id: number, folder: string) => request<StadiumDetail>('PUT', `/api/stadiums/${id}/scene`, { folder }),
+  setStadiumPicture: (id: number, variant: number, data: string) => request<StadiumDetail>('PUT', `/api/stadiums/${id}/picture/${variant}`, { data }),
+  removeStadiumPicture: (id: number, variant: number) => request<StadiumDetail>('DELETE', `/api/stadiums/${id}/picture/${variant}`),
   /** The stadium the team plays in; null = the game's again. */
   setTeamStadium: (id: number, stadium: number | null) => request<TeamDetail>('PUT', `/api/teams/${id}/stadium`, { stadium }),
   adboards: () => get<AdboardList>('/api/adboards'),

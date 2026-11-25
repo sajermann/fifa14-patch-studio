@@ -215,7 +215,8 @@ export interface StadiumInfo {
   /** times of day the match screen offers in this stadium (1 = day, 3 = night) and the weather allowed in each */
   conditions: { time_of_day: number; rain: boolean; snow: boolean }[]
   pictures: number[]
-  files: { path: string; where: string | null }[]
+  /** where = the archive or 'project' (a created stadium's own files, with their size) */
+  files: { path: string; where: string | null; size?: number }[]
   /** times of day the 3D preview can show (1 = day, 3 = night); empty = no 3D files */
   times: number[]
   raw: Raw
@@ -238,6 +239,8 @@ export interface StadiumRow extends Dated {
   picture: number | null
   has_3d: boolean
   edited: boolean
+  /** a stadium the user created */
+  is_new: boolean
 }
 
 /** A team that plays in the stadium (the user's choices included). */
@@ -254,6 +257,13 @@ export interface StadiumTeam {
 /** The stadium screen: what the extractor shows, the edit form and the teams that play in it. */
 export interface StadiumDetail extends StadiumInfo, EditForm, Dated {
   is_new: boolean
+  /** a created stadium: the game stadium it starts from (its row; its scene and pictures until it has its own) */
+  template: number | null
+  template_name: string | null
+  /** a created stadium: the scene comes from a stadium's folder (else the template's) */
+  own_scene: boolean
+  /** the menu pictures (variants) the user replaced, on any stadium */
+  own_pictures: number[]
   name_keys: string[]
   languages: string[]
   original_names: NameTable

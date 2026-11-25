@@ -88,8 +88,10 @@ export function CountryFlag({ id, size = 64, className, available, version, game
 }
 
 /** A menu picture of a stadium (`variant` = which of the game's pictures). */
-export function StadiumImage({ id, variant, size, className, zoom }: { id: number; variant: number; size?: number; className?: string; zoom?: boolean }) {
-  return <GameImage url={`/api/image/stadium/${id}/${variant}${size ? `?size=${size}` : ''}`} alt="" className={className} zoom={zoom} fallback={<ImageOff className="size-1/3" />} />
+/** `version` = changes when the picture does (a created stadium's picture comes from the project). */
+export function StadiumImage({ id, variant, size, className, zoom, version }: { id: number; variant: number; size?: number; className?: string; zoom?: boolean; version?: string | null }) {
+  const query = [size ? `size=${size}` : '', version ? `v=${encodeURIComponent(version)}` : ''].filter(Boolean).join('&')
+  return <GameImage url={`/api/image/stadium/${id}/${variant}${query ? `?${query}` : ''}`} alt="" className={className} zoom={zoom} fallback={<ImageOff className="size-1/3" />} />
 }
 
 /** Reads a picture file the user chose as base64 (without the data: prefix). */

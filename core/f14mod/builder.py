@@ -27,8 +27,8 @@ import re
 
 from PIL import Image
 
-from . import (adboards, bh, buildcache, equipment, facefill, faceconv, fields, fifa14, flags, images, rx3, t3db,
-               teamkits, workers)
+from . import (adboards, bh, buildcache, equipment, facefill, faceconv, fields, fifa14, flags, images, rx3,
+               stadium_files, t3db, teamkits, workers)
 from .big import BigArchive, normalize, rebuild
 from .dbedit import Database, LanguageStrings, Table
 from .gamefs import DATABASE, GameFiles
@@ -378,6 +378,25 @@ def add_created(db: Database, project: Project) -> dict:
                 refs.set(new, 'leagueid', lid)
                 refs.records.append(new)
         added['league'] = added.get('league', 0) + 1
+    stadiums = _table(db, 'stadiums')
+    for sid in project.created('stadium'):
+        if stadiums is None or stadiums.find(stadiumid=sid):
+            raise BuildError('stadium_id_taken', str(sid))
+        template = project.stadium_source(sid) or fifa14.TEMPLATE_STADIUM
+        row = _model_row(stadiums, 'stadiumid', template)
+        name = _shown_name(project.names('stadium', sid)) or f'Stadium {sid}'
+        # a new stadium has no home team of its own (its teams come from teamstadiumlinks, checked in the game)
+        for column, value in (('stadiumid', sid), ('name', name[:60]), ('hometeamid', 0)):
+            if _has(stadiums, column):
+                stadiums.set(row, column, value)
+        stadiums.records.append(row)
+        # audiostadium.stadiumid has 8 bits: a stadium above 255 has no row (as the patches' stadiums)
+        audio = _table(db, 'audiostadium')
+        if audio is not None and sid <= 255 and audio.find(stadiumid=template):
+            new = list(audio.find(stadiumid=template)[0])
+            audio.set(new, 'stadiumid', sid)
+            audio.records.append(new)
+        added['stadium'] = added.get('stadium', 0) + 1
     return added
 
 
@@ -999,7 +1018,7 @@ def _adboard_files(model: bytes, path: str, png: bytes) -> dict[str, bytes]:
 def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') -> dict | None:
     """The database with the project's fields, created entities and league teams, loose (with its meta file)."""
     has_created = bool(project.created('country') or project.created('league') or project.created('team')
-                       or project.created('player'))
+                       or project.created('player') or project.created('stadium'))
     hiding = any(project.hidden_in_game(kind) for kind in ('country', 'league', 'team'))
     team_work = project.all_rosters() or project.all_kits() or project.with_picture('team', 'crest') \
         or project.with_picture('player', 'photo') or project.all_team_stadiums()
@@ -1033,6 +1052,21 @@ def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') 
     builder.put(DATABASE, db.build())
     builder.put(fifa14.META, meta_raw)
     return result
+
+
+def write_stadiums(files: GameFiles, project: Project, builder: 'PatchBuilder') -> int:
+    """The files of the stadiums the user created (f14mod.stadium_files): scene and menu pictures under their id;
+    and the menu pictures the user changed of the game's stadiums."""
+    created = project.created('stadium')
+    for sid in created:
+        for path, data in stadium_files.patch_files(files, project, sid).items():
+            builder.put(path, data)
+    changed = set().union(*(project.with_picture('stadium', stadium_files.picture_slot(v))
+                            for v in stadium_files.PICTURE_VARIANTS)) - set(created)
+    for sid in sorted(changed):
+        for path, data in stadium_files.game_picture_files(files, project, sid).items():
+            builder.put(path, data)
+    return len(created) + len(changed)
 
 
 def named_game_boots(project: Project) -> list[int]:
@@ -1180,6 +1214,7 @@ def build(files: GameFiles, project: Project, out_dir: str, progress=None, worke
         database = write_database(files, project, builder)
         boards = write_adboards(files, project, builder)
         gear = write_equipment(files, project, builder)
+        stadiums = write_stadiums(files, project, builder)
         step('database', 1, 1)
         check()
         pictures = created_pictures(files, project, builder)
@@ -1228,4 +1263,6 @@ def build(files: GameFiles, project: Project, out_dir: str, progress=None, worke
         summary['adboards'] = boards
     if gear:
         summary['equipment'] = gear
+    if stadiums:
+        summary['stadiums'] = stadiums
     return summary

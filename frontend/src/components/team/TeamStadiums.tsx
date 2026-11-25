@@ -14,8 +14,25 @@ import { useOptions, useStatus, useToken } from '@/state/queries'
 /** The stadium chosen on the team's screen but not saved yet: a stadium id, or 'game' = the game's again. */
 export type PendingStadium = number | 'game' | null
 
-/** Dialog: the game's stadiums, with a search, to pick the one the team plays in. */
-function StadiumPickerDialog({ open, onOpenChange, current, onPick }: { open: boolean; onOpenChange: (o: boolean) => void; current: number | null; onPick: (id: number) => void }) {
+/** Dialog: the stadiums (the user's first, then the game's), with a search, to pick the one the team plays in;
+ * `gameOnly` = only the game's (the model of a new stadium). */
+export function StadiumPickerDialog({
+  open,
+  onOpenChange,
+  current,
+  onPick,
+  title,
+  description,
+  gameOnly,
+}: {
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  current: number | null
+  onPick: (id: number) => void
+  title?: string
+  description?: string
+  gameOnly?: boolean
+}) {
   const { t } = useI18n()
   const token = useToken()
   const [q, setQ] = useState('')
@@ -25,21 +42,20 @@ function StadiumPickerDialog({ open, onOpenChange, current, onPick }: { open: bo
     enabled: open && !!token,
     placeholderData: (previous) => previous,
   })
-  const items = (data?.items ?? [])
-    .filter((s) => s.id !== current)
-    .map((s) => ({
-      key: s.id,
-      icon:
-        s.picture !== null ? (
-          <StadiumImage id={s.id} variant={s.picture} size={128} className="h-7 w-24 rounded object-cover" />
-        ) : (
-          <span className="inline-flex h-7 w-24 items-center justify-center rounded bg-muted text-muted-foreground/50">
-            <Landmark className="size-4" />
-          </span>
-        ),
-      title: s.name,
-      subtitle: [s.country, s.home_team, `ID ${s.id}`].filter(Boolean).join(' · '),
-    }))
+  const rows = (data?.items ?? []).filter((s) => s.id !== current && !(gameOnly && s.is_new))
+  const toItem = (s: (typeof rows)[number]) => ({
+    key: s.id,
+    icon:
+      s.picture !== null ? (
+        <StadiumImage id={s.id} variant={s.picture} size={128} className="h-7 w-24 rounded object-cover" />
+      ) : (
+        <span className="inline-flex h-7 w-24 items-center justify-center rounded bg-muted text-muted-foreground/50">
+          <Landmark className="size-4" />
+        </span>
+      ),
+    title: s.name,
+    subtitle: [s.country, s.home_team, `ID ${s.id}`].filter(Boolean).join(' · '),
+  })
   return (
     <PickerDialog
       open={open}
@@ -47,12 +63,15 @@ function StadiumPickerDialog({ open, onOpenChange, current, onPick }: { open: bo
         onOpenChange(o)
         if (!o) setQ('')
       }}
-      title={t('team.stadiumPickTitle')}
-      description={t('team.stadiumPickDescription')}
+      title={title ?? t('team.stadiumPickTitle')}
+      description={description ?? t('team.stadiumPickDescription')}
       placeholder={t('stadiums.search')}
       query={q}
       onQuery={setQ}
-      groups={[{ items }]}
+      groups={[
+        { label: t('stadiums.newStadiums'), items: rows.filter((s) => s.is_new).map(toItem) },
+        { label: t('stadiums.gameStadiums'), items: rows.filter((s) => !s.is_new).map(toItem) },
+      ]}
       empty={t('list.empty')}
       actionLabel={t('field.pick.choose')}
       onPick={(sid) => {

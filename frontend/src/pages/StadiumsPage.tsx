@@ -1,27 +1,46 @@
-import { Landmark } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Landmark, Plus } from 'lucide-react'
+import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { useFrom } from '@/lib/back'
+import { toast } from '@/lib/notify'
+import { Button } from '@/components/ui/button'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/api/client'
 import { DateCells, DateHeads } from '@/components/common/dates'
 import { Badge, OriginalBadge } from '@/components/common/detail'
 import { StadiumImage } from '@/components/common/pictures'
 import { BulkActions, RowCheckbox, SelectAllCheckbox, SelectAllDialog, useListSelection } from '@/components/common/selection'
+import { NewStadiumDialog, type NewStadium } from '@/components/stadium/NewStadiumDialog'
 import { useI18n } from '@/i18n'
 import { FilterBar, FilterSelect, LIST_PAGE, Pager, ScrollTable, SearchInput, SortHead, useListState } from '@/lib/list'
 import { useList, useOptions } from '@/state/queries'
 
 const FILTERS = ['q', 'country', 'home', 'origin'] as const
 
-/** The game's stadiums: the same list as the leagues (filters, checkboxes, dates), with the extractor's columns. */
+/** The stadiums (the user's and the game's): the same list as the leagues (filters, checkboxes, dates, New button),
+ * with the extractor's columns. */
 export function StadiumsPage() {
   const { t } = useI18n()
+  const navigate = useNavigate()
+  const qc = useQueryClient()
   const from = useFrom({ key: 'nav.stadiums' })
   const list = useListState(FILTERS)
   const { data, isFetching } = useList('stadiums', list.request, api.stadiums)
   const options = useOptions().data
-  // the edited ones can be picked and taken back to the game's in bulk (no stadium is created yet)
-  const selection = useListSelection((data?.items ?? []).filter((r) => r.edited).map((r) => r.id), data?.own_ids ?? [])
+  // the project's ones can be picked: a created one is deleted, an edited one goes back to the game's
+  const selection = useListSelection((data?.items ?? []).filter((r) => r.edited || r.is_new).map((r) => r.id), data?.own_ids ?? [])
+  const [creating, setCreating] = useState(false)
+  const create = useMutation({
+    mutationFn: (s: NewStadium) => api.createStadium({ names: { full: { '*': s.name } }, folder: s.folder, template: s.template }),
+    onSuccess: (stadium) => {
+      for (const k of ['stadiums', 'options', 'status']) void qc.invalidateQueries({ queryKey: [k] })
+      setCreating(false)
+      toast.success(t('stadium.created'))
+      navigate(`/stadiums/${stadium.id}`, from)
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
   const sortState = {
     sort: list.sort,
     dir: list.dir,
@@ -31,10 +50,16 @@ export function StadiumsPage() {
   }
   return (
     <div className={LIST_PAGE}>
-      <div>
-        <h1 className="text-2xl font-semibold">{t('stadiums.title')}</h1>
-        <p className="text-sm text-muted-foreground">{t('stadiums.subtitle')}</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h1 className="text-2xl font-semibold">{t('stadiums.title')}</h1>
+          <p className="text-sm text-muted-foreground">{t('stadiums.subtitle')}</p>
+        </div>
+        <Button size="sm" onClick={() => setCreating(true)}>
+          <Plus /> {t('stadium.new')}
+        </Button>
       </div>
+      <NewStadiumDialog open={creating} onOpenChange={setCreating} pending={create.isPending} onCreate={(s) => create.mutate(s)} />
       <FilterBar active={list.active} onClear={list.clear}>
         <SearchInput value={list.values.q} onChange={(v) => list.update({ q: v })} placeholder={t('stadiums.search')} />
         <FilterSelect
@@ -81,11 +106,11 @@ export function StadiumsPage() {
         </TableHeader>
         <TableBody className={isFetching ? 'opacity-70' : undefined}>
           {data?.items.map((s) => (
-            <TableRow key={s.id} className={s.edited ? undefined : 'text-muted-foreground'}>
-              <TableCell>{s.edited && <RowCheckbox selection={selection} value={s.id} />}</TableCell>
+            <TableRow key={s.id} className={s.edited || s.is_new ? undefined : 'text-muted-foreground'}>
+              <TableCell>{(s.edited || s.is_new) && <RowCheckbox selection={selection} value={s.id} />}</TableCell>
               <TableCell>
                 {s.picture !== null ? (
-                  <StadiumImage id={s.id} variant={s.picture} size={128} className="h-7 w-24 rounded object-cover" />
+                  <StadiumImage id={s.id} variant={s.picture} size={128} version={s.updated_at} className="h-7 w-24 rounded object-cover" />
                 ) : (
                   <span className="inline-flex h-7 w-24 items-center justify-center rounded bg-muted text-muted-foreground/50">
                     <Landmark className="size-4" />
@@ -97,7 +122,7 @@ export function StadiumsPage() {
                   <Link to={`/stadiums/${s.id}`} state={from.state} className="font-medium text-foreground underline-offset-4 hover:underline">
                     {s.name}
                   </Link>
-                  <OriginalBadge edited={s.edited} />
+                  {!s.is_new && <OriginalBadge edited={s.edited} />}
                   {!s.has_3d && <Badge>{t('stadiums.no3d')}</Badge>}
                 </div>
                 {s.language_name && s.language_name !== s.name && <div className="text-xs text-muted-foreground">{s.language_name}</div>}

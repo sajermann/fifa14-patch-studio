@@ -56,12 +56,19 @@ free code when it is created); their name, credits and credits page are fields (
 files of the pack they come from are kept in `equipment_files` (name 'mesh' or 'texture') and their picture in
 `pictures` (slot 'thumbnail'). A player wears one through his fields shoetypecode / gkglovetypecode and a team plays
 with one through balltype. Older files open as they are (the new table starts empty).
+Schema 14 (25/11/2026) adds the stadiums the user creates: kind `stadium` in `created` (ids from
+FIRST_OWN_STADIUM, above the clean game's), `stadium_sources` (the game stadium whose database row it starts from and
+whose scene and menu pictures it uses until it has its own) and `stadium_scene` (the scene files of a downloaded
+stadium: name = the game path with STADIUM_ID_MARK for the stadium id, data, and a digest so a change is found
+without reading the files). The menu pictures the user gives a stadium (the game's or a created one) are picture
+slots STADIUM_PICTURE, one per variant. Older files open as they are (the new
+tables start empty).
 """
 import json
 import sqlite3
 import time
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 DEFAULT_LANG = '*'
 KINDS = ('team', 'league', 'player', 'country', 'stadium', 'adboard', 'boot', 'glove', 'ball')
 EQUIPMENT_KINDS = ('boot', 'glove', 'ball')
@@ -100,11 +107,18 @@ CREATE TABLE IF NOT EXISTS team_stadiums (team_id INTEGER PRIMARY KEY, stadium_i
 CREATE TABLE IF NOT EXISTS team_adboards (team_id INTEGER PRIMARY KEY, adboard_id INTEGER);
 CREATE TABLE IF NOT EXISTS league_adboards (league_id INTEGER PRIMARY KEY, adboard_id INTEGER);
 CREATE TABLE IF NOT EXISTS equipment_files (kind TEXT, id INTEGER, name TEXT, data BLOB, PRIMARY KEY (kind, id, name));
+CREATE TABLE IF NOT EXISTS stadium_sources (stadium_id INTEGER PRIMARY KEY, template INTEGER);
+CREATE TABLE IF NOT EXISTS stadium_scene (stadium_id INTEGER, name TEXT, data BLOB, digest TEXT,
+                                          PRIMARY KEY (stadium_id, name));
 """
 ADBOARD_PICTURE = 'board'  # picture slot of an advertising board
 EQUIPMENT_PICTURE = 'thumbnail'  # picture slot of a boot, glove or ball (the user's; none = drawn from its files)
 GAME_ADBOARD_MAX = 999  # the game's boards are numbered below this (teams.adboardid: 8 bits in the game)
 FIRST_OWN_ADBOARD = 1001  # the boards the user creates
+FIRST_OWN_STADIUM = 266  # the stadiums the user creates (the clean game's go up to 265; stadiumid has 9 bits)
+MAX_STADIUM_ID = 511
+STADIUM_ID_MARK = '#'  # stands for the stadium id in the names of stadium_scene
+STADIUM_PICTURE = 'menu_{}'  # picture slot of a stadium's menu picture, per variant (0 1 3 4)
 BENCH, RESERVE = 28, 29  # team_rosters.slot of a substitute and of a player out of the squad
 
 Names = dict[str, dict[str, str]]  # {name key: {language or '*': text}}
@@ -122,7 +136,7 @@ OWN_TABLES = {
              ('team_kits', 'team_id'), ('team_stadiums', 'team_id'), ('team_adboards', 'team_id')),
     'player': (('player_sources', 'player_id'), ('player_files', 'player_id')),
     'country': (),
-    'stadium': (),
+    'stadium': (('stadium_sources', 'stadium_id'), ('stadium_scene', 'stadium_id')),
     'adboard': (),
     'boot': (),
     'glove': (),
@@ -162,7 +176,9 @@ def _snapshot(con: sqlite3.Connection, kind: str, oid: int) -> list:
     tables += [(table, column, '') for table, column in OWN_TABLES.get(kind, ())]
     for table, column, extra in tables:
         skip = {'updated_at'} if table == 'pictures' else set()  # the picture's own save time is not its content
-        rows = con.execute(f'SELECT * FROM {table} WHERE {column} = :id{extra}', {'id': oid, 'kind': kind}).fetchall()
+        columns = 'name, digest' if table == 'stadium_scene' else '*'  # the files themselves are not read
+        rows = con.execute(f'SELECT {columns} FROM {table} WHERE {column} = :id{extra}',
+                           {'id': oid, 'kind': kind}).fetchall()
         out.append((table, sorted(tuple(v for k, v in zip(r.keys(), r) if k not in skip) for r in rows)))
     return out
 
@@ -176,7 +192,8 @@ def _dated(method):
     params = list(inspect.signature(method).parameters)
     fixed = {'set_members': 'league', 'set_team_source': 'team', 'set_roster': 'team', 'set_kit': 'team',
              'set_team_stadium': 'team', 'set_player_source': 'player',
-             'set_player_files': 'player'}.get(method.__name__)
+             'set_player_files': 'player', 'set_stadium_source': 'stadium',
+             'set_stadium_scene': 'stadium'}.get(method.__name__)
 
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
@@ -292,6 +309,9 @@ class Project:
             own = own or kind in EQUIPMENT_KINDS and con.execute(  # an item's files or picture too
                 'SELECT 1 FROM equipment_files WHERE kind = ? AND id = ? UNION '
                 'SELECT 1 FROM pictures WHERE kind = ? AND id = ?', (kind, oid, kind, oid)).fetchone()
+            own = own or kind == 'stadium' and con.execute(  # a stadium's scene or menu picture too
+                "SELECT 1 FROM stadium_scene WHERE stadium_id = ? UNION "
+                "SELECT 1 FROM pictures WHERE kind = 'stadium' AND id = ?", (oid, oid)).fetchone()
             if name_rows or field_rows or own:
                 con.execute('INSERT OR REPLACE INTO edited VALUES (?, ?, ?)', (kind, oid, int(time.time())))
             else:
@@ -314,6 +334,8 @@ class Project:
                 con.execute('DELETE FROM player_files WHERE player_id = ?', (oid,))
             if kind in EQUIPMENT_KINDS:
                 con.execute('DELETE FROM equipment_files WHERE kind = ? AND id = ?', (kind, oid))
+            if kind == 'stadium':
+                con.execute('DELETE FROM stadium_scene WHERE stadium_id = ?', (oid,))
             con.commit()
         finally:
             con.close()
@@ -481,6 +503,9 @@ class Project:
             if kind == 'player':  # out of every squad the user set too
                 con.execute('DELETE FROM player_sources WHERE player_id = ?', (oid,))
                 con.execute('DELETE FROM team_rosters WHERE player_id = ?', (oid,))
+            if kind == 'stadium':  # its teams play in the game's stadium again
+                con.execute('DELETE FROM stadium_sources WHERE stadium_id = ?', (oid,))
+                con.execute('DELETE FROM team_stadiums WHERE stadium_id = ?', (oid,))
             con.commit()
         finally:
             con.close()
@@ -786,6 +811,69 @@ class Project:
         try:
             return {r[0]: bytes(r[1]) for r in con.execute(
                 'SELECT name, data FROM player_files WHERE player_id = ?', (player_id,))}
+        finally:
+            con.close()
+
+    # ---- stadiums the user creates -----------------------------------------------------------------------------
+
+    @_dated
+    def set_stadium_source(self, stadium_id: int, template: int) -> None:
+        """The game stadium a created stadium starts from (its row; its scene and pictures until it has its own)."""
+        con = self.connect()
+        try:
+            con.execute('INSERT OR REPLACE INTO stadium_sources VALUES (?, ?)', (stadium_id, template))
+            con.commit()
+        finally:
+            con.close()
+
+    def stadium_source(self, stadium_id: int) -> int | None:
+        con = self.connect()
+        try:
+            r = con.execute('SELECT template FROM stadium_sources WHERE stadium_id = ?', (stadium_id,)).fetchone()
+            return r[0] if r else None
+        finally:
+            con.close()
+
+    @_dated
+    def set_stadium_scene(self, stadium_id: int, files: dict[str, bytes] | None) -> None:
+        """Replaces the stadium's scene files ({name with STADIUM_ID_MARK: bytes}); None or {} = none (the
+        template's)."""
+        import hashlib
+        con = self.connect()
+        try:
+            con.execute('DELETE FROM stadium_scene WHERE stadium_id = ?', (stadium_id,))
+            for name, data in (files or {}).items():
+                con.execute('INSERT INTO stadium_scene VALUES (?, ?, ?, ?)',
+                            (stadium_id, name, data, hashlib.sha1(data).hexdigest()))
+            con.commit()
+        finally:
+            con.close()
+        self.save('stadium', stadium_id, self.names('stadium', stadium_id), self.fields('stadium', stadium_id))
+
+    def stadium_scene_list(self, stadium_id: int) -> dict[str, int]:
+        """{name: size} of the stadium's scene files (without reading them)."""
+        con = self.connect()
+        try:
+            return {r[0]: r[1] for r in con.execute(
+                'SELECT name, length(data) FROM stadium_scene WHERE stadium_id = ? ORDER BY name', (stadium_id,))}
+        finally:
+            con.close()
+
+    def stadium_scene_file(self, stadium_id: int, name: str) -> bytes | None:
+        con = self.connect()
+        try:
+            r = con.execute('SELECT data FROM stadium_scene WHERE stadium_id = ? AND name = ?',
+                            (stadium_id, name)).fetchone()
+            return bytes(r[0]) if r else None
+        finally:
+            con.close()
+
+    def stadium_scene_digest(self, stadium_id: int) -> str:
+        """One text that changes when any scene file of the stadium changes."""
+        con = self.connect()
+        try:
+            return ';'.join(f'{r[0]}={r[1]}' for r in con.execute(
+                'SELECT name, digest FROM stadium_scene WHERE stadium_id = ? ORDER BY name', (stadium_id,)))
         finally:
             con.close()
 

@@ -96,7 +96,8 @@ function StadiumConditions({ conditions }: { conditions: StadiumInfo['conditions
   )
 }
 
-/** Data of the stadium on top, its menu pictures below one another (a click opens them big); `grid` = three columns
+/** Data of the stadium on top, its menu pictures below one another (a click opens them big; `picture` = drawn by the
+ * caller, e.g. with buttons); `grid` = three columns
  * on wide screens, the data in the first and the pictures two per row in the other two, cut to the part with the
  * stadium (the game's pictures have black sides). `action` = buttons in the box's header, `notice` = a line above. */
 export function StadiumDetails({
@@ -108,6 +109,7 @@ export function StadiumDetails({
   grid,
   action,
   notice,
+  picture,
 }: {
   stadium: StadiumInfo
   customName?: string | null
@@ -117,6 +119,8 @@ export function StadiumDetails({
   grid?: boolean
   action?: React.ReactNode
   notice?: React.ReactNode
+  /** each menu picture drawn by the caller instead (the stadium screen: with its buttons to replace it) */
+  picture?: (variant: number) => React.ReactNode
 }) {
   const { t } = useI18n()
   return (
@@ -163,7 +167,10 @@ export function StadiumDetails({
         />
         <div className={grid ? 'grid content-start gap-3 sm:grid-cols-2 lg:col-span-2' : 'mt-4 space-y-3'}>
           {s.pictures.length ? (
-            s.pictures.map((v) => (
+            s.pictures.map((v) =>
+              picture ? (
+                <div key={v}>{picture(v)}</div>
+              ) : (
               <figure key={v} className="space-y-1">
                 <StadiumImage
                   id={s.id}
@@ -174,7 +181,8 @@ export function StadiumDetails({
                 />
                 <figcaption className="text-xs text-muted-foreground">{t('stadium.picture', { variant: v })}</figcaption>
               </figure>
-            ))
+              ),
+            )
           ) : (
             <p className="text-sm text-muted-foreground">{t('stadium.noPictures')}</p>
           )}

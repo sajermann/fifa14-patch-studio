@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from . import settings  # noqa: I001 - first: it puts the core folder on the path
 
 from f14mod import (buildcache, builder, fields, fifa14, flags, images, install_check, installer, kitprint,  # noqa: E402
-                    preview, stadium3d, teamkits, workers)
+                    preview, stadium3d, stadium_files, teamkits, workers)
 
 from . import diagnostics, dialogs, patch_info, queries, validation  # noqa: E402
 from .state import GameState, Jobs, project  # noqa: E402
@@ -286,7 +286,7 @@ def filter_options():
                 f"SELECT * FROM (SELECT t.id, {queries._team_name('full')} AS name FROM v_teams t) ORDER BY fold(name)",  # noqa: SLF001
                 {'lang': lang()})],
             'stadiums': [dict(r) for r in con.execute(
-                f'SELECT * FROM (SELECT s.id, {queries._stadium_name()} AS name FROM stadiums s) ORDER BY fold(name)',  # noqa: SLF001
+                f'SELECT * FROM (SELECT s.id, {queries._stadium_name()} AS name FROM v_stadiums s) ORDER BY fold(name)',  # noqa: SLF001
                 {'lang': lang()})],
             # for the countries and leagues filters: the confederations in use, the division levels in use and the
             # countries that have a league (the league's main country)
@@ -315,7 +315,7 @@ def team_detail(tid: int):
         out = queries.team(con, lang(), tid)
         if out is not None:  # the stadium tab (read-only)
             files = game.files()
-            out['stadiums'] = [s for s in (queries.stadium(con, lang(), sid, files) for sid in out['stadium_ids']) if s]
+            out['stadiums'] = [s for s in (queries.stadium(con, lang(), sid, files, project()) for sid in out['stadium_ids']) if s]
     if out is None:
         raise ApiError(404, 'not_found')
     return out
@@ -377,7 +377,7 @@ def _clean_fields(con, kind: str, oid: int, body: dict, detail: dict) -> dict:
 
 def _stadium_detail(con, lang_code: str, sid: int) -> dict | None:
     """The stadium screen: the stadium with the project's changes and the teams that play in it."""
-    out = queries.stadium(con, lang_code, sid, game.files())
+    out = queries.stadium(con, lang_code, sid, game.files(), project())
     if out is not None:
         out['teams'] = queries.stadium_teams(con, lang_code, sid)
     return out
@@ -449,7 +449,7 @@ def set_team_stadium(tid: int, body: TeamStadiumBody):
     with db() as con:
         if not con.execute('SELECT 1 FROM v_teams WHERE id = ?', (tid,)).fetchone():
             raise ApiError(404, 'not_found')
-        if body.stadium is not None and not con.execute('SELECT 1 FROM stadiums WHERE id = ?',
+        if body.stadium is not None and not con.execute('SELECT 1 FROM v_stadiums WHERE id = ?',
                                                         (body.stadium,)).fetchone():
             raise ApiError(400, 'field_out_of_range', 'stadium')
         game_stadium = con.execute('SELECT stadium_id FROM team_stadiums WHERE team_id = ?', (tid,)).fetchone()
@@ -768,7 +768,13 @@ def crest_image(tid: int, size: Optional[int] = None, game_only: bool = False):
 
 @app.get('/api/image/stadium/{sid}/{variant}')
 def stadium_image(sid: int, variant: int, size: Optional[int] = None):
-    """A menu picture of the stadium (an Apt archive, cut to what the screen draws)."""
+    """A menu picture of the stadium: the user's picture of the variant, else the game's (an Apt archive, cut to what
+    the screen draws; a created stadium: its folder's or the one of the stadium it starts from)."""
+    own = stadium_routes.own_image(sid, variant, size)  # the user's picture of this variant (any stadium)
+    if own is not None:
+        return own
+    if project().is_created('stadium', sid):
+        return stadium_routes.created_image(sid, variant, size)
     with db() as con:
         path = queries.stadium_picture_path(con, sid, variant)
     return _picture(f'stadium{variant}', sid, path, size, decode=images.apt_picture)
@@ -785,10 +791,14 @@ def preview_stadium(sid: int, tod: int = 1):
         raise ApiError(409, 'game_not_ready')
     if tod not in stadium3d.TIMES:
         raise ApiError(404, 'not_found')
+    files = game.files()
     key = (game.token, sid, tod)
+    if project().is_created('stadium', sid):  # a created stadium: its own scene, else the one it starts from
+        files = stadium_files.CreatedStadiumFiles(files, project(), sid)
+        key = (*key, project().stadium_source(sid), project().stadium_scene_digest(sid))
     if key not in _stadium_models:
         try:
-            data = stadium3d.glb(game.files(), sid, tod)
+            data = stadium3d.glb(files, sid, tod)
         except stadium3d.StadiumError as e:
             raise ApiError(404, 'not_found', str(e))
         while len(_stadium_models) >= STADIUM_MODELS_KEPT:
@@ -1540,6 +1550,7 @@ def job_status():
 from . import player_routes  # noqa: E402,F401 - the player routes (before the interface's catch-all)
 from . import adboard_routes  # noqa: E402,F401 - the advertising boards (before the interface's catch-all)
 from . import equipment_routes  # noqa: E402,F401 - boots, gloves and balls (before the interface's catch-all)
+from . import stadium_routes  # noqa: E402 - the stadiums the user creates (before the interface's catch-all)
 
 
 # ---- bulk delete (the lists' checkboxes) ----------------------------------------------------------------------------
@@ -1554,9 +1565,10 @@ def bulk_delete(body: BulkDeleteBody):
     """Delete what a list picked, like the Street Studio: a created item leaves the project, an edited one of the game
     goes back to the game's. One that cannot go (a country that still has leagues) is skipped with its error code."""
     deletes = {'country': delete_country, 'league': delete_league, 'team': delete_team,
-               'player': player_routes.delete_player, 'adboard': adboard_routes.delete_adboard}
+               'player': player_routes.delete_player, 'adboard': adboard_routes.delete_adboard,
+               'stadium': stadium_routes.delete_stadium}
     resets = {'country': reset_country, 'league': reset_league, 'team': reset_team,
-              'player': player_routes.reset_player, 'stadium': reset_stadium,  # (no created stadiums yet)
+              'player': player_routes.reset_player, 'stadium': reset_stadium,
               'adboard': adboard_routes.reset_adboard}  # a game board: its own picture again
     for gear in ('boot', 'glove', 'ball'):  # a created item leaves the project, a game item is restored
         deletes[gear] = resets[gear] = (lambda kind: lambda oid: equipment_routes.delete_equipment(kind, oid))(gear)

@@ -4,7 +4,7 @@ import json
 import math
 import sqlite3
 
-from f14mod import catalog, fields, fifa14, stadium3d
+from f14mod import catalog, fields, fifa14, stadium3d, stadium_files
 from f14mod.overall import compute_overall
 from f14mod.teamkits import MASKS, MODEL_TEAM
 
@@ -105,6 +105,16 @@ VIEWS = [
         UNION ALL
         SELECT t.team_id, t.stadium_id, g.custom_name FROM p.team_stadiums t
             LEFT JOIN team_stadiums g ON g.team_id = t.team_id AND g.stadium_id = t.stadium_id""",
+    # the stadiums: the game's and the user's (a created one shows the row of the stadium it starts from, under its
+    # own id and without a home team; `source` = the stadium whose files it uses until it has its own)
+    f"""CREATE TEMP VIEW v_stadiums AS
+        SELECT id, name, raw, 0 AS is_new, id AS source FROM stadiums
+        UNION ALL
+        SELECT c.id, NULL, json_set(COALESCE(t.raw, '{{}}'), '$.stadiumid', c.id, '$.hometeamid', 0), 1,
+               COALESCE(s.template, {fifa14.TEMPLATE_STADIUM})
+        FROM p.created c LEFT JOIN p.stadium_sources s ON s.stadium_id = c.id
+             LEFT JOIN stadiums t ON t.id = COALESCE(s.template, {fifa14.TEMPLATE_STADIUM})
+        WHERE c.kind = 'stadium'""",
     """CREATE TEMP VIEW v_league_teams AS
         SELECT league_id, team_id, 0 AS ord, 0 AS hidden FROM league_teams
         WHERE league_id NOT IN (SELECT league_id FROM p.league_members_set)
@@ -720,12 +730,16 @@ def stadiums(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAU
                  (SELECT {_team_name('full')} FROM v_teams t WHERE t.id = {home_sql}) AS home_team,
                  {_stadium_value('s', 'capacity')} AS capacity,
                  (SELECT COUNT(*) FROM v_team_stadiums x WHERE x.stadium_id = s.id) AS team_count,
-                 (SELECT MIN(variant) FROM stadium_files f WHERE f.stadium_id = s.id AND f.kind IN ('large', 'small'))
-                     AS picture,
-                 EXISTS (SELECT 1 FROM stadium_files f WHERE f.stadium_id = s.id AND f.kind = 'scene') AS has_3d,
-                 {_edited('stadium', 's')} AS edited, 0 AS is_new, {_dates('stadium', 's')},
+                 COALESCE((SELECT MIN(variant) FROM stadium_files f WHERE f.stadium_id = s.source
+                           AND f.kind IN ('large', 'small')),
+                          CASE WHEN s.is_new AND (EXISTS (SELECT 1 FROM p.pictures WHERE kind = 'stadium' AND id = s.id)
+                               OR EXISTS (SELECT 1 FROM p.stadium_scene WHERE stadium_id = s.id
+                                          AND name LIKE 'data/ui/%')) THEN 1 END) AS picture,
+                 (EXISTS (SELECT 1 FROM p.stadium_scene WHERE stadium_id = s.id) OR EXISTS (
+                     SELECT 1 FROM stadium_files f WHERE f.stadium_id = s.source AND f.kind = 'scene')) AS has_3d,
+                 {_edited('stadium', 's')} AS edited, s.is_new, {_dates('stadium', 's')},
                  fold(COALESCE(s.name, '')) AS search
-                 FROM stadiums s"""
+                 FROM v_stadiums s"""
     where = []
     if ids is not None:
         where.append(f"id IN ({','.join(str(int(i)) for i in ids) or 'NULL'})")
@@ -737,40 +751,46 @@ def stadiums(con, lang: str, q='', sort=None, direction=None, page=1, size=DEFAU
     if home is not None:
         where.append('home_team_id > 0' if home else 'COALESCE(home_team_id, 0) <= 0')
     if origin == 'project':
-        where.append('edited')
+        where.append('(edited OR is_new)')
     elif origin == 'original':
-        where.append('NOT edited')
+        where.append('NOT edited AND NOT is_new')
     sorts = {'name': 'fold(name)', 'id': 'id', 'country': 'fold(country)', 'capacity': 'capacity',
              'team_count': 'team_count', 'created_at': 'created_at',
              'updated_at': 'updated_at'}
     out = _page(con, select, where, params, sorts, sort, direction, ('name', 'asc'), page, size, new_first=True)
     for r in out['items']:
         r.pop('search', None)
-        r.pop('is_new', None)
-        r['edited'] = bool(r['edited'])
+        r['is_new'] = bool(r['is_new'])
+        r['edited'] = bool(r['edited']) and not r['is_new']
         r['has_3d'] = bool(r['has_3d'])
     return out
 
 
-def stadium(con, lang: str, sid: int, files) -> dict | None:
-    """One stadium of the game with the project's changes over it: names, capacity, year, country, home team, the times
-    of day and weather it allows, its menu pictures and scene files (`files` = the game's files, to say where each one
-    is and which times of day the 3D preview can show), and the edit form (`values` = the game's)."""
-    row = con.execute('SELECT id, name, raw FROM stadiums WHERE id = ?', (sid,)).fetchone()
+def stadium(con, lang: str, sid: int, files, project=None) -> dict | None:
+    """One stadium (the game's or one the user created) with the project's changes over it: names, capacity, year,
+    country, home team, the times of day and weather it allows, its menu pictures and scene files (`files` = the
+    game's files, to say where each one is and which times of day the 3D preview can show), and the edit form
+    (`values` = the game's; a created stadium: the row of the stadium it starts from). `project` (a created stadium's
+    own files) is needed for created stadiums."""
+    row = con.execute('SELECT id, name, raw, is_new, source FROM v_stadiums WHERE id = ?', (sid,)).fetchone()
     if row is None:
         return None
+    is_new = bool(row['is_new'])
     game_raw = json.loads(row['raw'] or '{}')
     saved = _project_fields(con, 'stadium', sid)
     raw = {**game_raw, **fields.to_columns('stadium', saved)}
-    shown = con.execute(f'SELECT {_stadium_name()} FROM stadiums s WHERE s.id = :id',
+    shown = con.execute(f'SELECT {_stadium_name()} FROM v_stadiums s WHERE s.id = :id',
                         {'lang': lang, 'id': sid}).fetchone()[0]
-    names = {'database': raw.get('name') or ''}
+    # a created stadium's database name is its full name (builder.add_created), unless the user set one
+    names = {'database': raw.get('name') or '' if not is_new or saved.get('name') else ''}
     full = con.execute("SELECT text FROM names WHERE kind = 'stadium' AND id = ? AND key = 'full' AND lang IN (?, ?) "
                        'ORDER BY lang = ? DESC LIMIT 1', (sid, lang, FALLBACK_LANG, lang)).fetchone()
     own = _project_names(con, 'stadium', sid).get('full') or {}
     full_text = own.get(lang) or own.get('*') or (full[0] if full else None)
     if full_text:
         names['full'] = full_text
+        if is_new and not names['database']:
+            names['database'] = full_text[:60]
     names = {k: v for k, v in names.items() if v}
     country_id = raw.get('countrycode')
     country = con.execute(f'SELECT {_country_name()} FROM v_nations n WHERE n.id = :id',
@@ -780,11 +800,28 @@ def stadium(con, lang: str, sid: int, files) -> dict | None:
                        {'lang': lang, 'id': home_id}).fetchone() if isinstance(home_id, int) and home_id > 0 else None
     pictures: dict[str, list[int]] = {}
     scene = []
-    for r in con.execute('SELECT kind, variant, path FROM stadium_files WHERE stadium_id = ? ORDER BY path', (sid,)):
+    source = row['source']
+    for r in con.execute('SELECT kind, variant, path FROM stadium_files WHERE stadium_id = ? ORDER BY path', (source,)):
         if r['kind'] == 'scene':
             scene.append(r['path'])
         else:
             pictures.setdefault(r['kind'], []).append(r['variant'])
+    file_rows = [{'path': p, 'where': files.where(p)} for p in scene]
+    times = stadium3d.available(files, sid) if not is_new else []
+    own_scene = {}
+    own_pictures = stadium_files.own_pictures(project, sid) if project is not None else []
+    if is_new and project is not None:
+        own_scene = project.stadium_scene_list(sid)
+        own_files = {stadium_files.own_name(n, sid): size for n, size in own_scene.items()}
+        if own_scene:
+            file_rows = [{'path': p, 'where': 'project', 'size': size} for p, size in sorted(own_files.items())
+                         if not p.startswith('data/ui/')]
+            for p in own_files:
+                for kind, regex in fifa14.STADIUM_PICTURES.items():
+                    m = regex.match(p)
+                    if m:
+                        pictures.setdefault(kind, []).append(int(m.group(2)))
+        times = stadium3d.available(stadium_files.CreatedStadiumFiles(files, project, sid), sid)
     dates = con.execute(f"SELECT {_dates('stadium', 'x')} FROM (SELECT :id AS id) x", {'id': sid}).fetchone()
     return {
         'id': sid,
@@ -797,10 +834,16 @@ def stadium(con, lang: str, sid: int, files) -> dict | None:
         'home_team': dict(home) if home else None,
         'team_count': con.execute('SELECT COUNT(*) FROM v_team_stadiums WHERE stadium_id = ?', (sid,)).fetchone()[0],
         'conditions': fifa14.stadium_conditions(raw),
-        'pictures': sorted(pictures.get('large') or pictures.get('small') or []),
-        'files': [{'path': p, 'where': files.where(p)} for p in scene],
-        'times': stadium3d.available(files, sid),  # 3D preview: 1 = day, 3 = night
-        'is_new': False, **dict(dates),
+        'pictures': sorted(set(pictures.get('large') or pictures.get('small') or [])),
+        'files': file_rows,
+        'times': times,  # 3D preview: 1 = day, 3 = night
+        'is_new': is_new, **dict(dates),
+        # a created stadium: the game stadium it starts from and whether the scene is its own (a stadium's folder);
+        # any stadium: the menu pictures (variants) the user replaced
+        'template': source if is_new else None,
+        'template_name': (con.execute(f'SELECT {_stadium_name()} FROM v_stadiums s WHERE s.id = :id',
+                                      {'lang': lang, 'id': source}).fetchone() or [None])[0] if is_new else None,
+        'own_scene': bool(own_scene), 'own_pictures': own_pictures,
         'name_keys': STADIUM_NAME_KEYS, 'languages': languages(con),
         'original_names': _names(con, 'stadium', sid), 'saved_names': _project_names(con, 'stadium', sid),
         **_form(con, 'stadium', sid, game_raw),
@@ -820,6 +863,13 @@ def stadium_teams(con, lang: str, sid: int) -> list[dict]:
         for key in ('has_crest', 'is_new', 'edited'):
             r[key] = bool(r[key])
     return rows
+
+
+def free_stadium_id(con) -> int | None:
+    """The first stadium id the game and the project do not use (created ones: FIRST_OWN_STADIUM to MAX_STADIUM_ID)."""
+    from f14mod.project import FIRST_OWN_STADIUM, MAX_STADIUM_ID
+    used = {r[0] for r in con.execute('SELECT id FROM v_stadiums')}
+    return next((i for i in range(FIRST_OWN_STADIUM, MAX_STADIUM_ID + 1) if i not in used), None)
 
 
 def stadium_picture_path(con, sid: int, variant: int) -> str | None:
