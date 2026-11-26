@@ -528,6 +528,10 @@ def test_bulk_delete_takes_created_and_resets_edited(client):
     assert r.status_code == 200, r.text
     assert sorted(r.json()['deleted']) == sorted([a, b]) and r.json()['skipped'] == []
     assert client.get('/api/leagues', params={'q': 'Bulk'}).json()['own_ids'] == []
+    prog = client.get('/api/bulk-delete/progress').json()  # what the progress window read while it ran
+    assert not prog['running'] and prog['kind'] == 'league' and (prog['done'], prog['total'], prog['deleted']) == (2, 2, 2)
+    assert not prog['cancelled'] and prog['elapsed'] >= 0
+    assert client.post('/api/bulk-delete/cancel').json() == {'stopping': False}  # nothing running
     assert client.post('/api/bulk-delete', json={'kind': 'nope', 'ids': [1]}).status_code == 400
 
 

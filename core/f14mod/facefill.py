@@ -2,7 +2,8 @@
 
 A face of a pack often comes without its eyes or its hair. The user may fill those in with the game's own generic
 parts (the ones the generic heads use): eyes_<code>_1_textures, hair_<code>_1_0 + hair_<code>_1_textures and
-hairlod_<code>_1_0. The project keeps only the codes ({'eyes': 5, 'hair': 12}); the files are read from the game
+hairlod_<code>_1_0. A face with its own hair but not the one seen from afar may take only the generic hairlod. The
+project keeps only the codes ({'eyes': 5, 'hair': 12} or {'hairlod': 12}); the files are read from the game
 folder of whoever builds the patch and are never kept in the project (they are the game's, not ours).
 
 On a real face the game does not paint the generic hair (its texture is grey), so the hair texture is painted here
@@ -31,7 +32,8 @@ HAIR_PATHS = {
 }
 EYES_KINDS = ('eyes',)
 HAIR_KINDS = tuple(HAIR_PATHS)
-GROUPS = {'eyes': EYES_KINDS, 'hair': HAIR_KINDS}  # what each fill key covers
+HAIRLOD_KINDS = ('hairlod',)
+GROUPS = {'eyes': EYES_KINDS, 'hair': HAIR_KINDS, 'hairlod': HAIRLOD_KINDS}  # what each fill key covers
 MAX_CODE = 4095
 
 
@@ -40,7 +42,8 @@ class FillError(ValueError):
 
 
 def check_fill(value) -> dict:
-    """A fill of the screen ({'eyes': code, 'hair': code}, either one), checked: only whole codes. Empty = {}."""
+    """A fill of the screen ({'eyes': code, 'hair': code, 'hairlod': code}, any of them), checked: only whole
+    codes; the hair brings its own hairlod, so a fill with both keeps only the hair. Empty = {}."""
     if not isinstance(value, dict):
         raise FillError('fill')
     out = {}
@@ -51,6 +54,8 @@ def check_fill(value) -> dict:
         if isinstance(v, bool) or not isinstance(v, int) or not 0 < v <= MAX_CODE:
             raise FillError(key)
         out[key] = v
+    if 'hair' in out:
+        out.pop('hairlod', None)
     return out
 
 
@@ -74,6 +79,11 @@ def hair_codes(files) -> list[int]:
     both = _codes(files, 'data/sceneassets/hair/', r'/hair_(\d+)_1_0\.rx3$') & \
         _codes(files, 'data/sceneassets/hair/', r'/hair_(\d+)_1_textures\.rx3$')
     return sorted(both & _codes(files, 'data/sceneassets/hairlod/', r'/hairlod_(\d+)_1_0\.rx3$'))
+
+
+def hairlod_codes(files) -> list[int]:
+    """Generic hair seen from afar the game has."""
+    return sorted(_codes(files, 'data/sceneassets/hairlod/', r'/hairlod_(\d+)_1_0\.rx3$'))
 
 
 _PAINTED: OrderedDict = OrderedDict()  # (sha1 of the game's file, rgb) -> painted file: the preview asks again and again
@@ -144,6 +154,8 @@ def parts(files, fill, hair_rgb: int) -> dict[str, bytes]:
             paths = {'eyes': EYES_PATH}
         elif key == 'hair':
             paths = HAIR_PATHS
+        elif key == 'hairlod' and 'hair' not in fill:
+            paths = {'hairlod': HAIR_PATHS['hairlod']}
         else:
             continue
         for kind, path in paths.items():

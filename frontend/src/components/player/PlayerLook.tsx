@@ -185,14 +185,19 @@ export function PlayerLook({
             <ThumbnailPicker
               key={`fill-${fillPicking.group}`}
               code={fillPicking.group === 'eyes' ? 'eyecolorcode' : 'hairtypecode'}
-              title={t(fillPicking.group === 'eyes' ? 'faces.fillPickEyes' : 'faces.fillPickHair')}
+              title={t(fillPicking.group === 'eyes' ? 'faces.fillPickEyes' : fillPicking.group === 'hair' ? 'faces.fillPickHair' : 'faces.fillPickHairlod')}
               options={options.fill[fillPicking.group]}
               value={fillPicking.value}
               variant={fillPicking.group === 'hair' ? numberOf('haircolorcode') : 0}
               changed={fillPicking.value !== fillPicking.start}
               onSelect={(value) => setFillPicking({ ...fillPicking, value })}
               onApply={() => {
-                if (fillPicking.value !== undefined) setField('face', { ...packFace, fill: { ...packFace.fill, [fillPicking.group]: fillPicking.value } } as FieldValue)
+                if (fillPicking.value !== undefined) {
+                  // the whole hair brings its own hair seen from afar
+                  const { hairlod, ...rest } = packFace.fill ?? {}
+                  const kept = fillPicking.group === 'hair' ? rest : { ...rest, ...(hairlod !== undefined ? { hairlod } : {}) }
+                  setField('face', { ...packFace, fill: { ...kept, [fillPicking.group]: fillPicking.value } } as FieldValue)
+                }
                 setFillPicking(null)
               }}
               onCancel={() => setFillPicking(null)}
@@ -263,6 +268,7 @@ export function PlayerLook({
                     pickedMissing={pickedMissing}
                     onPickedMissing={setPickedMissing}
                     fillOptions={options?.fill}
+                    bald={effective.hairtypecode === 0}
                     onFill={(group) => {
                       showView('face')
                       const start = packFace?.fill?.[group]

@@ -181,3 +181,39 @@ def test_without_generic_parts_in_the_package_the_game_ones_of_the_same_codes(tm
     files, face = _imported(tmp_path, path, True, {'eyes': {1, 9}, 'hair': {5}})
     assert files == {'head': b'game/h', 'face': b'game/f'}
     assert face['fill'] == {'eyes': 9}  # the game has eyes 9, not hair 17: that part stays missing
+
+
+def _own_hair_but_not_from_afar(manifest, files, code=17, generic=True):
+    player = manifest['players'][0]
+    player['raw']['players'][0].update(eyecolorcode=0, hairtypecode=code, haircolorcode=2)
+    player['face']['files'].update({
+        'data/sceneassets/hair/hair_9001_0_0.rx3': {'kind': 'hair', 'file': 'game/oh'},
+        'data/sceneassets/hair/hair_9001_0_textures.rx3': {'kind': 'hair', 'file': 'game/ot'}})
+    files.update({'game/oh': b'OWN H', 'game/ot': b'OWN T'})
+    if generic:
+        manifest['generic_parts'] = {'eyes': {}, 'hair': {}, 'hairlod': {str(code): {'file': 'game/l17'}}}
+        files['game/l17'] = b'L17'
+
+
+def test_a_face_with_its_hair_but_not_the_one_from_afar_takes_only_the_generic_one_from_afar(tmp_path):
+    path = _package(tmp_path)
+    _rewrite(path, _own_hair_but_not_from_afar)
+    files, face = _imported(tmp_path, path, True)
+    assert files == {'head': b'game/h', 'face': b'game/f', 'hair': b'OWN H', 'hair_textures': b'OWN T',
+                     'hairlod': b'L17'}  # his own hair up close stays
+    assert 'fill' not in face
+
+
+def test_from_afar_without_the_package_part_the_game_one_of_the_same_code(tmp_path):
+    path = _package(tmp_path)
+    _rewrite(path, lambda m, f: _own_hair_but_not_from_afar(m, f, generic=False))
+    files, face = _imported(tmp_path, path, True, {'eyes': set(), 'hair': set(), 'hairlod': {17}})
+    assert 'hairlod' not in files and face['fill'] == {'hairlod': 17}
+
+
+def test_a_bald_player_needs_no_hair(tmp_path):
+    path = _package(tmp_path)
+    _rewrite(path, lambda m, f: _without_eyes_and_hair(m, f) or m['players'][0]['raw']['players'][0].update(
+        hairtypecode=0))
+    files, face = _imported(tmp_path, path, True, {'eyes': set(), 'hair': {0}, 'hairlod': {0}})
+    assert files == {'head': b'game/h', 'face': b'game/f', 'eyes': b'E9'} and 'fill' not in face

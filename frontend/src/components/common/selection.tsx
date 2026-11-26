@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { BulkDeleteProgressDialog } from '@/components/common/BulkDeleteProgress'
 import { useI18n, type MessageKey } from '@/i18n'
 import { toast } from '@/lib/notify'
 
@@ -97,25 +98,27 @@ export function BulkActions({ kind, selection, invalidate }: { kind: BulkKind; s
   const picked = [...selection.selected]
   // the entries picked when the confirmation opened (the count stays while it closes)
   const [deleting, setDeleting] = useState<number[] | null>(null)
-  const [busy, setBusy] = useState(false)
+  // the entries being deleted (the progress window shows while it runs)
+  const [busy, setBusy] = useState<number[] | null>(null)
   const run = async (ids: number[]) => {
-    setBusy(true)
+    setBusy(ids)
     try {
       const out = await api.bulkDelete(kind, ids)
       const done = out.deleted.length + out.reset.length
-      if (done) toast.success(t('share.deleted', { count: done }))
+      if (out.cancelled) toast.info(t('bulkDelete.stopped', { count: done }))
+      else if (done) toast.success(t('share.deleted', { count: done }))
       if (out.skipped.length) toast.warning(t(`share.deleteSkipped.${kind}` as MessageKey, { count: out.skipped.length }))
       selection.clear()
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : t('share.deleteError'))
     } finally {
       for (const k of [...invalidate, 'status', 'options']) void qc.invalidateQueries({ queryKey: [k] })
-      setBusy(false)
+      setBusy(null)
     }
   }
   return (
     <div className="ml-auto flex gap-2">
-      <Button variant="outline" size="sm" disabled={!picked.length || busy} onClick={() => setDeleting(picked)}>
+      <Button variant="outline" size="sm" disabled={!picked.length || !!busy} onClick={() => setDeleting(picked)}>
         <Trash2 /> {t('share.deleteSelected', { count: picked.length })}
       </Button>
       <AlertDialog open={!!deleting} onOpenChange={(open) => !open && setDeleting(null)}>
@@ -130,6 +133,7 @@ export function BulkActions({ kind, selection, invalidate }: { kind: BulkKind; s
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <BulkDeleteProgressDialog open={!!busy} total={busy?.length ?? 0} />
     </div>
   )
 }

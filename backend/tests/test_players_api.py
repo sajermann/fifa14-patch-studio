@@ -138,7 +138,8 @@ def test_face_packs_and_options(client, tmp_path):
     assert issue['params']['parts'] == ['eyes', 'hair', 'hair_textures', 'hairlod']
     # the game's generic eyes and hair for what the pack lacks: only codes the game has, the issue goes away
     options = client.get('/api/player-options').json()
-    assert options['fill'] == {'eyes': [fakegame.GENERIC_EYES], 'hair': [fakegame.GENERIC_HAIR]}
+    assert options['fill'] == {'eyes': [fakegame.GENERIC_EYES], 'hair': [fakegame.GENERIC_HAIR],
+                               'hairlod': [fakegame.GENERIC_HAIR]}
     fill = {'eyes': fakegame.GENERIC_EYES, 'hair': fakegame.GENERIC_HAIR}
     assert client.put(f'/api/players/{pid}', json={'fields': {'face': {**face, 'fill': {'eyes': 6}}}}).status_code == 400
     filled = client.put(f'/api/players/{pid}', json={'fields': {'face': {**face, 'fill': fill}}}).json()
@@ -148,6 +149,11 @@ def test_face_packs_and_options(client, tmp_path):
     assert look['query'] == f'face_stored={pid}&fill_eyes={fakegame.GENERIC_EYES}&fill_hair={fakegame.GENERIC_HAIR}&hair_color=3'
     assert look['hair'] == pid and look['eyes'] == pid  # the preview shows the filled parts
     assert client.get(f"/api/preview/texture/hair/{pid}.png?real=true&{look['query']}").status_code == 200
+    # a bald player (hair code 0): a face without hair lacks only its eyes
+    bald = client.put(f'/api/players/{pid}', json={'fields': {'face': face, 'hairtypecode': 0}}).json()
+    assert bald['face_missing'] == ['eyes']
+    issue = next(i for i in client.get('/api/issues').json()['issues'] if i['code'] == 'face_incomplete')
+    assert issue['params']['parts'] == ['eyes']
     client.put(f'/api/players/{pid}', json={'fields': {'face': face}})  # back to the face as the pack has it
     client.delete(f'/api/players/{pid}/edits')
     assert main.project().player_files(pid) == {}

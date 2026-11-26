@@ -128,10 +128,14 @@ def _photo_path(assets, face_id):
     return os.path.join(pack_root(assets), PHOTOS, f'p{face_id}.dds')
 
 
-def missing_parts(kinds):
+HAIR_PARTS = ('hair', 'hair_textures', 'hairlod')
+
+
+def missing_parts(kinds, bald: bool = False):
     """The OPTIONAL parts a face does not bring (kinds of FILES, in their order). Only the user fills them in, with
-    the game's generic eyes or hair (facefill); the app never does it on its own."""
-    return [k for k in FILES if k not in REQUIRED and k not in kinds]
+    the game's generic eyes or hair (facefill); the app never does it on its own. bald: the player's hair code is 0
+    (no hair: the game has no generic of it), so a face without hair lacks nothing there."""
+    return [k for k in FILES if k not in REQUIRED and k not in kinds and not (bald and k in HAIR_PARTS)]
 
 
 def list_faces(assets):

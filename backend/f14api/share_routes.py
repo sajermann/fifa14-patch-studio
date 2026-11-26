@@ -294,7 +294,8 @@ def apply_import(body: ApplyBody):
         try:
             with db() as con:
                 files = game.files()
-                generic = {'eyes': set(facefill.eyes_codes(files)), 'hair': set(facefill.hair_codes(files))}
+                generic = {'eyes': set(facefill.eyes_codes(files)), 'hair': set(facefill.hair_codes(files)),
+                           'hairlod': set(facefill.hairlod_codes(files))}
                 done = share.apply(project(), bundle, ids, chosen, GameDestination(con), progress, import_cancel,
                                    workers=workers.plan(cfg.build_cores, cfg.build_memory_percent),
                                    fill_missing=body.fill_missing, generic=generic)

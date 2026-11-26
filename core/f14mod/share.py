@@ -3,7 +3,8 @@ each with everything the project keeps of it, so a zip made by the app comes bac
 
 Layout (flat names under `files/`):
     manifest.json      {"format": FORMAT, "format_version": VERSION, "tool", "created_at", "items": [Record]}
-    files/<kind>-<id>-<n>.bin   the binary values (pictures, face files, pack files, stadium scenes)
+    files/<kind>-<id>-<n>.bin   the binary values (pictures, face files, pack files, stadium scenes; in the project
+                                they are files of its folders, f14mod.filestore)
 
 A Record is one entity: `kind`, `id` (in the project it came from), `created` (false = a change to one of the game's own
 entities: every clean game has it under the same id), `names` ({key: {language: text}}), `fields`, `hidden`, `dates`,
@@ -22,8 +23,8 @@ dropped (its ids are another database's).
 """
 import contextlib
 import datetime
-import hashlib
 import json
+import os
 import sqlite3
 import threading
 import zipfile
@@ -33,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from . import facefill, fields as fieldspecs
+from .filestore import EQUIPMENT as EQUIPMENT_FOLDERS, FACES, PICTURES, STADIUMS, FileStore
 from .project import EQUIPMENT_KINDS, KINDS, NAME_TABLES, OWN_TABLES, Project
 
 FORMAT = 'fifa14-patch-studio'
@@ -79,7 +81,8 @@ class Bundle:
     records: list[dict]
     origin: str = 'own'  # own | package
     meta: dict = field(default_factory=dict)
-    files: dict[str, bytes] = field(default_factory=dict)  # file name -> bytes (records read from a package)
+    # file name -> bytes (records read from a package) or the path of the file on disk (a project's own, Writer)
+    files: dict[str, bytes | str] = field(default_factory=dict)
     zip_path: str | None = None
     warnings: list[str] = field(default_factory=list)
 
@@ -111,7 +114,14 @@ class Bundle:
 
     def read_file(self, name: str) -> bytes:
         if name in self.files:
-            return self.files[name]
+            value = self.files[name]
+            if isinstance(value, str):
+                try:
+                    with open(value, 'rb') as f:
+                        return f.read()
+                except OSError:
+                    raise ShareError('missing_file', name) from None
+            return value
         if not self.zip_path:
             raise ShareError('missing_file', name)
         if self._zip is not None:
@@ -156,12 +166,12 @@ class Writer:
 
     def __init__(self):
         self.records: list[dict] = []
-        self.files: dict[str, bytes] = {}
+        self.files: dict[str, str] = {}  # file name in the zip -> the project's file on disk (read when written)
         self._seen: set[str] = set()
 
-    def _file(self, kind: str, oid: int, data: bytes) -> str:
+    def _file(self, kind: str, oid: int, path: str) -> str:
         name = f'{FILES}{kind}-{oid}-{len(self.files) + 1}.bin'
-        self.files[name] = bytes(data)
+        self.files[name] = path
         return name
 
     def add(self, project: Project, kind: str, oid: int, links: dict | None = None) -> dict | None:
@@ -178,7 +188,7 @@ class Writer:
         con = project.connect()
         try:
             for r in _rows(con, 'pictures', 'id', oid, kind):
-                rec['pictures'][r['slot']] = self._file(kind, oid, r['data'])
+                rec['pictures'][r['slot']] = self._file(kind, oid, project.file_path(r['file']))
             tables = list(OWN_TABLES.get(kind, ()))
             if kind in EQUIPMENT_KINDS:
                 tables.append(EQUIPMENT_FILES)
@@ -188,9 +198,12 @@ class Writer:
                     r.pop(column, None)
                     if table == 'equipment_files':
                         r.pop('kind', None)
-                    r.pop('digest', None)  # stadium_scene: computed again
-                    if table in BLOB_COLUMNS and r.get(BLOB_COLUMNS[table]) is not None:
-                        r[BLOB_COLUMNS[table]] = self._file(kind, oid, r[BLOB_COLUMNS[table]])
+                    if table in BLOB_COLUMNS:  # the file goes into the zip; its path, size and digest stay here
+                        rel = r.pop('file', None)
+                        r.pop('size', None)
+                        r.pop('digest', None)
+                        if rel:
+                            r[BLOB_COLUMNS[table]] = self._file(kind, oid, project.file_path(rel))
                 if rows:
                     rec['tables'][table] = rows
         finally:
@@ -222,7 +235,7 @@ class Writer:
         with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
             z.writestr(MANIFEST, json.dumps(manifest, ensure_ascii=False, indent=1))
             for name in sorted(used):
-                z.writestr(name, self.files[name])
+                z.write(self.files[name], name)  # streamed from disk: a stadium's files are hundreds of MB
 
 
 def _record_files(rec: dict) -> list[str]:
@@ -603,7 +616,8 @@ def _prefetched(bundle: Bundle, records: list, workers: int, budget: int):
 
 
 def _fill(rec: dict, wanted: bool, game: dict[str, set[int]] | None) -> None:
-    """A face of a package that lacks its eyes or hair (rec['fill'], package.fill): completed as the source game
+    """A face of a package that lacks its eyes, hair or hair seen from afar (rec['fill'], package.fill): completed
+    as the source game
     shows it when the user wants. With the generic files the package brings: they become the player's own (the hair
     painted with his hair color, as facefill does); without them: the game's generic part of the same code (the
     face's `fill`), when the game has it. Not wanted: the face goes as the package has it."""
@@ -615,7 +629,7 @@ def _fill(rec: dict, wanted: bool, game: dict[str, set[int]] | None) -> None:
         return
     rows = rec.setdefault('tables', {}).setdefault('player_files', [])
     codes = {}
-    for key in ('eyes', 'hair'):
+    for key in facefill.GROUPS:
         part = fill.get(key)
         if not part:
             continue
@@ -675,7 +689,7 @@ def apply(project: Project, bundle: Bundle, ids: dict[str, dict], chosen: set[st
             for i, ((new, rec), data) in enumerate(_prefetched(bundle, records, workers, memory_budget)):
                 check()
                 report('write', i, len(records), {'kind': rec['kind'], 'name': label(rec), 'id': new})
-                _write(con, bundle, rec, new, data, columns)
+                _write(con, bundle, rec, new, data, columns, project.files)
                 done.setdefault(rec['kind'], []).append(new)
             report('write', len(records), len(records))
         # links on the parent's side when the parent did not come in
@@ -700,14 +714,28 @@ def apply(project: Project, bundle: Bundle, ids: dict[str, dict], chosen: set[st
         raise
     finally:
         con.close()
+        # the files of the entities it replaced, and of a cancelled import, are not used any more (a file a screen is
+        # saving right now was just written or touched by its put: younger than min_age, it stays)
+        try:
+            project.prune_files(min_age=30)
+        except OSError:
+            pass
     return done
 
 
 def _write(con: sqlite3.Connection, bundle: Bundle, rec: dict, oid: int, data: dict[str, bytes] | None = None,
-           columns: dict[str, list[str]] | None = None) -> None:
-    """data: the record's files already read (the rest is read here); columns: a cache of the tables' columns."""
+           columns: dict[str, list[str]] | None = None, store: FileStore | None = None) -> None:
+    """data: the record's files already read (the rest is read here); columns: a cache of the tables' columns;
+    store: the project's files (where the record's files are kept)."""
     def read(name):
         return data[name] if data is not None and name in data else bundle.read_file(name)
+
+    def folder(table):
+        if table == 'player_files':
+            return FACES, '.rx3'
+        if table == 'equipment_files':
+            return EQUIPMENT_FOLDERS[kind], '.rx3'
+        return STADIUMS, None
 
     def known(table):
         if columns is not None and table in columns:
@@ -733,7 +761,9 @@ def _write(con: sqlite3.Connection, bundle: Bundle, rec: dict, oid: int, data: d
                     [(kind, oid, n, json.dumps(v, ensure_ascii=False)) for n, v in rec['fields'].items()
                      if v is not None])
     for slot, name in rec['pictures'].items():
-        con.execute('INSERT INTO pictures VALUES (?, ?, ?, ?, ?)', (kind, oid, slot, read(name), updated))
+        rel, size, dig = store.put(PICTURES, read(name), '.png')
+        con.execute('INSERT INTO pictures (kind, id, slot, file, size, digest, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    (kind, oid, slot, rel, size, dig, updated))
     if rec['hidden']:
         con.execute('INSERT OR IGNORE INTO hidden VALUES (?, ?)', (kind, oid))
     tables = dict(OWN_TABLES.get(kind, ()))
@@ -749,12 +779,18 @@ def _write(con: sqlite3.Connection, bundle: Bundle, rec: dict, oid: int, data: d
         for r in rows:
             row = dict(r)
             col = BLOB_COLUMNS.get(table)
-            if col and isinstance(row.get(col), str):
-                row[col] = read(row[col])
-            if table == 'player_files' and row.get('paint') is not None:  # a generic hair of the package (_fill)
-                row['data'] = facefill.paint_hair(row['data'], row.pop('paint'))
-            if table == 'stadium_scene':
-                row['digest'] = hashlib.sha1(row['data']).hexdigest()
+            if col:
+                name = row.pop(col, None)
+                row.pop('file', None)  # never a path of another project
+                if not isinstance(name, str):
+                    continue
+                content = read(name)
+                if table == 'player_files' and row.get('paint') is not None:  # a generic hair of the package (_fill)
+                    content = facefill.paint_hair(content, row.pop('paint'))
+                where, ext = folder(table)
+                if ext is None:  # a stadium file: the extension of its game path
+                    ext = os.path.splitext(str(row.get('name', '')))[1]
+                row['file'], row['size'], row['digest'] = store.put(where, content, ext)
             if table == 'equipment_files':
                 row['kind'] = kind
             row[column] = oid

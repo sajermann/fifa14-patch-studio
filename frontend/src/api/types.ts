@@ -159,6 +159,20 @@ export interface Page<T> {
 /** what the lists' bulk delete takes */
 export type BulkKind = 'country' | 'league' | 'team' | 'player' | 'stadium' | 'adboard' | 'boot' | 'glove' | 'ball'
 
+/** Where the running (or last) bulk delete is: items gone through and how each ended. */
+export interface BulkDeleteProgress {
+  running: boolean
+  kind?: BulkKind
+  done: number
+  total: number
+  deleted: number
+  reset: number
+  skipped: number
+  elapsed?: number
+  stopping?: boolean
+  cancelled?: boolean
+}
+
 export interface Ref {
   id: number
   name: string
@@ -381,6 +395,8 @@ export type FieldValue = string | number | number[] | string[] | FaceChoice | nu
 export interface FaceFill {
   eyes?: number
   hair?: number
+  /** only the hair seen from afar (a face with its own hair but not this one); the hair brings its own */
+  hairlod?: number
 }
 
 /** Where a player's head comes from (field `face`; none = his own: his real face when the game has one). */
@@ -628,7 +644,7 @@ export interface PlayerOptions {
   thumbs: string[]
   hair_colors: string[]
   /** generic eyes and hair styles the game has files of (what a face lacking them can be filled in with) */
-  fill?: { eyes: number[]; hair: number[] }
+  fill?: { eyes: number[]; hair: number[]; hairlod: number[] }
   /** the accessory codes each place of the body can hold (accessorycode1-4 are slots of a list) */
   accessories?: AccessoryOptions
 }

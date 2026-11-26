@@ -258,8 +258,10 @@ class _Converter:
 
     def fill(self, face: dict, row: dict) -> dict | None:
         """What a real face of the package lacks and the source game shows in its place (the generic eyes / hair of
-        the player's codes): {'eyes': {code, files?}, 'hair': {code, files?, hair_color}}, files = the generic files
-        the package brings (generic_parts); share.apply puts them in when the user wants (else nothing changes)."""
+        the player's codes): {'eyes': {code, files?}, 'hair': {code, files?, hair_color}, 'hairlod': {code, files?}},
+        files = the generic files the package brings (generic_parts); share.apply puts them in when the user wants
+        (else nothing changes). 'hairlod': a face with its own hair but not the one seen from afar. Hair code 0 is no
+        hair (the game has no generic of it): nothing to fill."""
         generic = self.m.get('generic_parts') if isinstance(self.m.get('generic_parts'), dict) else {}
         out = {}
         eye = row.get('eyecolorcode')
@@ -268,12 +270,20 @@ class _Converter:
             files = {'eyes': self.file(given.get('file'))} if isinstance(given, dict) else {}
             out['eyes'] = {'code': eye, **({'files': files} if all(files.values()) and files else {})}
         hair = row.get('hairtypecode')
-        if not ('hair' in face and 'hair_textures' in face) and _int(hair) and hair >= 0:
+        if not ('hair' in face and 'hair_textures' in face) and _int(hair) and hair > 0:
             given = ((generic.get('hair') or {}).get(str(hair)) or {}).get('files') or {}
             files = {k: self.file(given.get(k)) for k in facefill.HAIR_KINDS if isinstance(given, dict) and given.get(k)}
             files = {k: v for k, v in files.items() if v}
             whole = 'hair' in files and 'hair_textures' in files
             out['hair'] = {'code': hair, 'hair_color': row.get('haircolorcode'), **({'files': files} if whole else {})}
+        elif 'hairlod' not in face and _int(hair) and hair > 0:
+            given = (generic.get('hairlod') or {}).get(str(hair))
+            name = given.get('file') if isinstance(given, dict) else None
+            if not name:  # the whole generic hair of the same code, taken for another player
+                whole = ((generic.get('hair') or {}).get(str(hair)) or {}).get('files')
+                name = whole.get('hairlod') if isinstance(whole, dict) else None
+            lod = self.file(name) if name else None
+            out['hairlod'] = {'code': hair, **({'files': {'hairlod': lod}} if lod else {})}
         return out or None
 
     def stadium(self, s: dict) -> None:

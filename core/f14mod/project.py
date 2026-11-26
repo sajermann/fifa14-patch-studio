@@ -73,12 +73,21 @@ until it has them (Project.incomplete_teams). Teams made from scratch before kee
 Same for a player made from scratch since 25/11/2026: `player_sources.template` NULL, blank (fields.PLAYER_DEFAULTS,
 fields.PLAYER_REQUIRED empty) and out of the patch until those are filled (Project.incomplete_players); the ones made
 before keep the model player's values.
+Schema 15 (26/11/2026): the files (pictures, face files, pack files, stadium scenes) leave the database: they live in
+folders next to it, under `<name>_files/` (f14mod.filestore, as the Street Studio keeps its files beside
+database.json), each named after its digest, and the rows of `pictures`, `player_files`, `equipment_files` and `stadium_scene` keep only `file` (the path
+in the project folder), `size` and `digest`. Older files (the bytes inside the database) are not converted: they are
+refused (ProjectError) and a new project starts.
 """
 import json
+import os
 import sqlite3
 import time
 
-SCHEMA_VERSION = 14
+from .filestore import EQUIPMENT as EQUIPMENT_FOLDERS, FACES, PICTURES, STADIUMS, FileStore
+
+SCHEMA_VERSION = 15
+FILES_SUFFIX = '_files'  # project.sqlite keeps its files in project_files/ (f14mod.filestore)
 DEFAULT_LANG = '*'
 KINDS = ('team', 'league', 'player', 'country', 'stadium', 'adboard', 'boot', 'glove', 'ball')
 EQUIPMENT_KINDS = ('boot', 'glove', 'ball')
@@ -101,8 +110,8 @@ CREATE TABLE IF NOT EXISTS created (kind TEXT, id INTEGER, created_at INTEGER, P
 CREATE TABLE IF NOT EXISTS league_members_set (league_id INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS league_members (league_id INTEGER, team_id INTEGER, ord INTEGER, hidden INTEGER DEFAULT 0,
                                            PRIMARY KEY (league_id, team_id));
-CREATE TABLE IF NOT EXISTS pictures (kind TEXT, id INTEGER, slot TEXT, data BLOB, updated_at INTEGER,
-                                     PRIMARY KEY (kind, id, slot));
+CREATE TABLE IF NOT EXISTS pictures (kind TEXT, id INTEGER, slot TEXT, file TEXT, size INTEGER, digest TEXT,
+                                     updated_at INTEGER, PRIMARY KEY (kind, id, slot));
 CREATE TABLE IF NOT EXISTS hidden (kind TEXT, id INTEGER, PRIMARY KEY (kind, id));
 CREATE TABLE IF NOT EXISTS team_sources (team_id INTEGER PRIMARY KEY, template INTEGER, copy INTEGER);
 CREATE TABLE IF NOT EXISTS team_rosters_set (team_id INTEGER PRIMARY KEY);
@@ -110,7 +119,8 @@ CREATE TABLE IF NOT EXISTS team_rosters (team_id INTEGER, player_id INTEGER, ord
                                          slot INTEGER, PRIMARY KEY (team_id, player_id));
 CREATE TABLE IF NOT EXISTS team_kits (team_id INTEGER, kind INTEGER, config TEXT, PRIMARY KEY (team_id, kind));
 CREATE TABLE IF NOT EXISTS player_sources (player_id INTEGER PRIMARY KEY, template INTEGER);
-CREATE TABLE IF NOT EXISTS player_files (player_id INTEGER, name TEXT, data BLOB, PRIMARY KEY (player_id, name));
+CREATE TABLE IF NOT EXISTS player_files (player_id INTEGER, name TEXT, file TEXT, size INTEGER, digest TEXT,
+                                         PRIMARY KEY (player_id, name));
 CREATE TABLE IF NOT EXISTS dates (kind TEXT, id INTEGER, created_at INTEGER, updated_at INTEGER,
                                   PRIMARY KEY (kind, id));
 CREATE TABLE IF NOT EXISTS stadium_names (stadium_id INTEGER, key TEXT, lang TEXT, text TEXT,
@@ -118,10 +128,15 @@ CREATE TABLE IF NOT EXISTS stadium_names (stadium_id INTEGER, key TEXT, lang TEX
 CREATE TABLE IF NOT EXISTS team_stadiums (team_id INTEGER PRIMARY KEY, stadium_id INTEGER);
 CREATE TABLE IF NOT EXISTS team_adboards (team_id INTEGER PRIMARY KEY, adboard_id INTEGER);
 CREATE TABLE IF NOT EXISTS league_adboards (league_id INTEGER PRIMARY KEY, adboard_id INTEGER);
-CREATE TABLE IF NOT EXISTS equipment_files (kind TEXT, id INTEGER, name TEXT, data BLOB, PRIMARY KEY (kind, id, name));
+CREATE TABLE IF NOT EXISTS equipment_files (kind TEXT, id INTEGER, name TEXT, file TEXT, size INTEGER, digest TEXT,
+                                            PRIMARY KEY (kind, id, name));
 CREATE TABLE IF NOT EXISTS stadium_sources (stadium_id INTEGER PRIMARY KEY, template INTEGER, folder_stadium INTEGER);
-CREATE TABLE IF NOT EXISTS stadium_scene (stadium_id INTEGER, name TEXT, data BLOB, digest TEXT,
+CREATE TABLE IF NOT EXISTS stadium_scene (stadium_id INTEGER, name TEXT, file TEXT, size INTEGER, digest TEXT,
                                           PRIMARY KEY (stadium_id, name));
+CREATE INDEX IF NOT EXISTS pictures_file ON pictures (file);
+CREATE INDEX IF NOT EXISTS player_files_file ON player_files (file);
+CREATE INDEX IF NOT EXISTS equipment_files_file ON equipment_files (file);
+CREATE INDEX IF NOT EXISTS stadium_scene_file ON stadium_scene (file);
 """
 ADBOARD_PICTURE = 'board'  # picture slot of an advertising board
 EQUIPMENT_PICTURE = 'thumbnail'  # picture slot of a boot, glove or ball (the user's; none = drawn from its files)
@@ -189,8 +204,7 @@ def _snapshot(con: sqlite3.Connection, kind: str, oid: int) -> list:
     tables += [(table, column, '') for table, column in OWN_TABLES.get(kind, ())]
     for table, column, extra in tables:
         skip = {'updated_at'} if table == 'pictures' else set()  # the picture's own save time is not its content
-        columns = 'name, digest' if table == 'stadium_scene' else '*'  # the files themselves are not read
-        rows = con.execute(f'SELECT {columns} FROM {table} WHERE {column} = :id{extra}',
+        rows = con.execute(f'SELECT * FROM {table} WHERE {column} = :id{extra}',  # files: their digest, not bytes
                            {'id': oid, 'kind': kind}).fetchall()
         out.append((table, sorted(tuple(v for k, v in zip(r.keys(), r) if k not in skip) for r in rows)))
     return out
@@ -228,6 +242,8 @@ def _dated(method):
 class Project:
     def __init__(self, path: str):
         self.path = path
+        # the files live next to the database, in a folder of its own (two projects in one folder never share it)
+        self.files = FileStore(os.path.splitext(os.path.abspath(path))[0] + FILES_SUFFIX)
         con = self.connect()
         try:
             found = con.execute(
@@ -237,6 +253,9 @@ class Project:
                 row = con.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
                 if row and int(row[0]) > SCHEMA_VERSION:
                     raise ProjectError('project made by a newer version of the app')
+            if 'data' in {r[1] for r in con.execute('PRAGMA table_info(pictures)')}:  # schema 14 and older
+                raise ProjectError('project made by an older version of the app (files inside the database): '
+                                   'it is not converted, start a new project')
             had_dates = found and con.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'dates'").fetchone()
             con.executescript(SCHEMA)
@@ -339,6 +358,7 @@ class Project:
     def reset(self, kind: str, oid: int) -> None:
         con = self.connect()
         try:
+            left = self._entity_files(con, kind, oid)
             con.execute('DELETE FROM pictures WHERE kind = ? AND id = ?', (kind, oid))
             if kind == 'team':
                 for table in ('team_rosters', 'team_rosters_set', 'team_kits', 'team_stadiums', 'team_adboards'):
@@ -354,9 +374,40 @@ class Project:
                 if not con.execute("SELECT 1 FROM created WHERE kind = 'stadium' AND id = ?", (oid,)).fetchone():
                     con.execute('DELETE FROM stadium_sources WHERE stadium_id = ?', (oid,))  # a game stadium's folder
             con.commit()
+            self.files.release(con, left)
         finally:
             con.close()
         self.save(kind, oid)
+
+    # ---- files (f14mod.filestore) ---------------------------------------------------------------------------
+
+    @staticmethod
+    def _entity_files(con: sqlite3.Connection, kind: str, oid: int) -> set[str]:
+        """The files the entity's rows point to."""
+        out = {r[0] for r in con.execute('SELECT file FROM pictures WHERE kind = ? AND id = ?', (kind, oid))}
+        if kind == 'player':
+            out.update(r[0] for r in con.execute('SELECT file FROM player_files WHERE player_id = ?', (oid,)))
+        if kind in EQUIPMENT_KINDS:
+            out.update(r[0] for r in con.execute('SELECT file FROM equipment_files WHERE kind = ? AND id = ?',
+                                                 (kind, oid)))
+        if kind == 'stadium':
+            out.update(r[0] for r in con.execute('SELECT file FROM stadium_scene WHERE stadium_id = ?', (oid,)))
+        return out
+
+    def file_bytes(self, rel: str | None) -> bytes | None:
+        return self.files.read(rel) if rel else None
+
+    def file_path(self, rel: str) -> str:
+        """Where a file of the project is on disk."""
+        return self.files.path(rel)
+
+    def prune_files(self, min_age: float = 60.0) -> int:
+        """Removes the files no row points to (a cancelled import leaves some); how many."""
+        con = self.connect()
+        try:
+            return self.files.prune(con, min_age)
+        finally:
+            con.close()
 
     # ---- pictures -------------------------------------------------------------------------------------------
 
@@ -365,11 +416,14 @@ class Project:
         """Keeps (or, with None, removes) a picture of the entity; a picture marks the entity as edited."""
         con = self.connect()
         try:
+            old = con.execute('SELECT file FROM pictures WHERE kind = ? AND id = ? AND slot = ?',
+                              (kind, oid, slot)).fetchone()
             if data is None:
                 con.execute('DELETE FROM pictures WHERE kind = ? AND id = ? AND slot = ?', (kind, oid, slot))
             else:
-                con.execute('INSERT OR REPLACE INTO pictures VALUES (?, ?, ?, ?, ?)',
-                            (kind, oid, slot, data, int(time.time())))
+                rel, size, dig = self.files.put(PICTURES, data, '.png')
+                con.execute('INSERT OR REPLACE INTO pictures (kind, id, slot, file, size, digest, updated_at) '
+                            'VALUES (?, ?, ?, ?, ?, ?, ?)', (kind, oid, slot, rel, size, dig, int(time.time())))
                 con.execute('INSERT OR REPLACE INTO edited VALUES (?, ?, ?)', (kind, oid, int(time.time())))
             if data is None and not con.execute(
                     'SELECT 1 FROM fields WHERE kind = ? AND id = ? UNION SELECT 1 FROM pictures '
@@ -378,6 +432,8 @@ class Project:
                 if not table or not con.execute(f'SELECT 1 FROM {table[0]} WHERE {table[1]} = ?', (oid,)).fetchone():
                     con.execute('DELETE FROM edited WHERE kind = ? AND id = ?', (kind, oid))
             con.commit()
+            if old:
+                self.files.release(con, [old[0]])
         finally:
             con.close()
 
@@ -385,11 +441,12 @@ class Project:
         """(PNG bytes, saved at) or None."""
         con = self.connect()
         try:
-            r = con.execute('SELECT data, updated_at FROM pictures WHERE kind = ? AND id = ? AND slot = ?',
+            r = con.execute('SELECT file, updated_at FROM pictures WHERE kind = ? AND id = ? AND slot = ?',
                             (kind, oid, slot)).fetchone()
-            return (bytes(r[0]), r[1]) if r else None
         finally:
             con.close()
+        data = self.file_bytes(r[0]) if r else None
+        return (data, r[1]) if data is not None else None
 
     def with_picture(self, kind: str, slot: str) -> list[int]:
         con = self.connect()
@@ -904,22 +961,26 @@ class Project:
     @_dated
     def set_player_files(self, player_id: int, files: dict[str, bytes] | None) -> None:
         """The face files of a player (kind -> bytes, see fifa14.PLAYER_FACE_FILES); None or {} = none."""
+        rows = [(player_id, name, *self.files.put(FACES, data, '.rx3')) for name, data in (files or {}).items()]
         con = self.connect()
         try:
+            old = [r[0] for r in con.execute('SELECT file FROM player_files WHERE player_id = ?', (player_id,))]
             con.execute('DELETE FROM player_files WHERE player_id = ?', (player_id,))
-            con.executemany('INSERT INTO player_files VALUES (?, ?, ?)',
-                            [(player_id, name, data) for name, data in (files or {}).items()])
+            con.executemany('INSERT INTO player_files (player_id, name, file, size, digest) VALUES (?, ?, ?, ?, ?)',
+                            rows)
             con.commit()
+            self.files.release(con, old)
         finally:
             con.close()
 
     def player_files(self, player_id: int) -> dict[str, bytes]:
         con = self.connect()
         try:
-            return {r[0]: bytes(r[1]) for r in con.execute(
-                'SELECT name, data FROM player_files WHERE player_id = ?', (player_id,))}
+            rows = con.execute('SELECT name, file FROM player_files WHERE player_id = ?', (player_id,)).fetchall()
         finally:
             con.close()
+        out = {name: self.file_bytes(rel) for name, rel in rows}
+        return {k: v for k, v in out.items() if v is not None}
 
     # ---- stadiums the user creates -----------------------------------------------------------------------------
 
@@ -965,14 +1026,16 @@ class Project:
     def set_stadium_scene(self, stadium_id: int, files: dict[str, bytes] | None) -> None:
         """Replaces the stadium's scene files ({name with STADIUM_ID_MARK: bytes}); None or {} = none (the
         template's)."""
-        import hashlib
+        rows = [(stadium_id, name, *self.files.put(STADIUMS, data, os.path.splitext(name)[1]))
+                for name, data in (files or {}).items()]
         con = self.connect()
         try:
+            old = [r[0] for r in con.execute('SELECT file FROM stadium_scene WHERE stadium_id = ?', (stadium_id,))]
             con.execute('DELETE FROM stadium_scene WHERE stadium_id = ?', (stadium_id,))
-            for name, data in (files or {}).items():
-                con.execute('INSERT INTO stadium_scene VALUES (?, ?, ?, ?)',
-                            (stadium_id, name, data, hashlib.sha1(data).hexdigest()))
+            con.executemany('INSERT INTO stadium_scene (stadium_id, name, file, size, digest) VALUES (?, ?, ?, ?, ?)',
+                            rows)
             con.commit()
+            self.files.release(con, old)
         finally:
             con.close()
         self.save('stadium', stadium_id, self.names('stadium', stadium_id), self.fields('stadium', stadium_id))
@@ -990,18 +1053,18 @@ class Project:
         con = self.connect()
         try:
             return {r[0]: r[1] for r in con.execute(
-                'SELECT name, length(data) FROM stadium_scene WHERE stadium_id = ? ORDER BY name', (stadium_id,))}
+                'SELECT name, size FROM stadium_scene WHERE stadium_id = ? ORDER BY name', (stadium_id,))}
         finally:
             con.close()
 
     def stadium_scene_file(self, stadium_id: int, name: str) -> bytes | None:
         con = self.connect()
         try:
-            r = con.execute('SELECT data FROM stadium_scene WHERE stadium_id = ? AND name = ?',
+            r = con.execute('SELECT file FROM stadium_scene WHERE stadium_id = ? AND name = ?',
                             (stadium_id, name)).fetchone()
-            return bytes(r[0]) if r else None
         finally:
             con.close()
+        return self.file_bytes(r[0]) if r else None
 
     def stadium_scene_digest(self, stadium_id: int) -> str:
         """One text that changes when any scene file of the stadium changes."""
@@ -1017,13 +1080,22 @@ class Project:
     @_dated
     def set_equipment_files(self, kind: str, oid: int, files: dict[str, bytes | None]) -> None:
         """Sets the item's files by name ('mesh', 'texture'); None removes one, names not given are kept."""
+        stored = {name: self.files.put(EQUIPMENT_FOLDERS[kind], data, '.rx3')
+                  for name, data in files.items() if data is not None}
         con = self.connect()
         try:
-            for name, data in files.items():
+            old = []
+            for name in files:
+                r = con.execute('SELECT file FROM equipment_files WHERE kind = ? AND id = ? AND name = ?',
+                                (kind, oid, name)).fetchone()
+                if r:
+                    old.append(r[0])
                 con.execute('DELETE FROM equipment_files WHERE kind = ? AND id = ? AND name = ?', (kind, oid, name))
-                if data is not None:
-                    con.execute('INSERT INTO equipment_files VALUES (?, ?, ?, ?)', (kind, oid, name, data))
+                if name in stored:
+                    con.execute('INSERT INTO equipment_files (kind, id, name, file, size, digest) '
+                                'VALUES (?, ?, ?, ?, ?, ?)', (kind, oid, name, *stored[name]))
             con.commit()
+            self.files.release(con, old)
         finally:
             con.close()
         self.save(kind, oid, fields=self.fields(kind, oid))
@@ -1031,10 +1103,12 @@ class Project:
     def equipment_files(self, kind: str, oid: int) -> dict[str, bytes]:
         con = self.connect()
         try:
-            return {r[0]: bytes(r[1]) for r in con.execute(
-                'SELECT name, data FROM equipment_files WHERE kind = ? AND id = ?', (kind, oid))}
+            rows = con.execute('SELECT name, file FROM equipment_files WHERE kind = ? AND id = ?',
+                               (kind, oid)).fetchall()
         finally:
             con.close()
+        out = {name: self.file_bytes(rel) for name, rel in rows}
+        return {k: v for k, v in out.items() if v is not None}
 
     def with_equipment_files(self, kind: str) -> list[int]:
         con = self.connect()

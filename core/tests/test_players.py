@@ -216,6 +216,26 @@ def test_face_fill_is_checked():
             fields.check_face({'source': 'pack', 'pack': 'x', 'id': 1, 'fill': bad})
 
 
+def test_face_fill_of_the_hair_from_afar_alone():
+    pack = {'source': 'pack', 'pack': 'x', 'id': 1}
+    assert fields.check_face({**pack, 'fill': {'hairlod': 12}})['fill'] == {'hairlod': 12}
+    # the whole hair brings its own from afar
+    assert fields.check_face({**pack, 'fill': {'hair': 3, 'hairlod': 12}})['fill'] == {'hair': 3}
+    from f14mod import facefill
+    assert facefill.covered({'hairlod': 12}) == {'hairlod'}
+
+
+def test_fill_only_the_hair_from_afar_keeps_the_pack_hair(installed, tmp_path):
+    from f14mod import facefill
+    project = _fill_project(tmp_path, {'hairlod': fakegame.GENERIC_HAIR})
+    _summary, _tables, patch_dir = _build(installed, tmp_path, project)
+    made = lambda kind: _patch_file(patch_dir, fifa14.PLAYER_FACE_FILES[kind].format(fakegame.KEEPER))  # noqa: E731
+    files = catalog.open_game(installed)
+    assert made('hairlod') == files.read(facefill.HAIR_PATHS['hairlod'].format(fakegame.GENERIC_HAIR))
+    assert made('hair_textures') == b'RX3l old'
+    assert facefill.hairlod_codes(files) == [fakegame.GENERIC_HAIR]
+
+
 def test_the_game_has_generic_parts_to_fill_with(installed):
     from f14mod import facefill
     files = catalog.open_game(installed)

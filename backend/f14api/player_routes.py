@@ -36,7 +36,8 @@ def _detail(con, pid: int) -> dict:
         stored = project().player_files(pid)
         out['face_stored'] = bool(stored)
         if stored:  # what the saved face does not bring (the screen lists it every time it is opened)
-            out['face_missing'] = facepack.missing_parts(stored)
+            hair = out['saved'].get('hairtypecode', out['values'].get('hairtypecode'))
+            out['face_missing'] = facepack.missing_parts(stored, bald=hair == 0)
     return out
 
 
@@ -345,7 +346,8 @@ def save_player(pid: int, body: PlayerBody):
     if face and face['source'] == 'pack':
         fill = face.get('fill') or {}
         if (fill.get('eyes') not in (None, *facefill.eyes_codes(game.files()))
-                or fill.get('hair') not in (None, *facefill.hair_codes(game.files()))):
+                or fill.get('hair') not in (None, *facefill.hair_codes(game.files()))
+                or fill.get('hairlod') not in (None, *facefill.hairlod_codes(game.files()))):
             raise ApiError(400, 'unknown_fill')
         if _without_fill(face) != _without_fill(before) or not p.player_files(pid):
             assets = _check_pack(face['pack'])
@@ -607,8 +609,9 @@ def player_options():
            'accessories': {'places': {k: list(v) for k, v in fifa14.ACCESSORY_PLACES.items()},
                            'slots': fifa14.ACCESSORY_SLOTS, 'colours': list(fifa14.ACCESSORY_COLOURS),
                            'textured': list(fifa14.ACCESSORY_TEXTURED), 'model': list(fifa14.ACCESSORY_MODEL)},
-           # the game's generic eyes / hair a face lacking them may be filled in with (facefill)
-           'fill': {'eyes': facefill.eyes_codes(game.files()), 'hair': facefill.hair_codes(game.files())}}
+           # the game's generic eyes / hair / hair seen from afar a face lacking them may be filled in with (facefill)
+           'fill': {'eyes': facefill.eyes_codes(game.files()), 'hair': facefill.hair_codes(game.files()),
+                    'hairlod': facefill.hairlod_codes(game.files())}}
     _options_cache[game.token] = out
     return out
 

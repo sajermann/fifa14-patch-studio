@@ -176,15 +176,27 @@ def _players(con, out, hidden, created, saved):
         if kind != 'player' or (kind, pid) in hidden:
             continue
         face = values.get('face')
+        bald = isinstance(face, dict) and face.get('source') == 'pack' and _hair_code(con, pid, values) == 0
         # a face from a pack lives in the project: without its head and face files the build stops
         if isinstance(face, dict) and face.get('source') == 'pack' and \
                 not all(k in files.get(pid, ()) for k in fifa14.FACE_REQUIRED):
             out.append(_issue('face_missing', 'error', 'player', pid, 'face'))
         elif isinstance(face, dict) and face.get('source') == 'pack' and \
-                (parts := [k for k in facepack.missing_parts(files.get(pid, ()))
+                (parts := [k for k in facepack.missing_parts(files.get(pid, ()), bald=bald)
                            if k not in facefill.covered(face.get('fill'))]):
             # a part the pack lacks goes out without it, unless the user filled it with the game's (facefill)
             out.append(_issue('face_incomplete', 'warning', 'player', pid, 'face', parts=parts))
+
+
+def _hair_code(con, pid: int, values: dict):
+    """The player's hair code: the saved one, else the game's (0 = no hair)."""
+    if 'hairtypecode' in values:
+        return values['hairtypecode']
+    row = con.execute('SELECT raw FROM v_players WHERE id = ?', (pid,)).fetchone()
+    try:
+        return json.loads(row[0]).get('hairtypecode') if row and row[0] else None
+    except (ValueError, AttributeError):
+        return None
 
 
 def _stadiums(con, out, hidden, created, saved):

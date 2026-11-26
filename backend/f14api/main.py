@@ -1663,10 +1663,46 @@ class BulkDeleteBody(BaseModel):
     ids: list[int]
 
 
+# the current / last bulk delete, read by GET /api/bulk-delete/progress while the request runs (thousands of items take
+# minutes, and the screen shows where it is); POST /api/bulk-delete/cancel stops it before the next item
+bulk_progress: dict = {'running': False}
+bulk_cancel = threading.Event()
+_bulk_lock = threading.Lock()
+
+
 @app.post('/api/bulk-delete')
 def bulk_delete(body: BulkDeleteBody):
     """Delete what a list picked, like the Street Studio: a created item leaves the project, an edited one of the game
-    goes back to the game's. One that cannot go (a country that still has leagues) is skipped with its error code."""
+    goes back to the game's. One that cannot go (a country that still has leagues) is skipped with its error code.
+    One at a time; stopped half way, what was already deleted stays deleted (`cancelled` in the answer)."""
+    if not _bulk_lock.acquire(blocking=False):
+        raise ApiError(409, 'busy')
+    try:
+        return _bulk_delete(body)
+    finally:
+        _bulk_lock.release()
+
+
+@app.post('/api/bulk-delete/cancel')
+def cancel_bulk_delete():
+    if not bulk_progress.get('running'):
+        return {'stopping': False}
+    bulk_cancel.set()
+    bulk_progress['stopping'] = True
+    return {'stopping': True}
+
+
+@app.get('/api/bulk-delete/progress')
+def get_bulk_delete_progress():
+    """Where the current (or last) bulk delete is: done/total and how many were deleted, restored and skipped."""
+    prog = dict(bulk_progress)
+    if prog.get('started_at'):
+        prog['elapsed'] = round((prog['finished_at'] or time.time()) - prog['started_at'], 1)
+    return prog
+
+
+def _bulk_delete(body: BulkDeleteBody):
+    global bulk_progress
     deletes = {'country': delete_country, 'league': delete_league, 'team': delete_team,
                'player': player_routes.delete_player, 'adboard': adboard_routes.delete_adboard,
                'stadium': stadium_routes.delete_stadium}
@@ -1677,16 +1713,30 @@ def bulk_delete(body: BulkDeleteBody):
         deletes[gear] = resets[gear] = (lambda kind: lambda oid: equipment_routes.delete_equipment(kind, oid))(gear)
     if body.kind not in resets:
         raise ApiError(400, 'bad_request', 'kind')
+    ids = list(dict.fromkeys(body.ids))
     deleted, reset, skipped = [], [], []
-    for oid in dict.fromkeys(body.ids):
-        created = project().is_created(body.kind, oid)
-        try:
-            (deletes if created else resets)[body.kind](oid)
-        except HTTPException as e:
-            skipped.append({'id': oid, 'code': (e.detail or {}).get('code', 'error') if isinstance(e.detail, dict) else 'error'})
-            continue
-        (deleted if created else reset).append(oid)
-    return {'deleted': deleted, 'reset': reset, 'skipped': skipped}
+    prog = {'running': True, 'kind': body.kind, 'done': 0, 'total': len(ids), 'deleted': 0, 'reset': 0, 'skipped': 0,
+            'started_at': time.time(), 'finished_at': None, 'stopping': False, 'cancelled': False}
+    bulk_cancel.clear()
+    bulk_progress = prog
+    try:
+        for oid in ids:
+            if bulk_cancel.is_set():
+                prog['cancelled'] = True
+                break
+            created = project().is_created(body.kind, oid)
+            try:
+                (deletes if created else resets)[body.kind](oid)
+            except HTTPException as e:
+                skipped.append({'id': oid, 'code': (e.detail or {}).get('code', 'error') if isinstance(e.detail, dict) else 'error'})
+            else:
+                (deleted if created else reset).append(oid)
+            prog.update(done=prog['done'] + 1, deleted=len(deleted), reset=len(reset), skipped=len(skipped))
+    finally:
+        prog.update(running=False, finished_at=time.time())
+    log.info('bulk delete of %s: %s deleted, %s restored, %s skipped in %.1f s%s', body.kind, len(deleted), len(reset),
+             len(skipped), prog['finished_at'] - prog['started_at'], ' (stopped)' if prog['cancelled'] else '')
+    return {'deleted': deleted, 'reset': reset, 'skipped': skipped, 'cancelled': prog['cancelled']}
 
 
 # ---- errors and the interface ---------------------------------------------------------------------------------------
