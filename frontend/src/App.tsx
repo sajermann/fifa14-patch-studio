@@ -16,6 +16,7 @@ import { BootPage } from '@/pages/BootPage'
 import { BootsPage } from '@/pages/BootsPage'
 import { GlovePage } from '@/pages/GlovePage'
 import { GlovesPage } from '@/pages/GlovesPage'
+import { ImportPage } from '@/pages/ImportPage'
 import { CountriesPage } from '@/pages/CountriesPage'
 import { CountryPage } from '@/pages/CountryPage'
 import { LeaguePage } from '@/pages/LeaguePage'
@@ -110,6 +111,7 @@ const router = createBrowserRouter([
           { path: 'teams/:id', element: <TeamPage /> },
           { path: 'players', element: <PlayersPage /> },
           { path: 'players/:id', element: <PlayerPage /> },
+          { path: 'import', element: <ImportPage /> },
           { path: 'patch', element: <PatchPage /> },
             ],
           },

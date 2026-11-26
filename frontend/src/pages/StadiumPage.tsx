@@ -29,6 +29,7 @@ import { useI18n } from '@/i18n'
 import { BackButton, useBack, useFrom, useTabParam } from '@/lib/back'
 import { toast } from '@/lib/notify'
 import { useOptions, useStatus, useToken } from '@/state/queries'
+import { ExportButton } from '@/components/common/ShareExport'
 
 const TABS = ['overview', 'data', 'raw'] as const
 const GROUPS = ['info', 'conditions', 'pitch', 'goal', 'stands']
@@ -158,6 +159,7 @@ export function StadiumPage() {
         <div className="flex flex-col items-end justify-between">
           <div className="flex flex-wrap gap-2">
             <EditActions edited={data.edited && !data.is_new} entity={entity} />
+            <ExportButton kind="stadium" id={id} dirty={entity.dirty} />
             {data.is_new && (
               <>
                 <HideButton variant="outline" hidden={hide.hidden} onToggle={hide.toggle} hideHint={t('stadiums.hideHint')} showHint={t('stadiums.showHint')} />

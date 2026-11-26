@@ -15,6 +15,7 @@ The screen says so; the app does not try to fit it.
 import hashlib
 import io
 import re
+import struct
 import threading
 from collections import OrderedDict
 
@@ -117,6 +118,15 @@ def _paint(texture: bytes, rgb: int) -> bytes:
         for i in range(0, n, 16):  # block = 8 bytes of alpha, then 8 bytes of color
             d[q + i + 8:q + i + 16] = new[i + 8:i + 16]
     return bytes(d)
+
+
+def paint_hair(texture: bytes, rgb: int) -> bytes:
+    """A generic hair textures file painted with rgb (as parts() paints the game's); one that cannot be read stays
+    as it is."""
+    try:
+        return _painted(texture, rgb)
+    except (KeyError, ValueError, IndexError, OSError, TypeError, struct.error):
+        return texture
 
 
 def hair_rgb(code) -> int:

@@ -1,4 +1,4 @@
-import { AlertTriangle, Flag, Footprints, Hammer, Hand, Heart, Landmark, Loader2, Megaphone, Settings, Shield, Trophy, Users, Volleyball } from 'lucide-react'
+import { AlertTriangle, FileDown, Flag, Footprints, Hammer, Hand, Heart, Landmark, Loader2, Megaphone, Settings, Shield, Trophy, Users, Volleyball } from 'lucide-react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { useI18n, type MessageKey } from '@/i18n'
@@ -9,16 +9,17 @@ import { LoadingBlock } from './LoadingBlock'
 import { JobWatcher, PatchActions } from './PatchActions'
 import { PreferencesMenu } from './PreferencesMenu'
 
-const NAV: { to: string; label: MessageKey; icon: typeof Trophy }[] = [
-  { to: '/countries', label: 'nav.countries', icon: Flag },
-  { to: '/leagues', label: 'nav.leagues', icon: Trophy },
-  { to: '/teams', label: 'nav.teams', icon: Shield },
-  { to: '/players', label: 'nav.players', icon: Users },
-  { to: '/stadiums', label: 'nav.stadiums', icon: Landmark },
-  { to: '/adboards', label: 'nav.adboards', icon: Megaphone },
-  { to: '/boots', label: 'nav.boots', icon: Footprints },
-  { to: '/gloves', label: 'nav.gloves', icon: Hand },
-  { to: '/balls', label: 'nav.balls', icon: Volleyball },
+// kind: the project's entities of the menu (status.project: <kind> = edited from the game, new_<kind> = created)
+const NAV: { to: string; label: MessageKey; icon: typeof Trophy; kind: string }[] = [
+  { to: '/countries', label: 'nav.countries', icon: Flag, kind: 'country' },
+  { to: '/leagues', label: 'nav.leagues', icon: Trophy, kind: 'league' },
+  { to: '/teams', label: 'nav.teams', icon: Shield, kind: 'team' },
+  { to: '/players', label: 'nav.players', icon: Users, kind: 'player' },
+  { to: '/stadiums', label: 'nav.stadiums', icon: Landmark, kind: 'stadium' },
+  { to: '/adboards', label: 'nav.adboards', icon: Megaphone, kind: 'adboard' },
+  { to: '/boots', label: 'nav.boots', icon: Footprints, kind: 'boot' },
+  { to: '/gloves', label: 'nav.gloves', icon: Hand, kind: 'glove' },
+  { to: '/balls', label: 'nav.balls', icon: Volleyball, kind: 'ball' },
 ]
 
 function NavItem({ to, label, icon: Icon, extra }: { to: string; label: MessageKey; icon: typeof Trophy; extra?: React.ReactNode }) {
@@ -73,7 +74,10 @@ export function AppShell() {
   const status = useStatus().data
   const { pathname } = useLocation()
   const game = status?.game
-  const edited = Object.values(status?.project ?? {}).reduce((a, b) => a + (b ?? 0), 0)
+  const project = status?.project ?? {}
+  const edited = Object.values(project).reduce((a, b) => a + (b ?? 0), 0)
+  // how many of each the project has, created or edited (the Street Studio's menu counts)
+  const countOf = (kind: string) => (project[kind] ?? 0) + (project[`new_${kind}`] ?? 0)
   const check = game?.check
   const warning =
     check?.state === 'modified' || check?.state === 'invalid'
@@ -92,10 +96,15 @@ export function AppShell() {
           </div>
         </div>
         <nav className="space-y-1">
-          {NAV.map((n) => (
-            <NavItem key={n.to} {...n} />
+          {NAV.map(({ kind, ...n }) => (
+            <NavItem
+              key={n.to}
+              {...n}
+              extra={countOf(kind) > 0 ? <span className="text-xs text-muted-foreground tabular-nums">{countOf(kind)}</span> : undefined}
+            />
           ))}
           <div className="my-2 border-t" />
+          <NavItem to="/import" label="nav.import" icon={FileDown} />
           <NavItem
             to="/patch"
             label="nav.patch"

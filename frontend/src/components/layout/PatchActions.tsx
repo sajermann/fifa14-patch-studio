@@ -22,11 +22,12 @@ import { api } from '@/api/client'
 import type { Job, ProjectIssue } from '@/api/types'
 import { hasMessage, useI18n, type MessageKey } from '@/i18n'
 import { BuildProgressDialog } from '@/components/layout/BuildProgress'
+import { ImportProgressDialog } from '@/components/layout/ImportProgress'
 import { issueLink, issueText } from '@/lib/issues'
 import { toast } from '@/lib/notify'
 import { useProjectIssues, useStatus } from '@/state/queries'
 
-export type PatchJobKind = Job['kind']
+export type PatchJobKind = Exclude<Job['kind'], 'import'>
 
 /** Starts a build / install / uninstall job; the status is polled while it runs. */
 export function usePatchJob() {
@@ -74,6 +75,12 @@ function duration(t: ReturnType<typeof useI18n>['t'], total: number) {
     : t('patch.durationMinutes', { minutes: Math.floor(seconds / 60), seconds: seconds % 60 })
 }
 
+// the menu name of each kind an import brings (nav.<name> in the dictionaries)
+const IMPORT_NAV: Record<string, string> = {
+  country: 'countries', league: 'leagues', team: 'teams', player: 'players', stadium: 'stadiums',
+  adboard: 'adboards', boot: 'boots', glove: 'gloves', ball: 'balls',
+}
+
 /** Tells the user when a job ends, whatever screen is open (mounted once, in the shell), and shows the build's
  * progress while it runs. */
 export function JobWatcher() {
@@ -88,6 +95,18 @@ export function JobWatcher() {
     const first = last.current === null
     last.current = key
     if (job.state === 'running' || first) return // still running, or ended before the app opened
+    if (job.kind === 'import') {
+      const r = job.result as { count?: number; imported?: Record<string, number[]> } | null
+      if (job.state === 'done') {
+        const what = Object.entries(r?.imported ?? {})
+          .map(([k, ids]) => `${t(`nav.${IMPORT_NAV[k] ?? k}` as MessageKey)}: ${ids.length}`)
+          .join(' · ')
+        toast.success(t('share.imported', { count: r?.count ?? 0, what }))
+      } else if (job.code === 'import_cancelled') toast.info(t('import.stopped'))
+      else toast.error(t('import.failed', { detail: job.error ?? '' }))
+      void qc.invalidateQueries()
+      return
+    }
     if (job.state === 'done' && job.kind === 'build') {
       const r = (job.result ?? {}) as { files?: number; cache_reused_files?: number; duration_s?: number }
       const count = r.files ?? 0
@@ -114,7 +133,12 @@ export function JobWatcher() {
     else toast.error(job.error ?? t('patch.failed'))
     void qc.invalidateQueries()
   }, [job, qc, t])
-  return <BuildProgressDialog open={job?.kind === 'build' && job.state === 'running'} />
+  return (
+    <>
+      <BuildProgressDialog open={job?.kind === 'build' && job.state === 'running'} />
+      <ImportProgressDialog open={job?.kind === 'import' && job.state === 'running'} />
+    </>
+  )
 }
 
 /** The issues, errors first, each with a link to its league/team/player. */
@@ -193,7 +217,7 @@ export function PatchActions() {
   return (
     <div className="flex items-center gap-2">
       {patchBadge}
-      {job?.state === 'running' && job.kind !== 'build' && (
+      {job?.state === 'running' && job.kind !== 'build' && job.kind !== 'import' && (
         <span className="text-xs text-muted-foreground tabular-nums">
           {t(`patch.running.${job.kind}` as MessageKey)} {Math.round(job.done * 100)}%
         </span>

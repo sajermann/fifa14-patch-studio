@@ -50,6 +50,7 @@ import { useI18n, type MessageKey } from "@/i18n";
 import { BackButton, useBack, useFrom } from "@/lib/back";
 import { toast } from "@/lib/notify";
 import { useToken } from "@/state/queries";
+import { ExportButton } from "@/components/common/ShareExport";
 
 /** Files and picture chosen and not saved yet (base64), or a saved one to drop. */
 type Pending = {
@@ -276,6 +277,7 @@ export function EquipmentEditPage({ kind }: { kind: EquipmentKind }) {
         <div className="flex flex-col items-end justify-between">
           <div className="flex flex-wrap gap-2">
             <EditActions edited={!isNew && data.edited} entity={entity} />
+            <ExportButton kind={kind} id={code} dirty={entity.dirty} />
             {isNew && (
               <>
                 <HideButton

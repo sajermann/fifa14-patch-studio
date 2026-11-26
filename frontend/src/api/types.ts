@@ -60,6 +60,24 @@ export interface Issue {
   detail: string
 }
 
+export type ImportStep = 'prepare' | 'write' | 'links' | 'save'
+
+/** GET /api/share/apply/progress: the current (or last) import. */
+export interface ImportProgress {
+  running: boolean
+  steps: ImportStep[]
+  step: ImportStep | null
+  done: number
+  total: number
+  elapsed?: number
+  /** the item being written */
+  item?: { kind: ShareKind; name: string | null; id: number } | null
+  error: { code: string; detail: string } | null
+  stopping?: boolean
+  cancelled?: boolean
+  result?: { imported: Partial<Record<ShareKind, number[]>>; count: number } | null
+}
+
 /** A problem of the project (backend f14api.validation): an error stops the build, a warning does not. */
 export interface ProjectIssue {
   code: string
@@ -90,7 +108,7 @@ export interface GameStatus {
 
 export interface Job {
   id: string
-  kind: 'build' | 'install' | 'uninstall'
+  kind: 'build' | 'install' | 'uninstall' | 'import'
   state: 'running' | 'done' | 'error'
   step: string
   done: number
@@ -106,7 +124,8 @@ export interface Status {
   config: Config
   names_language: string
   game: GameStatus
-  project: Partial<Record<'team' | 'league' | 'player', number>>
+  /** how many of each kind the project has: <kind> = edited from the game, new_<kind> = created (Project.counts) */
+  project: Record<string, number>
   job: Job | null
   patch_built: boolean
   patch?: PatchStatus
@@ -791,4 +810,38 @@ export interface EquipmentFiles {
   mesh?: string
   texture?: string
   remove?: string[]
+}
+
+/** Import and export (backend share_routes): one item of the tree of what goes. */
+export type ShareKind = 'country' | 'league' | 'team' | 'player' | 'stadium' | 'adboard' | 'boot' | 'glove' | 'ball'
+export interface ShareNode {
+  key: string
+  kind: ShareKind
+  id: number
+  name: string | null
+  /** false = a change to one of the game's own items (the same id in every game) */
+  created: boolean
+  /** the slot of its own picture in the zip, or null */
+  picture: string | null
+  children: string[]
+  /** import only: the id it gets in the project, why it changes, picked at first, why it cannot come in */
+  new_id?: number | null
+  reason?: 'taken' | 'range' | 'replaces' | null
+  default?: boolean
+  error?: 'not_in_game' | 'limit' | null
+  /** a country of a package the game already has (left out at first: whoever uses it keeps the game's) */
+  game_has?: boolean
+}
+export interface ShareTree {
+  token: string
+  nodes: Record<string, ShareNode>
+  roots: string[]
+}
+export interface ShareInspect extends ShareTree {
+  origin: 'own' | 'package'
+  warnings: string[]
+  /** players whose face lacks its eyes or hair (the import may complete them with the generic ones) */
+  fillable?: number
+  patch_name?: string | null
+  credits?: { text?: string; url?: string } | null
 }

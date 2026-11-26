@@ -36,6 +36,7 @@ import { useI18n } from '@/i18n'
 import { BackButton, useBack, useFrom, useTabParam } from '@/lib/back'
 import { toast } from '@/lib/notify'
 import { useToken } from '@/state/queries'
+import { ExportButton } from '@/components/common/ShareExport'
 
 const TABS = ['data', 'crest', 'kits', 'leagues', 'roster', 'stadium', 'other', 'raw'] as const
 
@@ -175,6 +176,7 @@ export function TeamPage() {
         <div className="flex flex-col items-end justify-between">
           <div className="flex flex-wrap gap-2">
             <EditActions edited={team.edited && !team.is_new} entity={entity} />
+            <ExportButton kind="team" id={id} dirty={entity.dirty} />
             <HideButton
               variant="outline"
               hidden={hide.hidden}

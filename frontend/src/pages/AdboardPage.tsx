@@ -27,6 +27,7 @@ import { useI18n } from '@/i18n'
 import { BackButton, useBack, useFrom } from '@/lib/back'
 import { toast } from '@/lib/notify'
 import { useToken } from '@/state/queries'
+import { ExportButton } from '@/components/common/ShareExport'
 
 /** A picture chosen and not saved yet (base64 + a local address to show it), or 'remove'. */
 type PendingPicture = { data: string; url: string } | 'remove' | null
@@ -168,6 +169,7 @@ export function AdboardPage() {
         <div className="flex flex-col items-end justify-between">
           <div className="flex flex-wrap gap-2">
           <EditActions edited={!isNew && data.edited} entity={entity} />
+          <ExportButton kind="adboard" id={id} dirty={entity.dirty} />
           <Button variant="outline" size="sm" title={t('adboards.copyHint')} disabled={copy.isPending || data.picture === null || entity.dirty} onClick={() => copy.mutate()}>
             {copy.isPending ? <Loader2 className="animate-spin" /> : <Copy />} {t('adboards.copy')}
           </Button>

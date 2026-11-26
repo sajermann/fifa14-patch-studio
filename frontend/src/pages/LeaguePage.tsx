@@ -32,6 +32,7 @@ import { LoadingBlock } from '@/components/layout/LoadingBlock'
 import { useI18n } from '@/i18n'
 import { useOptions, useStatus, useToken } from '@/state/queries'
 import { useConfederationName } from './CountriesPage'
+import { ExportButton } from '@/components/common/ShareExport'
 
 const TABS = ['data', 'countries', 'teams', 'adboard', 'raw'] as const
 /** The league's teams shown on the page (a league can have more: the rest is counted). */
@@ -226,6 +227,7 @@ export function LeaguePage() {
         <div className="flex flex-col items-end justify-between">
           <div className="flex flex-wrap gap-2">
             <EditActions edited={data.edited && !data.is_new} entity={entity} />
+            <ExportButton kind="league" id={id} dirty={entity.dirty} />
             {!data.game_hidden && (
               <HideButton
                 variant="outline"

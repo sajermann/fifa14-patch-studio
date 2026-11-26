@@ -1,5 +1,5 @@
 import { hasMessage, translate } from '@/i18n'
-import type { Adboard, AdboardBody, AdboardList, Equipment, EquipmentBody, EquipmentFiles, EquipmentKind, EquipmentList, BuildProgress, BulkKind, Config, CountryDetail, CountryRow, FaceChoice, FacePackCheck, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, MachineInfo, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, SetupRequest, Status, StadiumDetail, StadiumRow, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook, ProjectIssue } from './types'
+import type { ShareInspect, ShareKind, ShareTree, Adboard, AdboardBody, AdboardList, Equipment, EquipmentBody, EquipmentFiles, EquipmentKind, EquipmentList, BuildProgress, ImportProgress, BulkKind, Config, CountryDetail, CountryRow, FaceChoice, FacePackCheck, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, MachineInfo, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, SetupRequest, Status, StadiumDetail, StadiumRow, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook, ProjectIssue } from './types'
 
 /** Error of the backend; `message` is in the interface language when the app knows its code. */
 export class ApiError extends Error {
@@ -28,19 +28,22 @@ async function send(method: string, url: string, body?: unknown): Promise<Respon
   } catch {
     throw new ApiError(0, 'backend_unreachable', translate('apiError.backend_unreachable'))
   }
-  if (!res.ok) {
-    let detail: unknown = null
-    try {
-      detail = (await res.json()).detail
-    } catch {
-      /* not JSON */
-    }
-    const d = (detail && typeof detail === 'object' ? detail : {}) as { code?: string; detail?: string }
-    const key = `apiError.${d.code}`
-    const text = d.code && hasMessage(key) ? translate(key) : translate('apiError.status', { status: res.status })
-    throw new ApiError(res.status, d.code, d.detail ? `${text} (${d.detail})` : text)
-  }
+  if (!res.ok) throw await errorOf(res)
   return res
+}
+
+/** The ApiError of a failed response (its message in the interface language when the app knows its code). */
+async function errorOf(res: Response): Promise<ApiError> {
+  let detail: unknown = null
+  try {
+    detail = (await res.json()).detail
+  } catch {
+    /* not JSON */
+  }
+  const d = (detail && typeof detail === 'object' ? detail : {}) as { code?: string; detail?: string }
+  const key = `apiError.${d.code}`
+  const text = d.code && hasMessage(key) ? translate(key) : translate('apiError.status', { status: res.status })
+  return new ApiError(res.status, d.code, d.detail ? `${text} (${d.detail})` : text)
 }
 
 const get = <T>(url: string) => request<T>('GET', url)
@@ -204,4 +207,45 @@ export const api = {
   installPatch: () => post<Job>('/api/patch/install'),
   uninstallPatch: () => post<Job>('/api/patch/uninstall'),
   openPatchFolder: () => post<{ path: string }>('/api/patch/open-folder'),
+
+  /** Import: sends the zip (the app's or an extractor package); the tree of what it holds and the id each item gets. */
+  shareInspect: async (file: File) => {
+    let res: Response
+    try {
+      res = await fetch('/api/share/inspect', { method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: file })
+    } catch {
+      throw new ApiError(0, 'backend_unreachable', translate('apiError.backend_unreachable'))
+    }
+    if (!res.ok) throw await errorOf(res)
+    return (await res.json()) as ShareInspect
+  },
+  /** Starts the import of the chosen items (a job: importProgress says where it is). */
+  shareApply: (token: string, keys: string[], fillMissing = true) => post<Job>('/api/share/apply', { token, keys, fill_missing: fillMissing }),
+  importProgress: () => get<ImportProgress>('/api/share/apply/progress'),
+  /** Asks the running import to stop: nothing it wrote stays. */
+  cancelImport: () => post<{ stopping: boolean }>('/api/share/apply/cancel'),
+  shareForget: (token: string) => request<{ forgotten: boolean }>('DELETE', `/api/share/${token}`),
+  /** Export: the tree of what an export of this item takes (what the project created or changed). */
+  shareExport: (kind: ShareKind, id: number) => post<ShareTree>('/api/share/export', { kind, id }),
+  /** The zip of the chosen items of an export. */
+  shareExportZip: async (token: string, keys: string[]) => {
+    const res = await send('POST', `/api/share/export/${token}/zip`, { keys })
+    const name = /filename="?([^";]+)"?/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'export.zip'
+    return { name: decodeURIComponent(name), blob: await res.blob() }
+  },
+}
+
+/** The picture of an item of an inspected zip or of an export. */
+export const sharePictureUrl = (token: string, key: string) => `/api/share/${token}/picture${query({ key })}`
+
+/** Saves a downloaded file (blob) with its name. */
+export function saveBlob(name: string, blob: Blob) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

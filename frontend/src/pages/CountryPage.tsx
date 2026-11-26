@@ -32,6 +32,7 @@ import { toast } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 import { useStatus, useToken } from '@/state/queries'
 import { useConfederationName } from './CountriesPage'
+import { ExportButton } from '@/components/common/ShareExport'
 
 const TABS = ['data', 'leagues', 'raw'] as const
 
@@ -203,6 +204,7 @@ export function CountryPage() {
         </div>
         <div className="flex flex-wrap items-start gap-2">
           <EditActions edited={data.edited && !data.is_new} entity={entity} />
+          <ExportButton kind="country" id={id} dirty={entity.dirty} />
           {!data.game_hidden && (
             <HideButton
               variant="outline"

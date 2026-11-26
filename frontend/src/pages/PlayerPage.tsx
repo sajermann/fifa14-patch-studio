@@ -34,6 +34,7 @@ import { useI18n } from '@/i18n'
 import { BackButton, useBack, useTabParam } from '@/lib/back'
 import { toast } from '@/lib/notify'
 import { useStatus, useToken } from '@/state/queries'
+import { ExportButton } from '@/components/common/ShareExport'
 
 const TABS = ['data', 'ratings', 'traits', 'look', 'accessories', 'raw'] as const
 const NAME_FIELDS = ['name.first', 'name.last', 'name.common']
@@ -184,6 +185,7 @@ export function PlayerPage() {
         <div className="flex flex-col items-end justify-between">
           <div className="flex flex-wrap gap-2">
             <EditActions edited={data.edited && !data.is_new} entity={entity} />
+            <ExportButton kind="player" id={id} dirty={entity.dirty} />
             <Button variant="outline" size="sm" title={t('player.copyHint')} disabled={copy.isPending} onClick={() => copy.mutate()}>
               {copy.isPending ? <Loader2 className="animate-spin" /> : <Copy />} {t('player.copy')}
             </Button>

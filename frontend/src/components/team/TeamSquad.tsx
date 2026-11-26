@@ -138,8 +138,13 @@ export function TeamSquad({
     for (const p of team.roster) out[p.id] = infoOf(p)
     return out
   }, [team.roster, added])
-  const current = team.formations.find((f) => f.id === formation) ?? team.formations[0]
-  const slots = current?.positions ?? []
+  // no formation saved (a team made from scratch, or one of a package whose database had none): the select shows
+  // it unchosen (the team stays out of the patch until one is saved); the lineup is laid out by the formation its
+  // starters fit, if any
+  const current = team.formations.find((f) => f.id === formation)
+  const starterSlots = rows.filter((r) => r.slot < BENCH).map((r) => r.slot).sort((a, b) => a - b).join()
+  const laidOut = current ?? team.formations.find((f) => [...f.positions].sort((a, b) => a - b).join() === starterSlots)
+  const slots = laidOut?.positions ?? []
   const posName = (code: number) => positions.find((p) => p.id === code)?.name ?? String(code)
   const starters = rows.filter((r) => r.slot < BENCH)
   const kept = rows.filter((r) => !r.hidden) // a player hidden in this team stays out of the patch
@@ -239,8 +244,8 @@ export function TeamSquad({
           <label className="flex items-center gap-2">
             {t('squad.formation')}
             <Select value={current ? String(current.id) : ''} onValueChange={(v) => changeFormation(Number(v))}>
-              <SelectTrigger className="w-44">
-                <SelectValue />
+              <SelectTrigger className={cn('w-44', !current && 'border-amber-500 text-amber-700 dark:text-amber-400')}>
+                <SelectValue placeholder={t('squad.formationPick')} />
               </SelectTrigger>
               <SelectContent>
                 {team.formations.map((f) => (

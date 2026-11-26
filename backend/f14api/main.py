@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import sqlite3
 import threading
 import time
 from contextlib import asynccontextmanager, contextmanager
@@ -74,13 +75,28 @@ def get_issues():
         return {'issues': validation.issues(con, lang())}
 
 
+_last_counts: dict = {}
+
+
 @app.get('/api/status')
 def get_status():
+    global _last_counts
     cfg = settings.load()
+    job = jobs.view()
+    built = os.path.isdir(settings.PATCH_DIR) and bool(os.listdir(settings.PATCH_DIR))
+    importing = (job or {}).get('kind') == 'import' and job.get('state') == 'running'
+    if not importing or not _last_counts:  # an import holds the project's write lock: the last counts meanwhile
+        try:
+            _last_counts = project().counts()
+        except sqlite3.OperationalError:
+            if not importing:
+                raise
+    # while an import writes, the project file changes all the time: hashing it (patch_info) would read it whole
+    # on every poll; it is not up to date anyway
+    patch = {'built': built, 'up_to_date': False} if importing and built else (
+        patch_info.status(settings.PATCH_DIR, project().path))
     return {'version': settings.APP_VERSION, 'config': cfg.model_dump(), 'names_language': cfg.shown_language(),
-            'game': game.status(), 'project': project().counts(), 'job': jobs.view(),
-            'patch_built': os.path.isdir(settings.PATCH_DIR) and bool(os.listdir(settings.PATCH_DIR)),
-            'patch': patch_info.status(settings.PATCH_DIR, project().path),
+            'game': game.status(), 'project': _last_counts, 'job': job, 'patch_built': built, 'patch': patch,
             'folders': _folders(cfg), 'setup': _setup_state(cfg)}
 
 
@@ -1637,6 +1653,7 @@ from . import player_routes  # noqa: E402,F401 - the player routes (before the i
 from . import adboard_routes  # noqa: E402,F401 - the advertising boards (before the interface's catch-all)
 from . import equipment_routes  # noqa: E402,F401 - boots, gloves and balls (before the interface's catch-all)
 from . import stadium_routes  # noqa: E402 - the stadiums the user creates (before the interface's catch-all)
+from . import share_routes  # noqa: E402,F401 - import and export (before the interface's catch-all)
 
 
 # ---- bulk delete (the lists' checkboxes) ----------------------------------------------------------------------------
