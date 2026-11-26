@@ -17,6 +17,7 @@ converted faces are kept in the build cache (f14mod.buildcache): building again 
 faces are copied as they are.
 """
 import functools
+import hashlib
 import io
 import os
 import shutil
@@ -139,19 +140,14 @@ class PatchBuilder:
         to_locale = {k: v for k, v in self.entries.items() if k in locale_entries}
         loose = {k: v for k, v in self.entries.items() if k not in locale_entries}
         total = len(loose) + 1
+        hashes: dict[str, str] = {}  # {patch path: SHA-1}: the install copies only what differs from the installed
         for k, (path, data) in enumerate(loose.items()):
             if progress and k % 20 == 0:
                 progress('files', k, total)
-            target = os.path.join(out_dir, *path.split('/'))
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            with open(target, 'wb') as f:
-                f.write(data)
-        indexes = self._zero_indexes(set(loose) | self.removed, out_dir)
+            _write_hashed(out_dir, path, data, hashes)
+        indexes = self._zero_indexes(set(loose) | self.removed, out_dir, hashes)
         if to_locale:
-            target = os.path.join(out_dir, *LOCALE.split('/'))
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            with open(target, 'wb') as f:
-                f.write(rebuild(locale_path, to_locale))
+            _write_hashed(out_dir, LOCALE, rebuild(locale_path, to_locale), hashes)
         if progress:
             progress('files', total, total)
         # files of the patch the build cache gave whole: "N files, X new and Y reused from the cache"
@@ -159,9 +155,9 @@ class PatchBuilder:
         if to_locale and all(k in self.from_cache for k in to_locale):
             reused += 1
         return {'reused_files': reused, 'loose': sorted(loose), 'locale': sorted(to_locale), 'indexes': indexes,
-                'removed': sorted(self.removed)}
+                'removed': sorted(self.removed), 'hashes': hashes}
 
-    def _zero_indexes(self, paths: set[str], out_dir: str) -> dict[str, int]:
+    def _zero_indexes(self, paths: set[str], out_dir: str, hashes: dict[str, str]) -> dict[str, int]:
         """Writes each .bh that lists one of the paths, with those records zeroed; {bh name: records zeroed}."""
         out = {}
         for archive in self.files.archives:
@@ -176,14 +172,22 @@ class PatchBuilder:
                 data = f.read()
             if not bh.entry_count_matches(data, len(archive.order)):
                 raise ValueError(f'{bh_name} does not match {archive.name}')
-            with open(os.path.join(out_dir, bh_name), 'wb') as f:
-                f.write(bh.zero(data, hits))
+            _write_hashed(out_dir, bh_name, bh.zero(data, hits), hashes)
             out[bh_name] = len(hits)
         return out
 
     def _original(self, rel: str, default: str) -> str:
         """The clean copy of a file of the game folder (its backup when a patch of this app replaced it)."""
         return self.files._substitutes.get(normalize(rel), default)  # noqa: SLF001
+
+
+def _write_hashed(out_dir: str, rel: str, data: bytes, hashes: dict[str, str]) -> None:
+    """Writes one file of the patch (rel: its game path) and records its SHA-1."""
+    target = os.path.join(out_dir, *rel.split('/'))
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, 'wb') as f:
+        f.write(data)
+    hashes[rel] = hashlib.sha1(data).hexdigest()
 
 
 NAME_STRINGS = {'team': fifa14.TEAM_NAME_STRINGS, 'league': fifa14.LEAGUE_NAME_STRINGS,

@@ -1,5 +1,5 @@
 import { hasMessage, translate } from '@/i18n'
-import type { ShareInspect, ShareKind, ShareTree, Adboard, AdboardBody, AdboardList, Equipment, EquipmentBody, EquipmentFiles, EquipmentKind, EquipmentList, BuildProgress, ImportProgress, BulkKind, BulkDeleteProgress, Config, CountryDetail, CountryRow, FaceChoice, FacePackCheck, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, MachineInfo, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, SetupRequest, Status, StadiumDetail, StadiumRow, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook, ProjectIssue } from './types'
+import type { ShareInspect, ShareKind, ShareTree, Adboard, AdboardBody, AdboardList, Equipment, EquipmentBody, EquipmentFiles, EquipmentKind, EquipmentList, BuildProgress, ImportProgress, InstallProgress, BulkKind, BulkDeleteProgress, Config, CountryDetail, CountryRow, FaceChoice, FacePackCheck, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, MachineInfo, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, SetupRequest, Status, StadiumDetail, StadiumRow, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook, ProjectIssue } from './types'
 
 /** Error of the backend; `message` is in the interface language when the app knows its code. */
 export class ApiError extends Error {
@@ -209,6 +209,7 @@ export const api = {
   cancelBuild: () => post<{ stopping: boolean }>('/api/patch/build/cancel'),
   installPatch: () => post<Job>('/api/patch/install'),
   uninstallPatch: () => post<Job>('/api/patch/uninstall'),
+  installProgress: () => get<InstallProgress>('/api/patch/install/progress'),
   openPatchFolder: () => post<{ path: string }>('/api/patch/open-folder'),
 
   /** Import: sends the zip (the app's or an extractor package); the tree of what it holds and the id each item gets. */

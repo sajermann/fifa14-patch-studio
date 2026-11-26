@@ -217,3 +217,85 @@ def test_project_schema_1_opens(tmp_path):
     assert project.fields('team', 5) == {} and project.counts() == {'team': 1}
     project.save('league', 1, names={'full': {'*': 'L'}})
     assert project.all_names('league') == {1: {'full': {'*': 'L'}}}
+
+
+def test_interrupted_install_can_be_taken_out(installed, tmp_path, monkeypatch):
+    before = tree_hashes(installed)
+    project = Project(str(tmp_path / 'project.sqlite'))
+    project.save_team(fakegame.TEAM, {'full': {'*': 'One'}})
+    patch_dir = str(tmp_path / 'patch')
+    builder.build(catalog.open_game(installed), project, patch_dir)
+    calls = []
+
+    def copy_then_fail(src, dst, on_bytes):
+        if calls:
+            raise OSError('disk unplugged')
+        calls.append(dst)
+        return real(src, dst, on_bytes)
+    real = installer._copy_hashed  # noqa: SLF001
+    monkeypatch.setattr(installer, '_copy_hashed', copy_then_fail)
+    with pytest.raises(installer.InstallError):
+        installer.install(patch_dir, installed)
+    assert installer.read_manifest(installed)['complete'] is False
+    installer.uninstall(installed)
+    assert tree_hashes(installed) == before
+
+
+def test_check_hashes_only_files_whose_date_changed(installed, tmp_path, monkeypatch):
+    project = Project(str(tmp_path / 'project.sqlite'))
+    project.save_team(fakegame.TEAM, {'full': {'*': 'One'}})
+    patch_dir = str(tmp_path / 'patch')
+    builder.build(catalog.open_game(installed), project, patch_dir)
+    events = []
+    installer.install(patch_dir, installed, progress=lambda phase, *a, **k: events.append(phase))
+    assert events[0] == 'checking' and events[-1] == 'copying'
+    monkeypatch.setattr(installer, '_sha1', lambda path: pytest.fail('hashed an unchanged file'))
+    assert installer.changed_after_install(installed) == []
+
+
+def _build_known(installed, project, patch_dir):
+    summary = builder.build(catalog.open_game(installed), project, patch_dir)
+    for rel, digest in summary['hashes'].items():  # the build hashes what it writes
+        with open(os.path.join(patch_dir, *rel.split('/')), 'rb') as f:
+            assert hashlib.sha1(f.read()).hexdigest() == digest
+    return summary['hashes']
+
+
+def test_reinstall_copies_only_what_changed(installed, tmp_path):
+    before = tree_hashes(installed)
+    project = Project(str(tmp_path / 'project.sqlite'))
+    project.save_team(fakegame.TEAM, {'full': {'*': 'One'}, 'abbr15': {'*': 'Only Here'}})
+    patch_dir = str(tmp_path / 'patch')
+    known = _build_known(installed, project, patch_dir)
+    first = installer.install(patch_dir, installed, known=known)
+    assert first['summary'] == {'copied': 3, 'kept': 0, 'restored': 0}
+
+    again = installer.install(patch_dir, installed, known=known)  # the same patch: nothing to copy
+    assert again['summary'] == {'copied': 0, 'kept': 3, 'restored': 0}
+    assert install_check.check(installed)['state'] == 'patched'
+
+    # the full name lives in the update database: without it that loose file and patch.bh leave the patch
+    project.reset('team', fakegame.TEAM)
+    project.save_team(fakegame.TEAM, {'abbr15': {'*': 'Only Here'}})
+    known = _build_known(installed, project, patch_dir)
+    third = installer.install(patch_dir, installed, known=known)
+    assert third['summary'] == {'copied': 1, 'kept': 0, 'restored': 2}  # locale.big changed too
+    assert install_check.check(installed)['state'] == 'patched'
+    with open(os.path.join(installed, 'patch.bh'), 'rb') as f:
+        assert bh.zeroed(f.read()) == []  # the original index is back
+
+    installer.uninstall(installed)
+    assert tree_hashes(installed) == before
+
+
+def test_reinstall_copies_a_file_changed_in_the_game(installed, tmp_path):
+    project = Project(str(tmp_path / 'project.sqlite'))
+    project.save_team(fakegame.TEAM, {'abbr15': {'*': 'Only Here'}})
+    patch_dir = str(tmp_path / 'patch')
+    known = _build_known(installed, project, patch_dir)
+    installer.install(patch_dir, installed, known=known)
+    locale = os.path.join(installed, 'data', 'loc', 'locale.big')
+    with open(locale, 'ab') as f:
+        f.write(b'x')  # another tool touched the installed file
+    assert installer.install(patch_dir, installed, known=known)['summary']['copied'] == 1
+    assert installer.changed_after_install(installed) == []

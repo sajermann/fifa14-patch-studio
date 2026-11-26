@@ -38,6 +38,23 @@ export type BuildItemKind = 'face' | 'kit' | 'crest' | 'photo' | 'league' | 'fla
 /** What the 'database' step is doing (item kind 'part'; builder.DATABASE_PARTS). */
 export type BuildPart = 'check' | 'read' | 'created' | 'fields' | 'rosters' | 'kits' | 'faces' | 'links' | 'save' | 'adboards' | 'equipment' | 'stadiums'
 
+/** Steps of installing / uninstalling the patch (GET /api/patch/install/progress). */
+export type InstallPhase = 'checking' | 'restoring' | 'copying' | 'verifying'
+export interface InstallProgress {
+  running: boolean
+  action?: 'install' | 'uninstall'
+  phase?: InstallPhase | null
+  /** files of the phase done / total, and the one being copied or restored */
+  done: number
+  total: number
+  name?: string | null
+  /** files already installed with the same content (not copied again) */
+  kept?: number
+  bytes_done: number
+  bytes_total: number
+  elapsed?: number
+}
+
 /** GET /api/patch/progress: the current (or last) build. */
 export interface BuildProgress {
   running: boolean

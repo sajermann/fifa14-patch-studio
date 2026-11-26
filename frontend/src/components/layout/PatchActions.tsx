@@ -23,6 +23,7 @@ import type { Job, ProjectIssue } from '@/api/types'
 import { hasMessage, useI18n, type MessageKey } from '@/i18n'
 import { BuildProgressDialog } from '@/components/layout/BuildProgress'
 import { ImportProgressDialog } from '@/components/layout/ImportProgress'
+import { InstallProgressDialog } from '@/components/layout/InstallProgress'
 import { issueLink, issueText } from '@/lib/issues'
 import { toast } from '@/lib/notify'
 import { useProjectIssues, useStatus } from '@/state/queries'
@@ -114,6 +115,11 @@ export function JobWatcher() {
       toast.success(t('patch.built'), {
         description: t('patch.builtDetail', { count, made: count - reused, reused, time: duration(t, r.duration_s ?? 0) }),
       })
+    } else if (job.state === 'done' && job.kind === 'install') {
+      const r = (job.result ?? {}) as { copied?: number; kept?: number; restored?: number }
+      toast.success(t('patch.done.install'), {
+        description: t('patch.installedDetail', { copied: r.copied ?? 0, kept: r.kept ?? 0, restored: r.restored ?? 0 }),
+      })
     } else if (job.state === 'done') toast.success(t(`patch.done.${job.kind}` as MessageKey))
     else if (job.code === 'build_cancelled') {
       // stopped by the user: what was made is in the build cache, building again continues from there
@@ -137,6 +143,8 @@ export function JobWatcher() {
     <>
       <BuildProgressDialog open={job?.kind === 'build' && job.state === 'running'} />
       <ImportProgressDialog open={job?.kind === 'import' && job.state === 'running'} />
+      <InstallProgressDialog action="install" open={job?.kind === 'install' && job.state === 'running'} />
+      <InstallProgressDialog action="uninstall" open={job?.kind === 'uninstall' && job.state === 'running'} />
     </>
   )
 }
@@ -217,11 +225,6 @@ export function PatchActions() {
   return (
     <div className="flex items-center gap-2">
       {patchBadge}
-      {job?.state === 'running' && job.kind !== 'build' && job.kind !== 'import' && (
-        <span className="text-xs text-muted-foreground tabular-nums">
-          {t(`patch.running.${job.kind}` as MessageKey)} {Math.round(job.done * 100)}%
-        </span>
-      )}
       <Button variant="ghost" size="sm" onClick={() => setIssuesOpen(true)}>
         <CircleAlert className={errors ? 'text-destructive' : 'text-muted-foreground'} /> {errors}
         <AlertTriangle className={warnings ? 'text-amber-600' : 'text-muted-foreground'} /> {warnings}

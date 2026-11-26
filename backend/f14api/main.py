@@ -27,6 +27,7 @@ game = GameState()
 jobs = Jobs()
 build_progress: dict = {'running': False}  # last/current build, read by GET /api/patch/progress
 build_cancel = threading.Event()  # set by POST /api/patch/build/cancel: the build stops at its next check
+install_progress: dict = {'running': False}  # last/current install or uninstall, read by GET /api/patch/install/progress
 BUILD_CACHE_DIR = os.path.join(settings.CACHE_DIR, 'build')  # f14mod.buildcache
 
 
@@ -1528,7 +1529,7 @@ def build_patch():
             summary = builder.build(files, proj, settings.PATCH_DIR, progress,
                                     worker_count=workers.plan(cfg.build_cores, cfg.build_memory_percent),
                                     cache=cache, cancel=build_cancel, log=log_line, name_of=name_of)
-            patch_info.write(settings.PATCH_DIR, built_from)
+            patch_info.write(settings.PATCH_DIR, built_from, summary.pop('hashes', None))
         except builder.BuildCancelled:
             prog['cancelled'] = True
             raise
@@ -1569,6 +1570,41 @@ def get_build_progress():
     return prog
 
 
+INSTALL_STEPS = {'install': ('checking', 'restoring', 'copying', 'verifying'), 'uninstall': ('restoring', 'verifying')}
+
+
+def _tracked_game_job(action: str, run):
+    """Starts an install / uninstall job with its progress in install_progress (the dialog polls it): phase (one of
+    INSTALL_STEPS[action]), files done/total of the phase and the current one, bytes copied of all."""
+    global install_progress
+    steps = INSTALL_STEPS[action]
+    prog = {'running': True, 'action': action, 'phase': None, 'done': 0, 'total': 0, 'name': None, 'kept': 0,
+            'bytes_done': 0, 'bytes_total': 0, 'started_at': time.time(), 'finished_at': None, 'error': None}
+
+    def work(job_progress):
+        def progress(phase, done=0, total=0, name=None, bytes_done=0, bytes_total=0, kept=0):
+            prog.update(phase=phase, done=done, total=total, name=name, bytes_done=bytes_done, bytes_total=bytes_total,
+                        kept=kept)
+            share = bytes_done / bytes_total if bytes_total else done / total if total else 0
+            if phase in steps:
+                job_progress(phase, (steps.index(phase) + min(1, share)) / len(steps))
+        try:
+            result = run(progress)
+            progress('verifying')
+            game.forget_files()
+            game.recheck()
+            return result
+        except Exception as e:
+            prog['error'] = str(e)
+            raise
+        finally:
+            prog.update(running=False, finished_at=time.time())
+
+    job = _start(action, work)
+    install_progress = prog
+    return job
+
+
 @app.post('/api/patch/install')
 def install_patch():
     if game.state != 'ready' or not game.game_dir:
@@ -1577,13 +1613,11 @@ def install_patch():
         raise ApiError(400, 'no_patch')
     game_dir = game.game_dir
 
-    def work(progress):
-        manifest = installer.install(settings.PATCH_DIR, game_dir, settings.APP_VERSION,
-                                     lambda i, n: progress('copy', i / n))
-        game.forget_files()
-        game.recheck()
-        return {'files': len(manifest['added']) + len(manifest['replaced'])}
-    return _start('install', work)
+    def run(progress):
+        manifest = installer.install(settings.PATCH_DIR, game_dir, settings.APP_VERSION, progress,
+                                     known=patch_info.known_hashes(settings.PATCH_DIR))
+        return {'files': len(manifest['added']) + len(manifest['replaced']), **manifest['summary']}
+    return _tracked_game_job('install', run)
 
 
 @app.post('/api/patch/uninstall')
@@ -1592,12 +1626,18 @@ def uninstall_patch():
         raise ApiError(409, 'game_not_ready')
     game_dir = game.game_dir
 
-    def work(progress):
-        manifest = installer.uninstall(game_dir)
-        game.forget_files()
-        game.recheck()
-        return {'removed': bool(manifest)}
-    return _start('uninstall', work)
+    def run(progress):
+        return {'removed': bool(installer.uninstall(game_dir, progress))}
+    return _tracked_game_job('uninstall', run)
+
+
+@app.get('/api/patch/install/progress')
+def get_install_progress():
+    """Where the current (or last) install / uninstall is: phase, files done/total and the current one, bytes copied."""
+    prog = dict(install_progress)
+    if prog.get('started_at'):
+        prog['elapsed'] = round((prog['finished_at'] or time.time()) - prog['started_at'], 1)
+    return prog
 
 
 @app.get('/api/logs/report')

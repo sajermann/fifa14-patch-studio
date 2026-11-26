@@ -57,14 +57,52 @@ def patch_files(patch_dir: str) -> list[str]:
                   for root, _, names in os.walk(patch_dir) for n in names)
 
 
-def write(patch_dir: str, built_from: str | None) -> None:
-    """Records the patch just built (built_from: the project's hash when the build started)."""
+def hashes_path() -> str:
+    """The SHA-1 of each file of the built patch (its own file: patch.json is read at every status call)."""
+    return os.path.join(os.path.dirname(os.path.abspath(settings.PATCH_DIR)), 'patch.hashes.json')
+
+
+def write(patch_dir: str, built_from: str | None, hashes: dict[str, str] | None = None) -> None:
+    """Records the patch just built (built_from: the project's hash when the build started; hashes: {file: SHA-1}
+    of what the build wrote, kept with each file's size and date so the install can trust them)."""
     info = {'built_at': datetime.datetime.now().isoformat(timespec='seconds'), 'project_hash': built_from,
             'files': patch_files(patch_dir)}
-    tmp = record_path() + '.tmp'
+    known = {}
+    for rel, digest in (hashes or {}).items():
+        try:
+            st = os.stat(os.path.join(patch_dir, *rel.split('/')))
+        except OSError:
+            continue
+        known[rel] = [st.st_size, st.st_mtime_ns, digest]
+    _write_json(hashes_path(), known)
+    _write_json(record_path(), info, indent=2)
+
+
+def known_hashes(patch_dir: str) -> dict[str, str]:
+    """{file: SHA-1} of the built patch's files still as the build wrote them (same size and date); files changed
+    since, or a patch built by an older version, are left out (the install copies those)."""
+    try:
+        with open(hashes_path(), encoding='utf-8') as f:
+            recorded = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for rel, entry in recorded.items() if isinstance(recorded, dict) else ():
+        try:
+            size, mtime, digest = entry
+            st = os.stat(os.path.join(patch_dir, *rel.split('/')))
+        except (OSError, ValueError, TypeError):
+            continue
+        if [st.st_size, st.st_mtime_ns] == [size, mtime]:
+            out[rel] = digest
+    return out
+
+
+def _write_json(path: str, data, indent=None) -> None:
+    tmp = path + '.tmp'
     with open(tmp, 'w', encoding='utf-8') as f:
-        json.dump(info, f, indent=2)
-    os.replace(tmp, record_path())
+        json.dump(data, f, indent=indent, separators=None if indent else (',', ':'))
+    os.replace(tmp, path)
 
 
 def status(patch_dir: str, project_path: str) -> dict:
