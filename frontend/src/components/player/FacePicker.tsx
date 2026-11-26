@@ -38,6 +38,9 @@ export const browsedChoice = (b: BrowsedFace): FaceChoice =>
 const ALL = 'all'
 
 export const packThumbUrl = (folder: string, id: number) => `/api/facepack/thumb?pack=${encodeURIComponent(folder)}&id=${id}`
+/** The face kept in the project for a player (the Street Studio's faceThumbUrl({ player, face })): shown even when no
+ * pack folder has it (a face of an imported package, a pack folder taken out of the Settings). */
+const storedThumbUrl = (player: number, version?: string | null) => `/api/facepack/thumb?player=${player}&v=${encodeURIComponent(version ?? '')}`
 
 // Real faces from FIFA 14 packs, the same picker as the Street Studio's: the packs stay where the user keeps them
 // (the folders set in the Settings; the backend reads them in place, pages and searches); clicking a face shows it in
@@ -131,6 +134,8 @@ export function FacePicker({
   }
 
   const chosenPack = current?.source === 'pack' ? current : null
+  // the face on screen is the one kept in the project (saved, its files copied)
+  const storedCurrent = !!player.face_stored && !!player.saved.face && JSON.stringify(player.saved.face) === JSON.stringify(current)
   const savedFace = player.saved.face as FaceChoice | null | undefined
   const sameAsSaved = !!chosenPack && savedFace?.source === 'pack' && savedFace.pack === chosenPack.pack && savedFace.id === chosenPack.id
   const lacking = (parts: FacePart[]) => (bald ? parts.filter((p) => !HAIR_PARTS.includes(p)) : parts)
@@ -151,7 +156,13 @@ export function FacePicker({
       {current && current.source !== 'generic' && (
         <div className="flex items-start gap-3 rounded-md border p-2">
           <img
-            src={current.source === 'pack' ? packThumbUrl(current.pack, current.id) : `/api/game-face/thumb/${current.player}?v=${token}`}
+            src={
+              current.source !== 'pack'
+                ? `/api/game-face/thumb/${current.player}?v=${token}`
+                : storedCurrent
+                  ? storedThumbUrl(player.id, player.updated_at)
+                  : packThumbUrl(current.pack, current.id)
+            }
             alt=""
             className="size-14 rounded bg-muted object-contain"
           />
@@ -175,7 +186,7 @@ export function FacePicker({
                       {t('faces.face', { id: current.id })}
                     </p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {player.face_stored && player.saved.face && JSON.stringify(player.saved.face) === JSON.stringify(current)
+                      {storedCurrent
                         ? (current.pack_name ?? t('faces.unknownPack'))
                         : t('faces.inProject', { pack: current.pack_name ?? t('faces.unknownPack') })}
                     </p>

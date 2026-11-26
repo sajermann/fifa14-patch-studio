@@ -1513,9 +1513,11 @@ def build_patch():
         built_from = patch_info.project_hash(proj.path)  # changes saved during the build leave it "not up to date"
         steps = builder.BUILD_STEPS
 
-        def progress(step, done, total, kind=None, name=None):
-            # item: what the 'images' / 'texts' steps wait for; cache: entries reused / made so far
-            prog.update(step=step, done=done, total=total, item={'kind': kind, 'name': name} if kind else None,
+        def progress(step, done, total, kind=None, name=None, count=None):
+            # item: what the step is doing or waits for (count: [done, total] of that part, e.g. the players' faces);
+            # cache: entries reused / made so far
+            item = {'kind': kind, 'name': name, **({'count': list(count)} if count else {})} if kind else None
+            prog.update(step=step, done=done, total=total, item=item,
                         cache={'reused': cache.hits, 'made': cache.misses})
             share = done / total if total else 0
             job_progress(step, (steps.index(step) + min(1, share)) / len(steps))

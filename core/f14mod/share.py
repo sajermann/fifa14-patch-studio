@@ -20,6 +20,12 @@ was left out is dropped, except a change to a game entity (that entity is in eve
 that is not in the zip is kept as it is (it is the game's, unchanged). A package of the extractor
 (f14mod.package) arrives as the same records with `origin` 'package': there a reference outside the package is
 dropped (its ids are another database's).
+
+Where a record comes from (`origin` {source, id}): 'pkg:<patch name>' (package_source) and its id in the package, or
+'prj:<uid>' of the project that made it and its id there. A record that came into that project by an import keeps the
+origin it came in with (the manifest's `origin`), so the same thing stays the same thing however it travels. The
+project keeps the origin of what it imports (Project.origin); importing from the same origin again offers to update
+the entity that came in before ('updates', see plan) instead of adding a copy.
 """
 import contextlib
 import datetime
@@ -27,6 +33,7 @@ import json
 import os
 import sqlite3
 import threading
+import unicodedata
 import zipfile
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
@@ -67,6 +74,33 @@ CODE_REFS = {'shoetypecode': 'boot', 'gkglovetypecode': 'glove', 'balltype': 'ba
 # game's stadium and equipment ids are the same in every patch of the game)
 GAME_SHARED = ('stadium', 'ball', 'boot', 'glove')
 TREE_ORDER = ('country', 'league', 'team', 'stadium', 'adboard', 'ball', 'player', 'boot', 'glove')
+PACKAGE_SOURCE, PROJECT_SOURCE = 'pkg:', 'prj:'
+MAX_SOURCE = 512
+
+
+def package_source(patch_name) -> str | None:
+    """The origin of a package's items: its patch name, the same however it was typed (case, accents, spaces);
+    None without one (nothing tells two packages apart: they come in as new)."""
+    if not isinstance(patch_name, str):
+        return None
+    text = unicodedata.normalize('NFKD', patch_name)
+    text = ''.join(c for c in text if not unicodedata.combining(c))
+    text = ' '.join(text.split()).casefold()
+    return f'{PACKAGE_SOURCE}{text}'[:MAX_SOURCE] if text else None
+
+
+def project_source(uid: str) -> str:
+    return f'{PROJECT_SOURCE}{uid}'
+
+
+def _origin(value) -> dict | None:
+    """A record's `origin` as the manifest holds it, or None."""
+    if not isinstance(value, dict):
+        return None
+    source, oid = value.get('source'), value.get('id')
+    if not isinstance(source, str) or not source or len(source) > MAX_SOURCE or not _int(oid) or oid < 0:
+        return None
+    return {'source': source, 'id': oid}
 
 
 class ShareError(ValueError):
@@ -152,6 +186,10 @@ class Destination(Protocol):
     def allocate(self, kind: str, reserved: set[int]) -> int | None: ...
     def league_members(self, league_id: int) -> list[int]: ...  # the league's teams now
     def team_roster(self, team_id: int) -> list[dict]: ...  # the team's squad now: [{player, jersey, slot}]
+    # optional: the created entity that came in from (source, id) before (None = none), and whether the user changed
+    # it since (without them nothing is ever an update)
+    # def match(self, kind: str, source: str, source_id: int) -> int | None: ...
+    # def changed_since_import(self, kind: str, oid: int) -> bool: ...
 
 
 # ---------------------------------------------------------------- export
@@ -168,6 +206,7 @@ class Writer:
         self.records: list[dict] = []
         self.files: dict[str, str] = {}  # file name in the zip -> the project's file on disk (read when written)
         self._seen: set[str] = set()
+        self.project_uid: str | None = None
 
     def _file(self, kind: str, oid: int, path: str) -> str:
         name = f'{FILES}{kind}-{oid}-{len(self.files) + 1}.bin'
@@ -185,6 +224,11 @@ class Writer:
                'names': project.names(kind, oid), 'fields': project.fields(kind, oid),
                'hidden': oid in project.hidden(kind), 'dates': {'created_at': created_at, 'updated_at': updated_at},
                'pictures': {}, 'tables': {}, 'links': links or {}}
+        # where it comes from: where it came in from, else this project
+        self.project_uid = self.project_uid or project.uid()
+        came = project.origin(kind, oid)
+        rec['origin'] = ({'source': came[0], 'id': came[1]} if came
+                         else {'source': project_source(self.project_uid), 'id': oid})
         con = project.connect()
         try:
             for r in _rows(con, 'pictures', 'id', oid, kind):
@@ -212,9 +256,12 @@ class Writer:
         return rec
 
     def manifest(self, tool: dict | None = None) -> dict:
-        return {'format': FORMAT, 'format_version': VERSION, 'tool': tool or {},
-                'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'),
-                'items': self.records}
+        out = {'format': FORMAT, 'format_version': VERSION, 'tool': tool or {},
+               'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'),
+               'items': self.records}
+        if self.project_uid:
+            out['project'] = {'uid': self.project_uid}
+        return out
 
     def write(self, path: str, tool: dict | None = None, keep: set[str] | None = None, is_created=None) -> None:
         """The zip; `keep` = the keys (kind:id) to write (None = all). `is_created(kind, id)`: a reference to an
@@ -423,6 +470,8 @@ def read(path: str, formations: dict[int, list[int]] | None = None) -> Bundle:
         raise ShareError('zip_too_new', str(version))
     records, warnings = [], []
     seen = set()
+    made_by = manifest.get('project') if isinstance(manifest.get('project'), dict) else {}
+    uid = made_by.get('uid') if isinstance(made_by.get('uid'), str) and 0 < len(made_by['uid']) <= 64 else None
     for item in manifest.get('items') or []:
         rec = _checked(item)
         if rec is None:
@@ -436,9 +485,11 @@ def read(path: str, formations: dict[int, list[int]] | None = None) -> Bundle:
         if missing:
             warnings.append(f'missing_file:{key}')
             _drop_files(rec, set(missing))
+        if rec['origin'] is None and uid:  # an item of the project that made the zip
+            rec['origin'] = {'source': project_source(uid), 'id': rec['id']}
         records.append(rec)
-    return Bundle(records, 'own', {k: manifest.get(k) for k in ('tool', 'created_at')}, zip_path=path,
-                  warnings=warnings)
+    return Bundle(records, 'own', {k: manifest.get(k) for k in ('tool', 'created_at')} | {'project_uid': uid},
+                  zip_path=path, warnings=warnings)
 
 
 def _drop_files(rec: dict, missing: set[str]) -> None:
@@ -478,18 +529,35 @@ def _checked(item) -> dict | None:
             'hidden': bool(item.get('hidden')),
             'dates': {k: dates.get(k) if _int(dates.get(k)) else None for k in ('created_at', 'updated_at')},
             'pictures': dict(pictures), 'tables': {t: [dict(r) for r in rows] for t, rows in tables.items()},
-            'links': item.get('links') if isinstance(item.get('links'), dict) else {}}
+            'links': item.get('links') if isinstance(item.get('links'), dict) else {},
+            'origin': _origin(item.get('origin'))}
 
 
 # ---------------------------------------------------------------- the plan
 
 def plan(bundle: Bundle, dest: Destination) -> dict[str, dict]:
-    """For every record: {'id': the id it gets, 'reason': None | 'taken' | 'range' | 'replaces', 'default': picked at
-    first, 'error': a record that cannot come in, 'game_has': a country of a package the game already has}."""
+    """For every record: {'id': the id it gets, 'reason': None | 'taken' | 'range' | 'replaces' | 'updates',
+    'default': picked at first, 'error': a record that cannot come in, 'game_has': a country of a package the game
+    already has}. 'updates': a created record whose origin came in before (Destination.match) takes the id of what came
+    in then and replaces it; 'changed' = the user changed that entity since, 'alt' = {id, reason} it takes if it comes
+    in as a new one instead (as_new), None when no id is left."""
     out: dict[str, dict] = {}
     reserved: dict[str, set[int]] = {k: set() for k in KINDS}
+    matched: dict[str, int] = {}  # key -> the entity of the project it updates
+    match = getattr(dest, 'match', None)
+    if match is not None:
+        for r in bundle.records:
+            origin = r.get('origin')
+            if not r['created'] or not origin:
+                continue
+            found = match(r['kind'], origin['source'], origin['id'])
+            if found is not None and found not in reserved[r['kind']]:
+                matched[bundle.key(r)] = found
+                reserved[r['kind']].add(found)
     for r in bundle.records:  # first the ones that keep their id
         key, kind, oid = bundle.key(r), r['kind'], r['id']
+        if key in matched:
+            continue
         default = True
         if bundle.origin == 'package' and kind == 'country' and dest.in_game(kind, oid):
             default = False  # the game has it: left out, whoever uses it keeps the game's
@@ -506,10 +574,11 @@ def plan(bundle: Bundle, dest: Destination) -> dict[str, dict]:
     # a country of a package the game already has: left out at first (whoever uses it keeps the game's), so it takes
     # a new id only after everything else, and having none left is not an error (it only cannot come in as a new one)
     def game_has(r):
-        return bundle.origin == 'package' and r['kind'] == 'country' and dest.in_game('country', r['id'])
+        return (bundle.origin == 'package' and r['kind'] == 'country' and dest.in_game('country', r['id'])
+                and bundle.key(r) not in matched)  # brought in as a new country before: that one is updated
     for r in sorted(bundle.records, key=game_has):  # then the new ids
         key, kind, oid = bundle.key(r), r['kind'], r['id']
-        if key in out:
+        if key in out or key in matched:
             continue
         new = dest.allocate(kind, reserved[kind])
         if new is None:
@@ -518,9 +587,34 @@ def plan(bundle: Bundle, dest: Destination) -> dict[str, dict]:
             continue
         reserved[kind].add(new)
         out[key] = {'id': new, 'reason': 'taken' if dest.used(kind, oid) else 'range', 'default': not game_has(r)}
+    # last, the ids the updates would take as new items (reserved too: choosing one changes no other id)
+    since = getattr(dest, 'changed_since_import', None)
+    for r in bundle.records:
+        key, kind, oid = bundle.key(r), r['kind'], r['id']
+        if key not in matched:
+            continue
+        if not dest.used(kind, oid) and dest.in_range(kind, oid) and oid not in reserved[kind]:
+            alt = {'id': oid, 'reason': None}
+        else:
+            new = dest.allocate(kind, reserved[kind])
+            alt = None if new is None else {'id': new, 'reason': 'taken' if dest.used(kind, oid) else 'range'}
+        if alt is not None:
+            reserved[kind].add(alt['id'])
+        out[key] = {'id': matched[key], 'reason': 'updates', 'default': True,
+                    'changed': bool(since(kind, matched[key])) if since else False, 'alt': alt}
     for r in bundle.records:
         if game_has(r):
             out[bundle.key(r)]['game_has'] = True
+    return out
+
+
+def as_new(ids: dict[str, dict], keys) -> dict[str, dict]:
+    """The plan with these updates coming in as new items instead (their `alt` id); the rest as planned."""
+    out = dict(ids)
+    for key in keys:
+        plan = ids.get(key) or {}
+        if plan.get('reason') == 'updates' and plan.get('alt'):
+            out[key] = {'id': plan['alt']['id'], 'reason': plan['alt']['reason'], 'default': True, 'as_new': True}
     return out
 
 
@@ -675,6 +769,8 @@ def apply(project: Project, bundle: Bundle, ids: dict[str, dict], chosen: set[st
             report('prepare', i, len(picked))
             check()
         rec = json.loads(json.dumps(r))  # a copy: the bundle stays as read
+        if ids[bundle.key(r)].get('as_new'):
+            rec['origin'] = None  # a copy of its own: the next import from that origin updates the other one
         _fill(rec, fill_missing, generic)
         _walk(rec, fix)
         records.append((ids[bundle.key(r)]['id'], rec))
@@ -745,10 +841,19 @@ def _write(con: sqlite3.Connection, bundle: Bundle, rec: dict, oid: int, data: d
             columns[table] = found
         return found
     kind = rec['kind']
+    # an update keeps the date the entity was first created in this project
+    before = con.execute('SELECT COALESCE(d.created_at, c.created_at) FROM created c LEFT JOIN dates d '
+                         'ON d.kind = c.kind AND d.id = c.id WHERE c.kind = ? AND c.id = ?', (kind, oid)).fetchone()
     _clear(con, kind, oid)
     dates = rec.get('dates') or {}
     now = int(datetime.datetime.now().timestamp())
     updated = dates.get('updated_at') or now
+    if before is not None and before[0] is not None and rec['created']:
+        dates = {**dates, 'created_at': before[0]}
+    origin = rec.get('origin')
+    if origin:
+        con.execute('INSERT INTO origins VALUES (?, ?, ?, ?, ?)',
+                    (kind, oid, origin['source'], origin['id'], max(now, updated)))
     if rec['created']:
         created = dates.get('created_at') or now
         con.execute('INSERT INTO created VALUES (?, ?, ?)', (kind, oid, created))
@@ -813,7 +918,7 @@ def _clear(con: sqlite3.Connection, kind: str, oid: int) -> None:
     if kind in NAME_TABLES:
         table, column = NAME_TABLES[kind]
         con.execute(f'DELETE FROM {table} WHERE {column} = ?', (oid,))
-    for table in ('fields', 'pictures', 'hidden', 'created', 'edited', 'dates'):
+    for table in ('fields', 'pictures', 'hidden', 'created', 'edited', 'dates', 'origins'):
         con.execute(f'DELETE FROM {table} WHERE kind = ? AND id = ?', (kind, oid))
     for table, column in OWN_TABLES.get(kind, ()):
         con.execute(f'DELETE FROM {table} WHERE {column} = ?', (oid,))

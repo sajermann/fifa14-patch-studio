@@ -212,18 +212,28 @@ export const api = {
   openPatchFolder: () => post<{ path: string }>('/api/patch/open-folder'),
 
   /** Import: sends the zip (the app's or an extractor package); the tree of what it holds and the id each item gets. */
-  shareInspect: async (file: File) => {
-    let res: Response
-    try {
-      res = await fetch('/api/share/inspect', { method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: file })
-    } catch {
-      throw new ApiError(0, 'backend_unreachable', translate('apiError.backend_unreachable'))
-    }
-    if (!res.ok) throw await errorOf(res)
-    return (await res.json()) as ShareInspect
-  },
+  /** onSent: bytes sent so far (the upload; once all is sent the backend reads it). signal: stops it (AbortError). */
+  shareInspect: (file: File, opts: { onSent?: (sent: number, total: number) => void; signal?: AbortSignal } = {}) =>
+    new Promise<ShareInspect>((resolve, reject) => {
+      // XMLHttpRequest and not fetch: only it tells how much of the file was sent
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', '/api/share/inspect')
+      xhr.setRequestHeader('Content-Type', 'application/zip')
+      xhr.upload.onprogress = (e) => opts.onSent?.(e.loaded, e.lengthComputable ? e.total : file.size)
+      xhr.onload = () => {
+        const res = new Response(xhr.responseText, { status: xhr.status, headers: { 'Content-Type': 'application/json' } })
+        if (res.ok) res.json().then((v) => resolve(v as ShareInspect), reject)
+        else errorOf(res).then(reject, reject)
+      }
+      xhr.onerror = () => reject(new ApiError(0, 'backend_unreachable', translate('apiError.backend_unreachable')))
+      xhr.onabort = () => reject(new DOMException('aborted', 'AbortError'))
+      if (opts.signal?.aborted) return reject(new DOMException('aborted', 'AbortError'))
+      opts.signal?.addEventListener('abort', () => xhr.abort(), { once: true })
+      xhr.send(file)
+    }),
   /** Starts the import of the chosen items (a job: importProgress says where it is). */
-  shareApply: (token: string, keys: string[], fillMissing = true) => post<Job>('/api/share/apply', { token, keys, fill_missing: fillMissing }),
+  /** asNew: items that would update what came in from the same origin before and come in as new items instead */
+  shareApply: (token: string, keys: string[], fillMissing = true, asNew: string[] = []) => post<Job>('/api/share/apply', { token, keys, fill_missing: fillMissing, as_new: asNew }),
   importProgress: () => get<ImportProgress>('/api/share/apply/progress'),
   /** Asks the running import to stop: nothing it wrote stays. */
   cancelImport: () => post<{ stopping: boolean }>('/api/share/apply/cancel'),

@@ -34,6 +34,10 @@ MESHES = ('head', 'hair', 'hairlod')  # the kinds of fifa14.PLAYER_FACE_FILES th
 NAPE_FRONT, NAPE_FADE = 2.0, 3.0  # cm
 NAPE_FIT_TOP, NAPE_FIT_FULL = 167.0, 164.0  # cm: laid onto the template's neck (only ever pulled in), whole below full
 NAPE_WEIGHTS_TOP, NAPE_WEIGHTS_FADE = 168.0, 2.0  # cm: takes the template's bone weights
+# check() problems a head in FIFA 14's layout may have and the game still shows it right (heads of an installed
+# patch: bytes past the header's file size, an index buffer shorter than the header says, a palette shorter than
+# the bones its vertices use)
+HEAD_QUIRKS = ('file size in the header', 'index sizes do not match the header', 'outside the palette')
 
 
 class FaceFormatError(ValueError):
@@ -659,12 +663,18 @@ def skin_follow(template_head, head, offset):
     return {b: t for b, t in voted.items() if b in skin and t in (top, jaw)}
 
 
-def needs_conversion(d: bytes) -> bool:
+def needs_conversion(d: bytes, kind: str | None = None) -> bool:
     """A mesh FIFA 14 cannot take as it is: the newer format, or FIFA 14's layout with broken data (sections not
-    padded, bones outside the mesh's palette: a pack hair seen with every vertex on bone 9). A file that cannot be
-    read as a mesh at all cannot be converted either: False (it goes as it is)."""
+    padded, bones outside the mesh's palette: a pack hair seen with every vertex on bone 9). A head may have
+    HEAD_QUIRKS: the game shows such heads as they are. A file that cannot be read as a mesh at all cannot be
+    converted either: False (it goes as it is)."""
     try:
-        return is_newer(d) or bool(check(d, d))
+        if is_newer(d):
+            return True
+        problems = check(d, d)
+        if kind == 'head':
+            problems = [p for p in problems if not any(q in p for q in HEAD_QUIRKS)]
+        return bool(problems)
     except (ValueError, IndexError, KeyError, UnicodeDecodeError, struct.error):
         return False
 
@@ -676,7 +686,7 @@ def convert(tpl: dict, src: dict) -> dict:
     are all fine is kept as it is. Textures are kept as they are; a part the pack does not bring stays missing.
     FaceFormatError: a face in a layout the converter does not know."""
     meshes = [k for k in MESHES if src.get(k)]
-    if not any(needs_conversion(src[k]) for k in meshes):
+    if not any(needs_conversion(src[k], k) for k in meshes):
         return dict(src)
     try:
         check_positions(src)
@@ -778,7 +788,7 @@ def face_needs_conversion(own: dict) -> bool:
                 d = rx3.unpack(own[kind])
             except ValueError:
                 continue
-            if needs_conversion(d):
+            if needs_conversion(d, kind):
                 return True
     return False
 

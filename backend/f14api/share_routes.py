@@ -3,8 +3,9 @@ Export button of each entity's screen. Both show the same tree of what goes (the
 anything happens. Registered by main (imported before the interface's catch-all route).
 
 Import: POST /api/share/inspect (the zip as the request body) keeps it in cache/share/ and answers the tree, the id
-each item gets and why; POST /api/share/apply {token, keys} starts writing the chosen items into the project (a job:
-GET /api/share/apply/progress, POST /api/share/apply/cancel).
+each item gets and why (an item that came in from the same origin before updates it: reason 'updates'); POST
+/api/share/apply {token, keys, as_new} (as_new: updates that come in as new items instead) starts writing the chosen
+items into the project (a job: GET /api/share/apply/progress, POST /api/share/apply/cancel).
 Export: POST /api/share/export {kind, id} answers the tree of the entity and what it takes along (only what the
 project created or changed: the game's own entities are the extractor's job); POST /api/share/export/{token}/zip
 {keys} answers the zip.
@@ -76,6 +77,8 @@ class GameDestination:
         self._edited = {k: set(self.p.edited(k)) for k in KINDS}
         self._game: dict[str, set[int]] = {}
         self._taken_players: set[int] | None = None
+        uid = self.p.uid(create=False)
+        self._own = share.project_source(uid) if uid else None
 
     def _game_ids(self, kind: str) -> set[int]:
         if kind not in self._game:
@@ -135,6 +138,17 @@ class GameDestination:
 
     def changed(self, kind, oid):
         return oid in self._edited[kind]
+
+    def match(self, kind, source, source_id):
+        """The created entity that came in from (source, source_id) before; an item this project made itself (its
+        own zip coming back) is that entity."""
+        found = self.p.find_origin(kind, source, source_id)
+        if found is None and source == self._own and source_id in self._created[kind]:
+            found = source_id
+        return found
+
+    def changed_since_import(self, kind, oid):
+        return self.p.changed_since_import(kind, oid)
 
     def league_members(self, league_id):
         return [r[0] for r in self.con.execute(
@@ -207,6 +221,10 @@ def _tree(con, bundle: share.Bundle, ids: dict | None) -> dict:
             plan = ids.get(key) or {}
             node.update({'new_id': plan.get('id'), 'reason': plan.get('reason'), 'error': plan.get('error'),
                          'default': plan.get('default', False), 'game_has': bool(plan.get('game_has'))})
+            if plan.get('reason') == 'updates':  # what it updates, and the id it takes as a new item instead
+                alt = plan.get('alt') or {}
+                node.update({'changed': bool(plan.get('changed')), 'alt_id': alt.get('id'),
+                             'alt_reason': alt.get('reason')})
         nodes[key] = node
     roots = share.roots(bundle, children)
     # the countries the game already has (only there because the package's players are of them) go last
@@ -257,6 +275,8 @@ async def inspect(request: Request):
 class ApplyBody(BaseModel):
     token: str
     keys: list[str]
+    # items that would update what came in from the same origin before and come in as new items instead
+    as_new: list[str] = []
     # complete the faces of a package that lack their eyes or hair with the generic ones (share._fill)
     fill_missing: bool = True
 
@@ -273,7 +293,8 @@ def apply_import(body: ApplyBody):
     /api/share/apply/progress says where it is, POST /api/share/apply/cancel stops it (nothing changes)."""
     global import_progress
     staged = _get(body.token, 'import')
-    bundle, ids = staged['bundle'], staged['ids']
+    bundle = staged['bundle']
+    ids = share.as_new(staged['ids'], body.as_new)
     known = {bundle.key(r) for r in bundle.records}
     chosen = {k for k in body.keys if k in known and ids.get(k, {}).get('id') is not None}
     if not chosen:

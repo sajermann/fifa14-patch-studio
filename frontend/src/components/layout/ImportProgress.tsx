@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Check, Circle, Loader2, Square } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '@/api/client'
 import type { ImportStep, ShareKind } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -31,6 +31,76 @@ const KIND_LABELS: Record<ShareKind, MessageKey> = {
   ball: 'import.itemBall',
 }
 const POLL_MS = 500
+
+/** Where the reading of a zip on the Import page is: `sent` of `total` bytes sent (all sent = the backend reads it). */
+export type ZipReading = { name: string; sent: number; total: number; started: number }
+
+const mb = (bytes: number) => (bytes / 1024 / 1024).toFixed(1)
+
+/** Progress of sending and reading a zip on the Import page (same layout as ImportProgressDialog): the bytes sent,
+ * then the backend reading it. "Parar" lets the file go; nothing changes in the project. */
+export function ZipReadDialog({ reading, onStop }: { reading: ZipReading | null; onStop: () => void }) {
+  const { t } = useI18n()
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!reading) return
+    const timer = setInterval(() => setNow(Date.now()), 500)
+    return () => clearInterval(timer)
+  }, [reading])
+  const sent = reading?.total ? Math.min(reading.sent / reading.total, 1) : 0
+  const uploaded = sent >= 1
+  const elapsed = reading ? Math.max(0, (now - reading.started) / 1000) : 0
+  const steps = [
+    { key: 'send', label: t('share.stepSend'), state: uploaded ? 'done' : 'running' },
+    { key: 'read', label: t('share.stepRead'), state: uploaded ? 'running' : 'pending' },
+  ] as const
+
+  return (
+    <Dialog open={!!reading}>
+      <DialogContent width="md" showCloseButton={false} onEscapeKeyDown={(e) => e.preventDefault()} onInteractOutside={(e) => e.preventDefault()}>
+        <DialogHeader>
+          <DialogTitle>{t('share.readTitle')}</DialogTitle>
+          <DialogDescription className="truncate">{reading?.name}</DialogDescription>
+        </DialogHeader>
+        <div className="min-w-0 space-y-1.5">
+          <div className="h-2 overflow-hidden rounded-full bg-muted">
+            <div className={cn('h-full bg-primary transition-[width] duration-300', uploaded && 'animate-pulse')} style={{ width: `${Math.round(sent * 100)}%` }} />
+          </div>
+          <div className="flex justify-between gap-3 text-xs text-muted-foreground tabular-nums">
+            <span>{Math.round(sent * 100)}%</span>
+            <span>{t('import.elapsed', { time: clock(elapsed) })}</span>
+          </div>
+        </div>
+        <ul className="space-y-2 text-sm">
+          {steps.map((step) => (
+            <li key={step.key}className={cn('flex items-center gap-2', step.state === 'pending' && 'text-muted-foreground')}>
+              {step.state === 'done' ? (
+                <Check className="size-4 text-emerald-600" />
+              ) : step.state === 'running' ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Circle className="size-4" />
+              )}
+              <span className="flex-1">{step.label}</span>
+              {step.key === 'send' && reading && (
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {t('share.sentMb', { sent: mb(Math.min(reading.sent, reading.total)), total: mb(reading.total) })}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+        {uploaded && <p className="text-xs text-muted-foreground">{t('share.readHint')}</p>}
+        <div className="flex items-center gap-3 border-t pt-3">
+          <p className="flex-1 text-xs text-muted-foreground">{t('share.readStopHint')}</p>
+          <Button variant="outline" size="sm" onClick={onStop}>
+            <Square /> {t('build.stop')}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 /** Step by step progress of an import (same layout as the build's BuildProgressDialog), polled while `open`:
  * the item being written, items left, time left and the clock. "Parar" stops it and nothing changes in the project. */

@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Check, Circle, Loader2, Square } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '@/api/client'
-import type { BuildItemKind, BuildStep } from '@/api/types'
+import type { BuildItemKind, BuildPart, BuildStep } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useI18n, type MessageKey } from '@/i18n'
@@ -16,7 +16,7 @@ const STEP_LABELS: Record<BuildStep, MessageKey> = {
   texts: 'build.stepTexts',
   files: 'build.stepFiles',
 }
-const ITEM_LABELS: Record<BuildItemKind, MessageKey> = {
+const ITEM_LABELS: Record<Exclude<BuildItemKind, 'part'>, MessageKey> = {
   face: 'build.itemFace',
   kit: 'build.itemKit',
   crest: 'build.itemCrest',
@@ -24,6 +24,22 @@ const ITEM_LABELS: Record<BuildItemKind, MessageKey> = {
   league: 'build.itemLeague',
   flag: 'build.itemFlag',
   language: 'build.itemLanguage',
+  adboard: 'build.itemAdboard',
+  stadium: 'build.itemStadium',
+}
+const PART_LABELS: Record<BuildPart, MessageKey> = {
+  check: 'build.partCheck',
+  read: 'build.partRead',
+  created: 'build.partCreated',
+  fields: 'build.partFields',
+  rosters: 'build.partRosters',
+  kits: 'build.partKits',
+  faces: 'build.partFaces',
+  links: 'build.partLinks',
+  save: 'build.partSave',
+  adboards: 'build.partAdboards',
+  equipment: 'build.partEquipment',
+  stadiums: 'build.partStadiums',
 }
 const POLL_MS = 500
 
@@ -89,9 +105,12 @@ export function BuildProgressDialog({ open }: { open: boolean }) {
                   <Circle className="size-4" />
                 )}
                 <span className="flex-1">{t(STEP_LABELS[step])}</span>
-                {state === 'running' && prog!.total > 1 && (
+                {/* the database step's done/total is its share (the bar), not a count: its part says its own */}
+                {state === 'running' && (prog!.item?.count || (step !== 'database' && prog!.total > 1)) && (
                   <span className="text-xs text-muted-foreground tabular-nums">
-                    {t('build.count', { done: prog!.done, total: prog!.total })}
+                    {prog!.item?.count
+                      ? t('build.count', { done: prog!.item.count[0], total: prog!.item.count[1] })
+                      : t('build.count', { done: prog!.done, total: prog!.total })}
                   </span>
                 )}
               </li>
@@ -101,6 +120,8 @@ export function BuildProgressDialog({ open }: { open: boolean }) {
         <div className="min-w-0 space-y-1 text-xs text-muted-foreground">
           {finished ? (
             <p>{t('build.finishing')}</p>
+          ) : prog?.item?.kind === 'part' ? (
+            PART_LABELS[prog.item.name as BuildPart] && <p className="truncate">{t(PART_LABELS[prog.item.name as BuildPart])}</p>
           ) : prog?.item ? (
             <p className="truncate">{t(ITEM_LABELS[prog.item.kind], { name: prog.item.name })}</p>
           ) : (

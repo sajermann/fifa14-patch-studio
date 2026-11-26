@@ -99,11 +99,14 @@ const usable = (n: ShareNode | undefined) => !!n && !n.error
 /** The picked items of a tree and the clicks that change them. `initial`: the keys picked at first. */
 export function useTreeChoice(tree: ShareTree | null, initial: (n: ShareNode) => boolean) {
   const [picked, setPicked] = useState<Set<string>>(() => new Set(tree ? Object.values(tree.nodes).filter((n) => usable(n) && initial(n)).map((n) => n.key) : []))
+  // updates (an item that came in from the same origin before) that come in as new items instead
+  const [asNew, setAsNew] = useState<Set<string>>(() => new Set())
   const [forToken, setForToken] = useState(tree?.token)
   if (tree && forToken !== tree.token) {
     // a new tree (another zip): its own first choice
     setForToken(tree.token)
     setPicked(new Set(Object.values(tree.nodes).filter((n) => usable(n) && initial(n)).map((n) => n.key)))
+    setAsNew(new Set())
   }
   const insideOf = useMemo(() => {
     const out: Record<string, string[]> = {}
@@ -128,6 +131,15 @@ export function useTreeChoice(tree: ShareTree | null, initial: (n: ShareNode) =>
     })
   return {
     picked,
+    asNew,
+    /** an update: comes in as a new item, or updates what came in before (the first choice) */
+    toggleNew: (key: string) =>
+      setAsNew((prev) => {
+        const next = new Set(prev)
+        if (next.has(key)) next.delete(key)
+        else next.add(key)
+        return next
+      }),
     state,
     count: (key: string) => {
       const inside = insideOf[key] ?? []
@@ -173,13 +185,20 @@ function NodePicture({ token, n, live }: { token: string; n: ShareNode; live: bo
   return <Icon className="size-4 shrink-0 text-muted-foreground" />
 }
 
-/** What happens to the item's id (import): kept, a new one (taken, or out of the range the app uses), or it replaces
- * the changes the project already has. */
-function IdNote({ n, picked }: { n: ShareNode; picked: boolean }) {
+/** What happens to the item's id (import): kept, a new one (taken, or out of the range the app uses), it replaces
+ * the changes the project already has, or it updates what came in from the same origin before (`asNew`: it comes in
+ * as a new item instead). */
+function IdNote({ n, picked, asNew }: { n: ShareNode; picked: boolean; asNew: boolean }) {
   const { t } = useI18n()
   if (n.error) return <Badge tone="warn">{t(`share.error.${n.error}`)}</Badge>
   // left out, the game's own is used: no new id to warn about (ticked, it comes in as a new country)
   if (n.game_has && !picked) return <span className="shrink-0 text-xs text-muted-foreground">{t('share.gameHas')}</span>
+  if (n.reason === 'updates' && asNew) {
+    if (n.alt_reason === 'taken') return <Badge tone="warn">{t('share.idTaken', { id: n.id, newId: n.alt_id ?? '' })}</Badge>
+    return <span className="shrink-0 text-xs text-muted-foreground">{t('share.idNew', { newId: n.alt_id ?? '' })}</span>
+  }
+  if (n.reason === 'updates')
+    return n.changed ? <Badge tone="warn">{t('share.updatesChanged', { id: n.new_id ?? '' })}</Badge> : <Badge>{t('share.updates', { id: n.new_id ?? '' })}</Badge>
   if (n.reason === 'taken') return <Badge tone="warn">{t('share.idTaken', { id: n.id, newId: n.new_id ?? '' })}</Badge>
   if (n.reason === 'range') return <span className="shrink-0 text-xs text-muted-foreground">{t('share.idNew', { newId: n.new_id ?? '' })}</span>
   if (n.reason === 'replaces') return <Badge tone="warn">{t('share.replaces')}</Badge>
@@ -217,7 +236,12 @@ function TreeRow({ tree, choice, nodeKey, depth, ids, open: startOpen, path }: {
         </button>
         {n.id >= 0 && <span className="shrink-0 text-xs text-muted-foreground tabular-nums">ID {n.id}</span>}
         {!n.created && <Badge>{t('share.gameItem')}</Badge>}
-        {ids && <IdNote n={n} picked={choice.picked.has(n.key)} />}
+        {ids && <IdNote n={n} picked={choice.picked.has(n.key)} asNew={choice.asNew.has(n.key)} />}
+        {ids && n.reason === 'updates' && n.alt_id != null && choice.picked.has(n.key) && (
+          <button type="button" className="shrink-0 text-xs text-primary hover:underline" onClick={() => choice.toggleNew(n.key)}>
+            {choice.asNew.has(n.key) ? t('share.updateExisting') : t('share.comeInAsNewItem')}
+          </button>
+        )}
         {ids && n.game_has && (choice.picked.has(n.key) || n.new_id != null) && (
           <button type="button" className="shrink-0 text-xs text-primary hover:underline" onClick={() => choice.self(n.key)}>
             {choice.picked.has(n.key) ? t('share.useGames') : t('share.comeInAsNew')}

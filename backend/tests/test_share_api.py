@@ -38,11 +38,17 @@ def test_export_then_import_into_the_same_project(client):
     assert r.status_code == 200, r.text
     found = r.json()
     assert found['origin'] == 'own'
-    new_team = found['nodes'][f'team:{tid}']
-    new_player = found['nodes'][f"player:{a['id']}"]
-    assert new_team['reason'] == 'taken' and new_team['new_id'] != tid
-    assert new_player['reason'] == 'taken' and new_player['new_id'] not in (a['id'], b['id'])
-    r = client.post('/api/share/apply', json={'token': found['token'], 'keys': list(found['nodes'])})
+    team_node = found['nodes'][f'team:{tid}']
+    player_node = found['nodes'][f"player:{a['id']}"]
+    # the project's own zip coming back: it updates the items it came from, or they come in as new ones (as_new)
+    assert team_node['reason'] == 'updates' and team_node['new_id'] == tid and team_node['changed'] is False
+    assert player_node['reason'] == 'updates' and player_node['new_id'] == a['id']
+    assert team_node['alt_reason'] == 'taken' and team_node['alt_id'] != tid
+    assert player_node['alt_reason'] == 'taken' and player_node['alt_id'] not in (a['id'], b['id'])
+    new_team = {'new_id': team_node['alt_id']}
+    new_player = {'new_id': player_node['alt_id']}
+    r = client.post('/api/share/apply', json={'token': found['token'], 'keys': list(found['nodes']),
+                                              'as_new': list(found['nodes'])})
     assert r.status_code == 200, r.text
     assert r.json()['kind'] == 'import'
     wait(lambda: client.get('/api/job').json()['state'] != 'running')

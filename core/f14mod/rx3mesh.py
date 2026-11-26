@@ -20,6 +20,16 @@ def endian(d):
     return '<' if d[:4] == b'RX3l' else '>'
 
 
+def vertex_endian(d, vo):
+    """struct byte order of the vertex buffer at offset vo. Some RX3b files of PC patches have only the container
+    big-endian: their vertices (and the buffer's flag, stored 01 00 00 00) are little-endian, as the PC game reads
+    them."""
+    e = endian(d)
+    if e == '>' and 0 < struct.unpack('<I', d[vo + 12:vo + 16])[0] < 0x10000:
+        return '<'
+    return e
+
+
 def _sections(d):
     e = endian(d)
     n = struct.unpack(e + 'I', d[12:16])[0]
@@ -90,7 +100,8 @@ def meshes(d):
         # the buffer's own count, not the section table's size: some packs leave a stale (smaller) size in the
         # table while the whole buffer is there
         raw = d[vo + 16:vo + 16 + count * stride]
-        attrs = {name: _read(raw, count, stride, off, n, typ, e) for name, off, n, typ in decl}
+        ve = vertex_endian(d, vo)
+        attrs = {name: _read(raw, count, stride, off, n, typ, ve) for name, off, n, typ in decl}
         n_idx, idx_size = struct.unpack(e + 'I', d[io + 4:io + 8])[0], d[io + 8]
         fmt = e + ('%dH' % n_idx if idx_size == 2 else '%dI' % n_idx)
         indices = list(struct.unpack_from(fmt, d, io + 16))

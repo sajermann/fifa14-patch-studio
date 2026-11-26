@@ -6,6 +6,7 @@ import { api, ApiError } from '@/api/client'
 import type { ShareInspect } from '@/api/types'
 import { Section } from '@/components/common/detail'
 import { ShareTreeView, TreeLegend, useTreeChoice } from '@/components/common/shareTree'
+import { ZipReadDialog, type ZipReading } from '@/components/layout/ImportProgress'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useI18n } from '@/i18n'
@@ -20,7 +21,8 @@ export function ImportPage() {
   const queryClient = useQueryClient()
   const input = useRef<HTMLInputElement>(null)
   const [found, setFound] = useState<ShareInspect | null>(null)
-  const [reading, setReading] = useState<string | null>(null)
+  const [reading, setReading] = useState<ZipReading | null>(null) // the zip being sent and read (the dialog)
+  const reader = useRef<AbortController | null>(null)
   const [starting, setStarting] = useState(false)
   const [jobId, setJobId] = useState<string | null>(null) // the import this page started (the dialog and the end
   // toast come from the shell's JobWatcher)
@@ -37,12 +39,20 @@ export function ImportPage() {
 
   const read = async (file: File | undefined) => {
     if (!file) return
-    setReading(file.name)
+    const stop = new AbortController()
+    reader.current = stop
+    setReading({ name: file.name, sent: 0, total: file.size, started: Date.now() })
     try {
-      setFound(await api.shareInspect(file))
+      const inspected = await api.shareInspect(file, {
+        signal: stop.signal,
+        onSent: (sent, total) => setReading((r) => r && { ...r, sent, total }),
+      })
+      if (stop.signal.aborted) void api.shareForget(inspected.token).catch(() => undefined)
+      else setFound(inspected)
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : t('share.readFailed'))
+      if (!stop.signal.aborted) toast.error(e instanceof ApiError ? e.message : t('share.readFailed'))
     } finally {
+      reader.current = null
       setReading(null)
       if (input.current) input.current.value = ''
     }
@@ -59,7 +69,8 @@ export function ImportPage() {
     if (!found) return
     setStarting(true)
     try {
-      const started = await api.shareApply(found.token, [...choice.picked], fillMissing)
+      const asNew = [...choice.asNew].filter((k) => choice.picked.has(k))
+      const started = await api.shareApply(found.token, [...choice.picked], fillMissing, asNew)
       setJobId(started.id)
       await queryClient.invalidateQueries({ queryKey: ['status'] })
     } catch (e) {
@@ -70,8 +81,11 @@ export function ImportPage() {
   }
 
   const nodes = found ? Object.values(found.nodes) : []
-  const renumbered = nodes.filter((n) => choice.picked.has(n.key) && n.reason === 'taken').length
+  const renumbered = nodes.filter((n) => choice.picked.has(n.key) && (n.reason === 'taken' || (n.reason === 'updates' && choice.asNew.has(n.key) && n.alt_reason === 'taken'))).length
   const replacing = nodes.filter((n) => choice.picked.has(n.key) && n.reason === 'replaces').length
+  // items that came in from the same origin before and are updated (and the ones the user changed since)
+  const updating = nodes.filter((n) => choice.picked.has(n.key) && n.reason === 'updates' && !choice.asNew.has(n.key))
+  const updatingChanged = updating.filter((n) => n.changed).length
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -80,7 +94,9 @@ export function ImportPage() {
         <p className="text-sm text-muted-foreground">{t('share.importSubtitle')}</p>
       </div>
 
-      <input ref={input} type="file" accept=".zip,application/zip" className="hidden" onChange={(e) => void read(e.target.files?.[0])} />
+      <ZipReadDialog reading={reading} onStop={() => reader.current?.abort()} />
+
+      <input ref={input}type="file" accept=".zip,application/zip" className="hidden" onChange={(e) => void read(e.target.files?.[0])} />
 
       {!found && (
         <button
@@ -103,7 +119,7 @@ export function ImportPage() {
           )}
         >
           {reading ? <Loader2 className="size-8 animate-spin text-muted-foreground" /> : <Upload className="size-8 text-muted-foreground" />}
-          <span className="text-sm font-medium">{reading ? t('share.reading', { name: reading }) : t('share.pick')}</span>
+          <span className="text-sm font-medium">{reading ? t('share.reading', { name: reading.name }) : t('share.pick')}</span>
           <span className="max-w-xl text-xs text-muted-foreground">{t('share.pickHint')}</span>
         </button>
       )}
@@ -117,6 +133,9 @@ export function ImportPage() {
                 {found.patch_name ? t('share.patchName', { name: found.patch_name }) : t('share.itemsFound', { count: nodes.length })}
               </p>
               {found.origin === 'package' && <p className="text-muted-foreground">{t('share.packageHint')}</p>}
+              {found.origin === 'package' && !found.patch_name && <p className="text-amber-700 dark:text-amber-300">{t('share.noPatchName')}</p>}
+              {updating.length > 0 && <p>{t('share.updating', { count: updating.length })}</p>}
+              {updatingChanged > 0 && <p className="text-amber-700 dark:text-amber-300">{t('share.updatingChanged', { count: updatingChanged })}</p>}
               {renumbered > 0 && <p className="text-amber-700 dark:text-amber-300">{t('share.renumbered', { count: renumbered })}</p>}
               {replacing > 0 && <p className="text-amber-700 dark:text-amber-300">{t('share.replacing', { count: replacing })}</p>}
               {found.warnings.length > 0 && <p className="text-amber-700 dark:text-amber-300">{t('share.warnings', { count: found.warnings.length })}</p>}

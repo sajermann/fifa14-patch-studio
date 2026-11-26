@@ -102,7 +102,9 @@ export function useEntityForm<T extends EditForm & { saved_names?: NameTable }>(
     if (savedKey !== null) setForm(savedForm)
   }, [savedKey]) // eslint-disable-line react-hooks/exhaustive-deps
   const cleaned = useMemo(() => ({ names: cleanNames(form.names), fields: cleanFields(form.fields, data?.values ?? {}) }), [form, data])
-  const dirty = !!data && (extraDirty || !sameForm(cleaned, savedForm))
+  // the saved side cleaned the same way: what is saved may hold the game's value (an imported entity keeps them all)
+  const savedCleaned = useMemo(() => ({ names: cleanNames(savedForm.names), fields: cleanFields(savedForm.fields, data?.values ?? {}) }), [savedForm, data])
+  const dirty = !!data && (extraDirty || !sameForm(cleaned, savedCleaned))
   const after = (saved: T) => {
     qc.setQueryData(queryKey, saved)
     for (const k of [...invalidate, 'status']) void qc.invalidateQueries({ queryKey: [k] })

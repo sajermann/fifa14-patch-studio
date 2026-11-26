@@ -34,7 +34,9 @@ export interface PatchStatus {
 
 /** Steps of "Gerar patch" in order (f14mod.builder.BUILD_STEPS). */
 export type BuildStep = 'database' | 'images' | 'texts' | 'files'
-export type BuildItemKind = 'face' | 'kit' | 'crest' | 'photo' | 'league' | 'flag' | 'language'
+export type BuildItemKind = 'face' | 'kit' | 'crest' | 'photo' | 'league' | 'flag' | 'language' | 'adboard' | 'stadium' | 'part'
+/** What the 'database' step is doing (item kind 'part'; builder.DATABASE_PARTS). */
+export type BuildPart = 'check' | 'read' | 'created' | 'fields' | 'rosters' | 'kits' | 'faces' | 'links' | 'save' | 'adboards' | 'equipment' | 'stadiums'
 
 /** GET /api/patch/progress: the current (or last) build. */
 export interface BuildProgress {
@@ -47,7 +49,8 @@ export interface BuildProgress {
   elapsed?: number
   error: string | null
   /** what the 'images' / 'texts' steps are waiting for (a kit, a language...) */
-  item?: { kind: BuildItemKind; name: string } | null
+  /** count: [done, total] of the part being done (the 'database' step's done/total is its whole share instead) */
+  item?: { kind: BuildItemKind; name: string; count?: [number, number] } | null
   /** the user asked the build to stop (it ends the languages already being made first) */
   stopping?: boolean
   cancelled?: boolean
@@ -842,11 +845,16 @@ export interface ShareNode {
   children: string[]
   /** import only: the id it gets in the project, why it changes, picked at first, why it cannot come in */
   new_id?: number | null
-  reason?: 'taken' | 'range' | 'replaces' | null
+  reason?: 'taken' | 'range' | 'replaces' | 'updates' | null
   default?: boolean
   error?: 'not_in_game' | 'limit' | null
   /** a country of a package the game already has (left out at first: whoever uses it keeps the game's) */
   game_has?: boolean
+  /** an update (it came in from the same origin before): the user changed it since */
+  changed?: boolean
+  /** an update: the id it takes if it comes in as a new item instead (null = none left), and why */
+  alt_id?: number | null
+  alt_reason?: 'taken' | 'range' | null
 }
 export interface ShareTree {
   token: string

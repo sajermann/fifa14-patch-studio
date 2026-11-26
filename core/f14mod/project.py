@@ -78,6 +78,10 @@ folders next to it, under `<name>_files/` (f14mod.filestore, as the Street Studi
 database.json), each named after its digest, and the rows of `pictures`, `player_files`, `equipment_files` and `stadium_scene` keep only `file` (the path
 in the project folder), `size` and `digest`. Older files (the bytes inside the database) are not converted: they are
 refused (ProjectError) and a new project starts.
+Schema 16 (26/11/2026) adds `origins`: where an entity that came in by an import came from (`source` = 'pkg:<patch
+name>' of an extractor's package or 'prj:<uid>' of a project, `source_id` = its id there, `imported_at`), so importing
+from the same source again updates it instead of adding a copy (f14mod.share.plan). `meta` 'uid' = the project's own
+id, made the first time it exports. Older files open as they are (the table starts empty).
 """
 import json
 import os
@@ -86,7 +90,7 @@ import time
 
 from .filestore import EQUIPMENT as EQUIPMENT_FOLDERS, FACES, PICTURES, STADIUMS, FileStore
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 FILES_SUFFIX = '_files'  # project.sqlite keeps its files in project_files/ (f14mod.filestore)
 DEFAULT_LANG = '*'
 KINDS = ('team', 'league', 'player', 'country', 'stadium', 'adboard', 'boot', 'glove', 'ball')
@@ -133,6 +137,9 @@ CREATE TABLE IF NOT EXISTS equipment_files (kind TEXT, id INTEGER, name TEXT, fi
 CREATE TABLE IF NOT EXISTS stadium_sources (stadium_id INTEGER PRIMARY KEY, template INTEGER, folder_stadium INTEGER);
 CREATE TABLE IF NOT EXISTS stadium_scene (stadium_id INTEGER, name TEXT, file TEXT, size INTEGER, digest TEXT,
                                           PRIMARY KEY (stadium_id, name));
+CREATE TABLE IF NOT EXISTS origins (kind TEXT, id INTEGER, source TEXT, source_id INTEGER, imported_at INTEGER,
+                                    PRIMARY KEY (kind, id));
+CREATE INDEX IF NOT EXISTS origins_source ON origins (source, kind, source_id);
 CREATE INDEX IF NOT EXISTS pictures_file ON pictures (file);
 CREATE INDEX IF NOT EXISTS player_files_file ON player_files (file);
 CREATE INDEX IF NOT EXISTS equipment_files_file ON equipment_files (file);
@@ -373,6 +380,7 @@ class Project:
                 con.execute('DELETE FROM stadium_scene WHERE stadium_id = ?', (oid,))
                 if not con.execute("SELECT 1 FROM created WHERE kind = 'stadium' AND id = ?", (oid,)).fetchone():
                     con.execute('DELETE FROM stadium_sources WHERE stadium_id = ?', (oid,))  # a game stadium's folder
+            con.execute('DELETE FROM origins WHERE kind = ? AND id = ?', (kind, oid))  # no longer what came in
             con.commit()
             self.files.release(con, left)
         finally:
@@ -521,6 +529,54 @@ class Project:
         finally:
             con.close()
 
+    # ---- where imported entities came from (f14mod.share) ------------------------------------------------------
+
+    def uid(self, create: bool = True) -> str | None:
+        """The project's own id (made the first time it is asked for, unless `create` is false: then None until it
+        has one): the source of what it exports."""
+        con = self.connect()
+        try:
+            row = con.execute("SELECT value FROM meta WHERE key = 'uid'").fetchone()
+            if row or not create:
+                return row[0] if row else None
+            import uuid
+            value = uuid.uuid4().hex
+            con.execute("INSERT INTO meta VALUES ('uid', ?)", (value,))
+            con.commit()
+            return value
+        finally:
+            con.close()
+
+    def origin(self, kind: str, oid: int) -> tuple[str, int] | None:
+        """(source, id it had there) of an entity that came in by an import; None for any other."""
+        con = self.connect()
+        try:
+            r = con.execute('SELECT source, source_id FROM origins WHERE kind = ? AND id = ?', (kind, oid)).fetchone()
+            return (r[0], r[1]) if r else None
+        finally:
+            con.close()
+
+    def find_origin(self, kind: str, source: str, source_id: int) -> int | None:
+        """The entity that came in from (source, source_id), when it is still in the project."""
+        con = self.connect()
+        try:
+            r = con.execute('SELECT o.id FROM origins o WHERE o.kind = ? AND o.source = ? AND o.source_id = ? AND '
+                            'EXISTS (SELECT 1 FROM created c WHERE c.kind = o.kind AND c.id = o.id) ORDER BY o.id',
+                            (kind, source, source_id)).fetchone()
+            return r[0] if r else None
+        finally:
+            con.close()
+
+    def changed_since_import(self, kind: str, oid: int) -> bool:
+        """The user changed the entity after it came in."""
+        con = self.connect()
+        try:
+            r = con.execute('SELECT 1 FROM origins o JOIN dates d ON d.kind = o.kind AND d.id = o.id '
+                            'WHERE o.kind = ? AND o.id = ? AND d.updated_at > o.imported_at', (kind, oid)).fetchone()
+            return r is not None
+        finally:
+            con.close()
+
     # ---- created entities -------------------------------------------------------------------------------------
 
     def create(self, kind: str, oid: int, names: Names | None = None, fields: dict | None = None) -> None:
@@ -644,11 +700,15 @@ class Project:
                 "WHERE c.kind = 'team' AND s.template IS NULL AND s.copy = 0")]
         finally:
             con.close()
-        return {tid for tid in scratch if self.missing_team_parts(tid)}
+        if not scratch:
+            return set()
+        out_of_patch = self.incomplete_players()  # once for all the teams, not once per team
+        return {tid for tid in scratch if self.missing_team_parts(tid, out_of_patch)}
 
-    def missing_team_parts(self, team_id: int) -> dict:
+    def missing_team_parts(self, team_id: int, out_of_patch: set[int] | None = None) -> dict:
         """What a team made from scratch still needs: {'fields': fields.TEAM_REQUIRED not saved, 'stadium': no stadium
-        chosen, 'players': players in its squad (fewer than a lineup)}; empty = complete."""
+        chosen, 'players': players in its squad (fewer than a lineup)}; empty = complete. out_of_patch: the
+        incomplete_players() already known (checking many teams)."""
         from .fields import TEAM_REQUIRED
         saved = self.fields('team', team_id)
         out = {}
@@ -664,7 +724,8 @@ class Project:
                 "(SELECT 1 FROM hidden h WHERE h.kind = 'player' AND h.id = r.player_id)", (team_id,)).fetchall()
         finally:
             con.close()
-        out_of_patch = self.incomplete_players()
+        if out_of_patch is None:
+            out_of_patch = self.incomplete_players()
         players = len([r for r in players if r[0] not in out_of_patch])
         if players < 11:
             out['players'] = players
@@ -693,8 +754,25 @@ class Project:
         return [f for f in PLAYER_REQUIRED if saved.get(f) is None]
 
     def incomplete_players(self) -> set[int]:
-        """Players made from scratch still missing a required field: left out of the patch until it is saved."""
-        return {pid for pid in self.blank_players() if self.missing_player_fields(pid)}
+        """Players made from scratch still missing a required field: left out of the patch until it is saved.
+        One query for all of them (a big import brings thousands)."""
+        from .fields import PLAYER_REQUIRED
+        blank = self.blank_players()
+        if not blank:
+            return set()
+        con = self.connect()
+        try:
+            marks = ','.join('?' * len(PLAYER_REQUIRED))
+            saved: dict[int, set[str]] = {}
+            for pid, field, value in con.execute(
+                    f"SELECT id, field, value FROM fields WHERE kind = 'player' AND field IN ({marks})",
+                    tuple(PLAYER_REQUIRED)):
+                if pid in blank and value is not None and json.loads(value) is not None:
+                    saved.setdefault(pid, set()).add(field)
+        finally:
+            con.close()
+        need = set(PLAYER_REQUIRED)
+        return {pid for pid in blank if not need <= saved.get(pid, set())}
 
     def missing_stadium_fields(self, stadium_id: int) -> list[str]:
         """The fields a stadium made from scratch still needs (fields.STADIUM_REQUIRED not saved yet)."""
@@ -946,6 +1024,14 @@ class Project:
         try:
             con.execute('INSERT OR REPLACE INTO player_sources VALUES (?, ?)', (player_id, template))
             con.commit()
+        finally:
+            con.close()
+
+    def player_sources(self) -> dict[int, int | None]:
+        """{created player: the game player its row starts from} of all of them at once."""
+        con = self.connect()
+        try:
+            return {r[0]: r[1] for r in con.execute('SELECT player_id, template FROM player_sources')}
         finally:
             con.close()
 

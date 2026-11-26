@@ -22,13 +22,6 @@ def unpack(d: bytes) -> bytes:
     return d
 
 
-def _swap16(b: bytes) -> bytes:
-    a = bytearray(len(b))
-    a[0::2] = b[1::2]
-    a[1::2] = b[0::2]
-    return bytes(a)
-
-
 def _endian(d: bytes) -> str:
     return '<' if d[:4] == b'RX3l' else '>'
 
@@ -86,15 +79,15 @@ def by_name(d: bytes, name: str) -> dict:
 def to_image(d: bytes, t: dict, level: int = 0) -> Image.Image:
     q, n, w, h = t['levels'][level]
     raw = d[q:q + n]
-    little = _endian(d) == '<'
+    # the pixels as the PC game reads them: little-endian even inside an RX3b (only its container is big-endian:
+    # files of PC patches whose hair the game shows right)
     if t['fmt'] in DDS_FOURCC:
-        swapped = raw if little else _swap16(raw)
         bw, bh = max(4, w), max(4, h)
-        hdr = (b'DDS ' + struct.pack('<7I', 124, 0x1007, bh, bw, len(swapped), 0, 1) + b'\0' * 44 +
+        hdr = (b'DDS ' + struct.pack('<7I', 124, 0x1007, bh, bw, len(raw), 0, 1) + b'\0' * 44 +
                struct.pack('<2I4s5I', 32, 4, DDS_FOURCC[t['fmt']], 0, 0, 0, 0, 0) +
                struct.pack('<5I', 0x1000, 0, 0, 0, 0))
-        return Image.open(io.BytesIO(hdr + swapped)).crop((0, 0, w, h))
-    return Image.frombytes('RGBA', (w, h), raw[:w * h * 4], 'raw', 'BGRA' if little else 'ARGB')
+        return Image.open(io.BytesIO(hdr + raw)).crop((0, 0, w, h))
+    return Image.frombytes('RGBA', (w, h), raw[:w * h * 4], 'raw', 'BGRA')
 
 
 def positions(d: bytes):

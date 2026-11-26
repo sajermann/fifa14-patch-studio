@@ -12,6 +12,7 @@ def _package(path) -> str:
     """A small package as the extractor writes it: country 54 (the game has it), league 7, team 1043 with players 9001
     (boot 30 of the package) and 9002, ball 2 (the game has it), player 9003 of another team (team 555, not exported)."""
     face = {'data/sceneassets/heads/head_9001_0.rx3': {'kind': 'head', 'file': 'game/h'},
+            'data/sceneassets/heads/head_9001_bump.rx3': {'kind': 'bump', 'file': 'game/b'},
             'data/sceneassets/faces/face_9001_0_0_0_0_0_0_0_0_textures.rx3': {'kind': 'face', 'file': 'game/f'}}
     manifest = {
         'format': 'fifa-patch-package', 'format_version': 1, 'source': {'game': 'fifa14', 'patch_name': 'P01'},
@@ -47,7 +48,7 @@ def _package(path) -> str:
     with zipfile.ZipFile(out, 'w') as z:
         z.writestr('package.json', json.dumps(manifest))
         for name in ('nations/54/flag.png', 'teams/1043/crest.png', 'teams/1043/kits/0/jersey.png',
-                     'players/9001/photo.png', 'game/h', 'game/f', 'game/s', 'game/st'):
+                     'players/9001/photo.png', 'game/h', 'game/b', 'game/f', 'game/s', 'game/st'):
             z.writestr(name, name.encode())
     return out
 
@@ -83,7 +84,7 @@ def test_package_comes_in_as_new_entities_linked_together(tmp_path):
     assert player['nationality'] == 54 and player['name.common'] == 'A01' and player['finishing'] == 90
     assert player['shoetypecode'] == ids['boot:30']['id'] == 100  # 30 is outside the created range of the fake
     assert player['face'] == {'source': 'pack', 'pack': 'package', 'id': 9001}
-    assert dst.player_files(p1) == {'head': b'game/h', 'face': b'game/f'}
+    assert dst.player_files(p1) == {'head': b'game/h', 'bump': b'game/b', 'face': b'game/f'}
     assert dst.equipment_files('boot', 100) == {'mesh': b'game/s', 'texture': b'game/st'}
     assert dst.roster(555) is None and not dst.edited('team')  # team 555 is not the game's: no link written
     assert dst.names('team', 131001)['abbr3'] == {'*': 'T01'}
@@ -168,18 +169,18 @@ def test_a_face_without_eyes_and_hair_is_completed_with_the_generic_parts_of_the
     _rewrite(path, _without_eyes_and_hair)
     files, face = _imported(tmp_path, path, True)
     # the package's generic parts became his own (the hair textures would be painted: these fake bytes cannot be)
-    assert files == {'head': b'game/h', 'face': b'game/f', 'eyes': b'E9', 'hair': b'H17', 'hair_textures': b'T17',
+    assert files == {'head': b'game/h', 'bump': b'game/b', 'face': b'game/f', 'eyes': b'E9', 'hair': b'H17', 'hair_textures': b'T17',
                      'hairlod': b'L17'}
     assert 'fill' not in face
     files, face = _imported(tmp_path, path, False)  # not wanted: as the package has it
-    assert files == {'head': b'game/h', 'face': b'game/f'} and 'fill' not in face
+    assert files == {'head': b'game/h', 'bump': b'game/b', 'face': b'game/f'} and 'fill' not in face
 
 
 def test_without_generic_parts_in_the_package_the_game_ones_of_the_same_codes(tmp_path):
     path = _package(tmp_path)
     _rewrite(path, lambda m, f: _without_eyes_and_hair(m, f, generic=False))
     files, face = _imported(tmp_path, path, True, {'eyes': {1, 9}, 'hair': {5}})
-    assert files == {'head': b'game/h', 'face': b'game/f'}
+    assert files == {'head': b'game/h', 'bump': b'game/b', 'face': b'game/f'}
     assert face['fill'] == {'eyes': 9}  # the game has eyes 9, not hair 17: that part stays missing
 
 
@@ -199,7 +200,7 @@ def test_a_face_with_its_hair_but_not_the_one_from_afar_takes_only_the_generic_o
     path = _package(tmp_path)
     _rewrite(path, _own_hair_but_not_from_afar)
     files, face = _imported(tmp_path, path, True)
-    assert files == {'head': b'game/h', 'face': b'game/f', 'hair': b'OWN H', 'hair_textures': b'OWN T',
+    assert files == {'head': b'game/h', 'bump': b'game/b', 'face': b'game/f', 'hair': b'OWN H', 'hair_textures': b'OWN T',
                      'hairlod': b'L17'}  # his own hair up close stays
     assert 'fill' not in face
 
@@ -216,4 +217,4 @@ def test_a_bald_player_needs_no_hair(tmp_path):
     _rewrite(path, lambda m, f: _without_eyes_and_hair(m, f) or m['players'][0]['raw']['players'][0].update(
         hairtypecode=0))
     files, face = _imported(tmp_path, path, True, {'eyes': set(), 'hair': {0}, 'hairlod': {0}})
-    assert files == {'head': b'game/h', 'face': b'game/f', 'eyes': b'E9'} and 'fill' not in face
+    assert files == {'head': b'game/h', 'bump': b'game/b', 'face': b'game/f', 'eyes': b'E9'} and 'fill' not in face

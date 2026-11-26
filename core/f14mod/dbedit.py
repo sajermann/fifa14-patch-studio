@@ -258,19 +258,31 @@ class Table:
 
     # ---- values ---------------------------------------------------------------------------------------------
 
+    def _slot(self, name: str) -> tuple[int, Field]:
+        """(column, field) of a name or short name; remembered, since a build reads millions of cells."""
+        slots = self.__dict__.get('_slots')
+        if slots is None or slots[0] is not self.fields or slots[1] != len(self.fields):
+            slots = self._slots = (self.fields, len(self.fields), {})
+        found = slots[2].get(name)
+        if found is None:
+            for i, f in enumerate(self.fields):
+                if f.name == name or f.short == name:
+                    found = slots[2][name] = (i, f)
+                    break
+            else:
+                raise KeyError(f'{self.name}.{name}')
+        return found
+
     def field(self, name: str) -> Field:
-        for f in self.fields:
-            if f.name == name or f.short == name:
-                return f
-        raise KeyError(f'{self.name}.{name}')
+        return self._slot(name)[1]
 
     def column(self, name: str) -> int:
-        return self.fields.index(self.field(name))
+        return self._slot(name)[0]
 
     def get(self, row: list, name: str):
         """Real value of a field (range low added, strings decoded)."""
-        f = self.field(name)
-        v = row[self.fields.index(f)]
+        i, f = self._slot(name)
+        v = row[i]
         if f.type == 3:
             return v + f.rangelow
         if f.type == 4:
@@ -282,8 +294,7 @@ class Table:
         return v
 
     def set(self, row: list, name: str, value) -> None:
-        f = self.field(name)
-        i = self.fields.index(f)
+        i, f = self._slot(name)
         if f.type == 3:
             raw = int(value) - f.rangelow
             if not 0 <= raw < (1 << f.depth):

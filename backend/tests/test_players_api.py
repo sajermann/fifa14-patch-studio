@@ -26,6 +26,7 @@ def test_create_save_and_delete_player(client):
     assert pid >= 300001 and new['is_new'] and new['name'] == 'Zero Player'
     assert new['saved']['face'] == {'source': 'generic'} and new['teams'][0]['id'] == fakegame.TEAM
     assert client.get('/api/players', params={'origin': 'project'}).json()['items'][0]['id'] == pid
+    assert [p['id'] for p in client.get('/api/players', params={'q': str(pid)}).json()['items']] == [pid]
     # a copy brings the face of the player copied and his photo
     copy = client.post('/api/players', json={'fields': {'name.common': 'Copy'}, 'template': fakegame.STAR}).json()
     assert copy['saved']['face'] == {'source': 'player', 'player': fakegame.STAR} and copy['has_photo']
@@ -129,6 +130,10 @@ def test_face_packs_and_options(client, tmp_path):
     assert saved['saved']['face']['id'] == 51318 and saved['face_stored']
     assert saved['face_missing'] == ['eyes', 'hair', 'hair_textures', 'hairlod']  # listed again when the screen reopens
     assert set(main.project().player_files(pid)) == {'head', 'face'}
+    # the face kept in the project is read for the thumbnail (these fake files are no real meshes: unreadable)
+    assert client.get('/api/facepack/thumb', params={'player': pid}).json()['detail']['code'] == 'face_unreadable'
+    assert client.get('/api/facepack/thumb', params={'player': fakegame.STAR}).status_code == 404  # none kept
+    assert client.get('/api/facepack/thumb').status_code == 400
     look = client.post(f'/api/preview/player-look/{pid}', json={'values': {}, 'face': face}).json()
     assert look['real'] and look['query'] == f'face_stored={pid}'
     assert look['hair'] == 0 and look['eyes'] is None  # the pack brings neither: nothing is filled in

@@ -1,9 +1,11 @@
 """Pack faces in a newer FIFA format converted into FIFA 14's (f14mod.faceconv), on the synthetic faces of
 tests/fakeface.py."""
+import struct
+
 import pytest
 
 import fakeface
-from f14mod import faceconv
+from f14mod import faceconv, rx3mesh
 
 
 def _skin(d, slot):
@@ -15,6 +17,33 @@ def test_a_face_in_fifa14s_format_is_kept_as_it_is():
     own = dict(tpl, face=b'RX3l textures')
     assert not any(faceconv.needs_conversion(tpl[k]) for k in faceconv.MESHES)
     assert faceconv.convert(tpl, own) == own
+
+
+def _quirky(d: bytes) -> bytes:
+    """d with bytes past its header's file size and the palette of mesh 0 cut to one bone."""
+    out = bytearray(d) + bytes(80)
+    po, _ = faceconv.of_type(d, '<', faceconv.PALETTE)[0]
+    struct.pack_into('<I', out, po + 4, 1)
+    return bytes(out)
+
+
+def test_a_head_with_the_quirks_the_game_takes_is_kept_as_it_is():
+    tpl = fakeface.template()
+    head = _quirky(tpl['head'])
+    assert faceconv.check(head, head)  # the problems are there...
+    assert faceconv.needs_conversion(head)  # ...and alone (no kind) they still count
+    assert not faceconv.needs_conversion(head, 'head')
+    assert not faceconv.face_needs_conversion(dict(tpl, head=head))
+    # on hair they still do (a pack hair with its bones outside the palette)
+    assert faceconv.face_needs_conversion(dict(tpl, hair=_quirky(tpl['hair'])))
+
+
+def test_rx3b_with_little_endian_vertices():
+    """Some RX3b files of PC patches have only the container big-endian: the vertex buffer's flag (and its
+    vertices) are little-endian."""
+    assert rx3mesh.vertex_endian(b'RX3b' + bytes(12) + struct.pack('<I', 1), 4) == '<'
+    assert rx3mesh.vertex_endian(b'RX3b' + bytes(12) + struct.pack('>I', 1), 4) == '>'
+    assert rx3mesh.vertex_endian(b'RX3l' + bytes(12) + struct.pack('<I', 1), 4) == '<'
 
 
 def test_a_file_that_is_not_a_mesh_is_not_converted():

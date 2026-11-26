@@ -16,7 +16,8 @@ from urllib.parse import quote
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from f14mod import appearance_thumbs, buildcache, builder, faceconv, facefill, facepack, fields, fifa14, images, preview
+from f14mod import (appearance_thumbs, buildcache, builder, chunk, faceconv, facefill, facepack, fields, fifa14, images,
+                   preview)
 from f14mod.project import BENCH, RESERVE
 
 from . import queries, settings
@@ -502,7 +503,14 @@ THUMB_VERSION = 2  # raised when facepack.thumbnail draws differently (2: missin
 
 
 @app.get('/api/facepack/thumb')
-def face_pack_thumb(pack: str, id: int):  # noqa: A002 - the face id
+def face_pack_thumb(pack: Optional[str] = None, id: Optional[int] = None,  # noqa: A002 - the face id
+                    player: Optional[int] = None):
+    """Front view of a face of a pack folder (pack + id), or of the face kept in the project for a player (player:
+    the files copied when he was saved or imported, shown even when no pack folder has them)."""
+    if player is not None:
+        return _stored_face_thumb(player)
+    if pack is None or id is None:
+        raise ApiError(400, 'bad_request')
     assets = _check_pack(pack)
     head = os.path.join(assets, *facepack.FILES['head'].format(id).split('/'))
     stamp = os.path.getmtime(head) if os.path.isfile(head) else 0
@@ -512,6 +520,26 @@ def face_pack_thumb(pack: str, id: int):  # noqa: A002 - the face id
     try:
         png = facepack.thumbnail(facepack.read_face(assets, id), 160)
     except (facepack.FaceFormatError, *images.UNREADABLE) as e:
+        raise ApiError(422, 'face_unreadable', str(e))
+    os.makedirs(os.path.dirname(cache), exist_ok=True)
+    with open(cache, 'wb') as f:
+        f.write(png)
+    return Response(png, media_type='image/png', headers=IMAGE_HEADERS)
+
+
+def _stored_face_thumb(pid: int):
+    data = project().player_files(pid) or {}
+    if not all(k in data for k in fifa14.FACE_REQUIRED):
+        raise ApiError(404, 'not_found')
+    h = hashlib.sha1(f'stored|{THUMB_VERSION}'.encode())
+    for kind in sorted(data):
+        h.update(kind.encode() + b'\0' + hashlib.sha1(data[kind]).digest())
+    cache = os.path.join(settings.CACHE_DIR, 'faces', f'stored_{h.hexdigest()[:20]}.png')
+    if os.path.isfile(cache):
+        return FileResponse(cache, media_type='image/png', headers=IMAGE_HEADERS)
+    try:
+        png = facepack.thumbnail({k: chunk.decode(v) for k, v in data.items()}, 160)
+    except (ValueError, *images.UNREADABLE) as e:
         raise ApiError(422, 'face_unreadable', str(e))
     os.makedirs(os.path.dirname(cache), exist_ok=True)
     with open(cache, 'wb') as f:

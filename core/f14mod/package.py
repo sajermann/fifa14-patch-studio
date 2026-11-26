@@ -23,7 +23,7 @@ import zipfile
 
 from . import facefill, fields as fieldspecs
 from . import fifa14
-from .share import Bundle, ShareError
+from .share import Bundle, ShareError, package_source as share_source
 
 FORMAT = 'fifa-patch-package'
 FORMAT_VERSION = 1
@@ -373,6 +373,10 @@ def convert(z: zipfile.ZipFile, formations: dict[int, list[int]] | None = None) 
     c = _Converter(z, manifest, formations)
     records = c.convert()
     source = manifest.get('source') or {}
+    # where its items come from: the patch name (none: nothing tells this package from another, all come in as new)
+    origin = share_source(source.get('patch_name'))
+    for rec in records:
+        rec['origin'] = {'source': origin, 'id': rec['id']} if origin else None
     meta = {'tool': manifest.get('tool'), 'created_at': manifest.get('created_at'),
             'patch_name': source.get('patch_name'), 'credits': manifest.get('credits')}
     return Bundle(records, 'package', meta, warnings=c.warnings)

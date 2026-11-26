@@ -101,6 +101,17 @@ def test_progress_goes_through_the_steps_in_order(installed, tmp_path):
     assert order == list(builder.BUILD_STEPS)
 
 
+def test_the_progress_of_a_step_never_goes_back(installed, tmp_path):
+    seen = []
+    builder.build(catalog.open_game(installed), _project(tmp_path), str(tmp_path / 'out'), worker_count=1,
+                  progress=lambda step, done, total, **item: seen.append((step, done / total if total else 0, item)))
+    for step in builder.BUILD_STEPS:
+        shares = [share for s, share, _ in seen if s == step]
+        assert shares == sorted(shares), step
+    parts = [item['name'] for s, _, item in seen if s == 'database' and item.get('kind') == 'part']
+    assert parts[0] == 'check' and set(parts) <= set(builder.DATABASE_PARTS)
+
+
 def test_stopped_build_leaves_the_patch_as_it_was(installed, tmp_path):
     out = str(tmp_path / 'out')
     os.makedirs(out)

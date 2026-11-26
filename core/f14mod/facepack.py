@@ -31,7 +31,8 @@ class FaceFormatError(ValueError):
 
 def read_files(folder, face_id):
     """{kind: bytes} of the FILES of a face found under folder (a pack's asset folder). EA-compressed files
-    (chunkzip) come back decoded; an optional part that is not a PC RX3 file is left out."""
+    (chunkzip) come back decoded. An optional part is kept as RX3l or RX3b (PC patches ship hair and bump maps as
+    RX3b with little-endian data inside, and the PC game reads them); anything else is left out."""
     out = {}
     for kind, f in FILES.items():
         path = os.path.join(folder, *f.format(face_id).split('/'))
@@ -47,7 +48,8 @@ def read_files(folder, face_id):
         if data[:4] != b'RX3l':
             if kind in REQUIRED:
                 raise FaceFormatError(f'{os.path.basename(path)}: not a PC RX3 file ({data[:4]!r})')
-            continue
+            if data[:4] != b'RX3b':
+                continue
         out[kind] = data
     return out
 
@@ -129,13 +131,15 @@ def _photo_path(assets, face_id):
 
 
 HAIR_PARTS = ('hair', 'hair_textures', 'hairlod')
+EXTRA_PARTS = ('bump',)  # brought when the face has them; most faces have none and the game does without
 
 
 def missing_parts(kinds, bald: bool = False):
     """The OPTIONAL parts a face does not bring (kinds of FILES, in their order). Only the user fills them in, with
     the game's generic eyes or hair (facefill); the app never does it on its own. bald: the player's hair code is 0
-    (no hair: the game has no generic of it), so a face without hair lacks nothing there."""
-    return [k for k in FILES if k not in REQUIRED and k not in kinds and not (bald and k in HAIR_PARTS)]
+    (no hair: the game has no generic of it), so a face without hair lacks nothing there. EXTRA_PARTS never lack."""
+    return [k for k in FILES if k not in REQUIRED and k not in EXTRA_PARTS and k not in kinds
+            and not (bald and k in HAIR_PARTS)]
 
 
 def list_faces(assets):

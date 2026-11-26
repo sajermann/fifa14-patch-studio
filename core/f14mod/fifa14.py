@@ -109,6 +109,7 @@ NUMBER_FONT = 'data/sceneassets/kitnumbers/kitnumbers_{}_{}.rx3'  # font, palett
 FACE_FOLDERS = ('data/sceneassets/heads/', 'data/sceneassets/faces/', 'data/sceneassets/hair/',
                 'data/sceneassets/hairlod/')
 FACE_FILE = re.compile(r'data/sceneassets/(?:heads|faces|hair|hairlod)/(head|eyes|face|hair|hairlod)_(\d+)_[^/]*\.rx3$')
+FACE_BUMP = re.compile(r'data/sceneassets/heads/head_\d+_bump\.rx3$')  # the head's relief textures (normal maps...)
 FACE_REQUIRED = ('head', 'face')  # a real face has at least its head model and its face textures
 
 KIT_ROLES = {0: 'home', 1: 'away', 2: 'goalkeeper'}  # other kit types keep only their number
@@ -156,7 +157,8 @@ MAX_PLAYER_ID = 524287      # players.playerid has 19 bits
 MODEL_PLAYER = 139541       # the row a player made from scratch starts from (a plain central midfielder of the game, no traits)
 PLAYER_FACE_FILES = {       # a player's own face (headclasscode 0): every file named after his id
     'head': 'data/sceneassets/heads/head_{}_0.rx3',
-    'face': 'data/sceneassets/faces/face_{}_0_0_0_0_0_0_0_0_textures.rx3',
+    'bump': 'data/sceneassets/heads/head_{}_bump.rx3',  # relief textures of the head (normal maps); only some faces
+    'face':'data/sceneassets/faces/face_{}_0_0_0_0_0_0_0_0_textures.rx3',
     'eyes': 'data/sceneassets/heads/eyes_{}_0_textures.rx3',
     'hair': 'data/sceneassets/hair/hair_{}_0_0.rx3',
     'hair_textures': 'data/sceneassets/hair/hair_{}_0_textures.rx3',
@@ -410,13 +412,14 @@ class Fifa14Source:
 
     @cached_property
     def _face_files(self) -> dict[int, dict[str, str]]:
-        """{player id: {game path: kind}} of every head, eyes, face, hair and hair LOD file."""
+        """{player id: {game path: kind}} of every head, bump, eyes, face, hair and hair LOD file."""
         out: dict[int, dict[str, str]] = {}
         for folder in FACE_FOLDERS:
             for path in self.files.list(folder):
                 m = FACE_FILE.match(path)
                 if m:
-                    out.setdefault(int(m.group(2)), {})[path] = m.group(1)
+                    kind = 'bump' if FACE_BUMP.match(path) else m.group(1)
+                    out.setdefault(int(m.group(2)), {})[path] = kind
         return out
 
     def face_paths(self, pid: int) -> dict[str, str] | None:

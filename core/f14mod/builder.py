@@ -20,6 +20,7 @@ import functools
 import io
 import os
 import shutil
+import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import wait as wait_futures
 
@@ -38,6 +39,11 @@ LOCALE = 'data/loc/locale.big'
 
 
 BUILD_STEPS = ('database', 'images', 'texts', 'files')
+# what the 'database' step is doing, in order (progress kind 'part'; the dialog names each one), with its share of
+# the step (from a project of thousands of players: going through their faces is most of it)
+DATABASE_PARTS = {'check': 1, 'read': 1, 'created': 1, 'fields': 2, 'rosters': 2, 'kits': 4, 'faces': 50, 'links': 3,
+                  'save': 2, 'adboards': 1, 'equipment': 1, 'stadiums': 2}
+DATABASE_SCALE = 1000  # the step's done / total (the bar): parts before the current one + its own share
 
 
 class BuildCancelled(Exception):
@@ -335,7 +341,10 @@ def _table(db: Database, name: str):
 
 
 def _has(table, column: str) -> bool:
-    return any(f.name == column for f in table.fields)
+    try:  # remembered lookup (the build asks this millions of times); by name only, never by short name
+        return table.field(column).name == column or any(f.name == column for f in table.fields)
+    except KeyError:
+        return False
 
 
 def _model_row(table, column: str, preferred: int) -> list:
@@ -742,22 +751,39 @@ def write_rosters(db: Database, project: Project) -> int:
     if not rosters:
         return 0
     teams, links, formations = db.table('teams'), db.table('teamplayerlinks'), db.table('formations')
+    team_rows_of = {}
+    for r in teams.records:
+        team_rows_of.setdefault(teams.get(r, 'teamid'), r)
+    formation_of = {}
+    for r in formations.records:
+        formation_of.setdefault(formations.get(r, 'teamid'), r)
+    # the squads replaced: their links go in one pass (a big project has hundreds of teams and thousands of links)
+    replaced = {tid for tid in rosters if tid in team_rows_of}
+    model_of = {}
+    raws = links.raw_records + [bytes(links.rec_size)] * (len(links.records) - len(links.raw_records))
+    kept, kept_raw = [], []
+    for row, raw in zip(links.records, raws):
+        tid = links.get(row, 'teamid')
+        if tid in replaced:
+            model_of.setdefault(tid, row)
+        else:
+            kept.append(row)
+            kept_raw.append(raw)
+    fallback = links.records[0] if links.records else None
+    links.records, links.raw_records = kept, kept_raw
+    key = _next(links, 'artificialkey')  # unique: every new link after the highest one kept
     count = 0
     for tid, rows in rosters.items():
         rows = [r for r in rows if not r.get('hidden')]  # hidden in this team: out of the patch, kept on the screen
-        team_rows = teams.find(teamid=tid)
-        if not team_rows:
+        if tid not in replaced:
             continue
-        own = formations.find(teamid=tid)
-        positions = [formations.get(own[0], f'position{i}') for i in range(STARTERS)] if own else list(range(STARTERS))
+        team_row = team_rows_of[tid]
+        own = formation_of.get(tid)
+        positions = [formations.get(own, f'position{i}') for i in range(STARTERS)] if own else list(range(STARTERS))
         rows = lineup(rows, positions)
         if len(rows) < STARTERS:
             raise BuildError('team_too_few_players', str(tid))
-        model = next((r for r in links.records if links.get(r, 'teamid') == tid), links.records[0])
-        keep = [i for i, r in enumerate(links.records) if links.get(r, 'teamid') != tid]
-        raws = links.raw_records + [bytes(links.rec_size)] * (len(links.records) - len(links.raw_records))
-        links.records, links.raw_records = [links.records[i] for i in keep], [raws[i] for i in keep]
-        key = _next(links, 'artificialkey')
+        model = model_of.get(tid, fallback)
         for r in rows:
             new = list(model)
             for f in links.fields:  # the counters of a new link start at zero
@@ -774,8 +800,8 @@ def write_rosters(db: Database, project: Project) -> int:
         squad = {r['player'] for r in rows}
         starters = [r['player'] for r in rows if r['slot'] < BENCH]
         for column in ('captainid', *fifa14.TAKERS.values()):
-            if _has(teams, column) and teams.get(team_rows[0], column) not in squad:
-                teams.set(team_rows[0], column, starters[-1])
+            if _has(teams, column) and teams.get(team_row, column) not in squad:
+                teams.set(team_row, column, starters[-1])
         count += 1
     return count
 
@@ -791,20 +817,23 @@ def add_created_players(db: Database, project: Project) -> int:
     players = db.table('players')
     by_id = {players.get(r, 'playerid'): r for r in players.records}
     blank = project.blank_players()
+    sources = project.player_sources()
+    # made from scratch: the neutral values (his saved fields are written over them)
+    neutral = {c: v for c, v in fields.player_blank_columns().items() if v is not None and _has(players, c)}
     for pid in created:
         if pid in by_id:
             raise BuildError('player_id_taken', str(pid))
-        template = project.player_source(pid) or fifa14.MODEL_PLAYER
+        template = sources.get(pid) or fifa14.MODEL_PLAYER
         model = by_id.get(template) or by_id.get(fifa14.MODEL_PLAYER) or players.records[0]
         by_id[pid] = _clone(players, model, playerid=pid)
-        if pid in blank:  # made from scratch: the neutral values (his saved fields are written over them)
-            for column, value in fields.player_blank_columns().items():
-                if value is not None and _has(players, column):
-                    players.set(by_id[pid], column, value)
+        if pid in blank:
+            for column, value in neutral.items():
+                players.set(by_id[pid], column, value)
     return len(created)
 
 
-def write_player_files(files: GameFiles, db: Database, project: Project, builder: 'PatchBuilder') -> dict:
+def write_player_files(files: GameFiles, db: Database, project: Project, builder: 'PatchBuilder',
+                       counted=None) -> dict:
     """The head of every player whose face the user chose (headclasscode 0 = his own face files, named after his id:
     copied from another game player or from the pack face kept in the project; 1 = the generic head of his look
     codes) and the photo of every player with a picture (heads/p<id>.dds). A part the chosen face does not bring is
@@ -815,7 +844,10 @@ def write_player_files(files: GameFiles, db: Database, project: Project, builder
     has_class = _has(players, 'headclasscode')
     counts = {'faces': 0, 'photos': 0}
     template = None  # faceconv's template files, read once the first face needs converting
-    for pid, values in project.all_fields('player').items():
+    saved = project.all_fields('player')
+    for n, (pid, values) in enumerate(saved.items()):
+        if counted is not None:  # counted(done, total): the players gone through
+            counted(n, len(saved))
         face, row = values.get('face'), rows.get(pid)
         if not face or row is None:
             continue
@@ -924,31 +956,37 @@ def team_files(files: GameFiles, db: Database, project: Project, builder: 'Patch
     kits_table = db.table('teamkits')
     listed = [p for p in files.list('data/') if TEAM_COPIED_FILES.match(p) or TEAM_LOOKS.match(p)] if created else []
     counts = {'crests': 0, 'kits': 0, 'copied': 0}
+    # the model's files of each (template, copy), found once: hundreds of created teams share a few templates
+    model_files: dict[tuple[int, bool], list[tuple[str, str, str]]] = {}
+    read_once: dict[str, bytes | None] = {}
     for tid in sorted(teams):
         team_name = builder.name('team', tid, project)
         template, copy = _team_source(project, tid) if tid in created else (tid, True)
         if tid in created:  # the model's files under the new id (and its crest and kits when the team is a copy)
-            for path in listed:
-                if TEAM_LOOKS.match(path) and not copy:
-                    continue
-                folder, name = path.rsplit('/', 1)
+            if (template, copy) not in model_files:
+                model_files[template, copy] = [
+                    (path, *path.rsplit('/', 1)) for path in listed
+                    if (copy or not TEAM_LOOKS.match(path)) and _renamed(path.rsplit('/', 1)[1], template, template)]
+            for path, folder, name in model_files[template, copy]:
                 new_name = _renamed(name, template, tid)
                 if new_name:
-                    builder.put(f'{folder}/{new_name}', files.read(path))
+                    if path not in read_once:
+                        read_once[path] = files.read(path)
+                    builder.put(f'{folder}/{new_name}', read_once[path])
                     counts['copied'] += 1
-        crest = _picture(project, 'team', tid, 'crest')
+        # the pictures are decoded by the picture jobs (in the pool), not here: a big project has thousands
+        crest = _LazyPicture.of(_png(project, 'team', tid, 'crest'), images.decode_png)
         plain = tid in created and (not copy or project.fields('team', tid).get('plain_crest') == 1)
         if crest is None and plain:  # made from scratch, or a copy whose copied crest was removed
             names = with_derived_names('team', project.names('team', tid))
             crest = teamkits.plain_crest(_shown_name(names, 'abbr3'), _team_color(db, project, tid, 1),
                                          _team_color(db, project, tid, 2))
         if crest is not None:
-            builder.later('crest', team_name, builder.key('crest', ('teamkits',), tid, template, crest),
-                          functools.partial(teamkits.crest_files, files, crest, tid, template))
+            builder.later('crest', team_name, builder.key('crest', ('teamkits',), tid, template, _keyed(crest)),
+                          functools.partial(_crest_files, files, crest, tid, template))
             counts['crests'] += 1
         else:
-            game_crest = files.read(teamkits.CREST_FILE.format('crest', template))
-            crest = images.decode_dds(game_crest) if game_crest is not None else None
+            crest = _LazyPicture.of(files.read(teamkits.CREST_FILE.format('crest', template)), images.decode_dds)
         configs = dict(all_kits.get(tid, {}))
         if tid in created and not copy:  # made from scratch: generic kits until the user picks others
             c1, c2 = _team_color(db, project, tid, 1), _team_color(db, project, tid, 2)
@@ -963,17 +1001,14 @@ def team_files(files: GameFiles, db: Database, project: Project, builder: 'Patch
                     if kits_table.get(r, 'teamtechid') == tid and kits_table.get(r, 'year') == 0}
         for kind, config in sorted(configs.items()):
             pics = {name: p for name in ('jersey', 'shorts')
-                    if (p := _picture(project, 'team', tid, f'kit{kind}_{name}')) is not None}
+                    if (p := _png(project, 'team', tid, f'kit{kind}_{name}')) is not None}  # PNG bytes
             keep = config.get('source') == 'keep'  # only the name and numbers change
             if not keep:
-                tint = config if config.get('colors') or 'jersey' not in pics else {
-                    **config, 'colors': [list(pics['jersey'].convert('RGB').resize((1, 1)).getpixel((0, 0)))]}
-                mini = _picture(project, 'team', tid, f'kit{kind}_mini')
+                mini = _png(project, 'team', tid, f'kit{kind}_mini')
                 builder.later('kit', team_name,
-                              builder.key('kit', ('teamkits',), tid, kind, template, config, tint, crest,
+                              builder.key('kit', ('teamkits',), tid, kind, template, config, _keyed(crest),
                                           sorted(pics), *[pics[n] for n in sorted(pics)], mini),
-                              functools.partial(_kit_files, files, tid, kind, template, config, tint, crest, pics,
-                                                mini))
+                              functools.partial(_kit_files, files, tid, kind, template, config, crest, pics, mini))
             row = kit_rows.get(kind)
             if row is None and keep:
                 continue  # nothing to print on: the team has no such kit
@@ -993,10 +1028,55 @@ def team_files(files: GameFiles, db: Database, project: Project, builder: 'Patch
     return counts
 
 
-def _kit_files(files: GameFiles, tid: int, kind: int, template: int, config: dict, tint: dict,
-               crest: Image.Image | None, pics: dict, mini: Image.Image | None) -> dict[str, bytes]:
-    """The kit file and the minikit of one kit of a team."""
-    return {teamkits.KIT_FILE.format(tid, kind): teamkits.kit_file(files, config, kind, template, crest, pics),
+class _LazyPicture:
+    """A picture decoded on first use, once, by whichever picture job needs it first (the crest of a team is used by
+    its crest job and by each of its kits)."""
+
+    def __init__(self, data: bytes, decode):
+        self.data, self._decode = data, decode
+        self._image: Image.Image | None = None
+        self._lock = threading.Lock()
+
+    @classmethod
+    def of(cls, data: bytes | None, decode) -> '_LazyPicture | None':
+        return None if data is None else cls(data, decode)
+
+    def image(self) -> Image.Image:
+        with self._lock:
+            if self._image is None:
+                self._image = self._decode(self.data)
+            return self._image
+
+
+def _png(project: Project, kind: str, oid: int, slot: str) -> bytes | None:
+    """The PNG bytes of a picture of the project (decoded later, in the picture job)."""
+    found = project.picture(kind, oid, slot)
+    return found[0] if found else None
+
+
+def _keyed(picture):
+    """What a cache key takes of a picture: the file bytes of a lazy one, the pixels of a drawn one."""
+    return picture.data if isinstance(picture, _LazyPicture) else picture
+
+
+def _image(picture) -> Image.Image | None:
+    return picture.image() if isinstance(picture, _LazyPicture) else picture
+
+
+def _crest_files(files: GameFiles, crest, tid: int, template: int) -> dict[str, bytes]:
+    return teamkits.crest_files(files, _image(crest), tid, template)
+
+
+def _kit_files(files: GameFiles, tid: int, kind: int, template: int, config: dict, crest, pngs: dict,
+               mini_png: bytes | None) -> dict[str, bytes]:
+    """The kit file and the minikit of one kit of a team (the pictures decoded here, in the picture pool). Without
+    colors of its own, the minikit takes the average color of the user's jersey picture."""
+    pics = {name: images.decode_png(data) for name, data in pngs.items()}
+    tint = config if config.get('colors') or 'jersey' not in pics else {
+        **config, 'colors': [list(pics['jersey'].convert('RGB').resize((1, 1)).getpixel((0, 0)))]}
+    mini = images.decode_png(mini_png) if mini_png is not None else None
+    crest_image = _image(crest)
+    return {teamkits.KIT_FILE.format(tid, kind): teamkits.kit_file(files, config, kind, template, crest_image, pics),
             teamkits.MINIKIT.format(kind, tid): teamkits.minikit(files, tint, kind, template, mini)}
 
 
@@ -1046,8 +1126,10 @@ def _adboard_files(model: bytes, path: str, png: bytes) -> dict[str, bytes]:
     return {path: adboards.board_file(model, png)}
 
 
-def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') -> dict | None:
-    """The database with the project's fields, created entities and league teams, loose (with its meta file)."""
+def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder', part=None) -> dict | None:
+    """The database with the project's fields, created entities and league teams, loose (with its meta file).
+    part(code, done=0, total=0): what it is doing (DATABASE_PARTS; 'faces' also counts the players)."""
+    part = part or (lambda *_, **__: None)
     has_created = bool(project.created('country') or project.created('league') or project.created('team')
                        or project.created('player') or project.created('stadium'))
     hiding = any(project.hidden_in_game(kind) for kind in ('country', 'league', 'team'))
@@ -1057,29 +1139,39 @@ def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') 
     if not any(project.all_fields(kind) for kind in ID_COLUMNS) and not has_created and not project.all_members() \
             and not hiding and not team_work and not equipment_work:
         return None
+    part('read')
     meta_raw, raw = files.read(fifa14.META), files.read(DATABASE)
     if meta_raw is None or raw is None:
         raise ValueError('database not found')
     db = Database(raw, t3db.load_meta(meta_raw))
+    part('created')
     created = add_created(db, project)
     if new_teams := add_created_teams(db, project):
         created['team'] = new_teams
     if new_players := add_created_players(db, project):
         created['player'] = new_players
+    part('fields')
     result = apply_database(db, project)
     result['created'] = created
-    for key, value in (('formations', write_formations(db, project)), ('rosters', write_rosters(db, project)),
-                       ('team_stadiums', write_team_stadiums(db, project)),
-                       ('team_files', team_files(files, db, project, builder)),
-                       ('player_files', write_player_files(files, db, project, builder))):
-        if value:
+    for key, code, make in (
+            ('formations', 'rosters', lambda: write_formations(db, project)),
+            ('rosters', None, lambda: write_rosters(db, project)),
+            ('team_stadiums', None, lambda: write_team_stadiums(db, project)),
+            ('team_files', 'kits', lambda: team_files(files, db, project, builder)),
+            ('player_files', 'faces', lambda: write_player_files(
+                files, db, project, builder, lambda done, total: part('faces', done, total)))):
+        if code:
+            part(code)
+        if value := make():
             result[key] = value
+    part('links')
     if rows := write_equipment_rows(db, project):
         result['equipment'] = rows
     result['league_links'] = write_members(db, project)
     visibility = write_visibility(db, project)
     if visibility:
         result['visibility'] = visibility
+    part('save')
     builder.put(DATABASE, db.build())
     builder.put(fifa14.META, meta_raw)
     return result
@@ -1088,15 +1180,17 @@ def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder') 
 def write_stadiums(files: GameFiles, project: Project, builder: 'PatchBuilder') -> int:
     """The files of the stadiums the user created (f14mod.stadium_files): scene and menu pictures under their id;
     and the game's stadiums the user changed: the folder given to them (their 3D) and their menu pictures."""
+    # each stadium in the picture pool (its scene is hundreds of MB to read and its menu pictures are drawn): the
+    # 'images' step shows them; no build cache (the scene is the user's own files, read as they are)
     created = project.created('stadium')
     for sid in created:
-        for path, data in stadium_files.patch_files(files, project, sid).items():
-            builder.put(path, data)
+        builder.later('stadium', builder.name('stadium', sid, project), None,
+                      functools.partial(stadium_files.patch_files, files, project, sid))
     changed = set().union(project.with_stadium_scene(), *(project.with_picture('stadium', stadium_files.picture_slot(v))
                                                           for v in stadium_files.PICTURE_VARIANTS)) - set(created)
     for sid in sorted(changed):
-        for path, data in stadium_files.game_stadium_files(files, project, sid).items():
-            builder.put(path, data)
+        builder.later('stadium', builder.name('stadium', sid, project), None,
+                      functools.partial(stadium_files.game_stadium_files, files, project, sid))
     return len(created) + len(changed)
 
 
@@ -1207,8 +1301,19 @@ def build(files: GameFiles, project: Project, out_dir: str, progress=None, worke
     worker_count = workers.plan() if worker_count is None else max(1, int(worker_count))
     if cache is not None and not cache.folder:
         cache = None
+    parts, weight = list(DATABASE_PARTS), sum(DATABASE_PARTS.values())
+
+    def part(code: str, done: int = 0, total: int = 0) -> None:
+        """The 'database' step's own progress: it only moves forward (the parts come in DATABASE_PARTS' order);
+        count = the items of this part gone through (the faces' players)."""
+        check()
+        before = sum(DATABASE_PARTS[p] for p in parts[:parts.index(code)])
+        share = before + DATABASE_PARTS[code] * (min(done / total, 1) if total else 0)
+        step('database', round(share / weight * DATABASE_SCALE), DATABASE_SCALE, kind='part', name=code,
+             count=(done, total) if total else None)
+
+    part('check')  # before visible(): on a big project its checks take a moment
     project = project.visible()  # what is left out of the patch is not built
-    step('database', 0, 1)
     pool = ThreadPoolExecutor(max_workers=worker_count)
     builder = PatchBuilder(files, pool, cache, name_of)
     if cache is not None:
@@ -1242,11 +1347,14 @@ def build(files: GameFiles, project: Project, out_dir: str, progress=None, worke
         check()
 
         # ---- database (its pictures go to the thread pool)
-        database = write_database(files, project, builder)
+        database = write_database(files, project, builder, part)
+        part('adboards')
         boards = write_adboards(files, project, builder)
+        part('equipment')
         gear = write_equipment(files, project, builder)
+        part('stadiums')
         stadiums = write_stadiums(files, project, builder)
-        step('database', 1, 1)
+        step('database', DATABASE_SCALE, DATABASE_SCALE)
         check()
         pictures = created_pictures(files, project, builder)
 

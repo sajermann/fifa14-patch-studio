@@ -120,7 +120,7 @@ VIEWS = [
                COALESCE({_saved_sql('player', 'c', 'nationality')}, CASE WHEN {BLANK_PLAYER} THEN NULL ELSE t.nationality END),
                CASE WHEN {BLANK_PLAYER} THEN '{fields.PLAYER_DEFAULTS['birthdate']}' ELSE t.birthdate END,
                COALESCE({_saved_sql('player', 'c', 'height')}, CASE WHEN {BLANK_PLAYER} THEN {fields.PLAYER_DEFAULTS['height']} ELSE t.height END),
-               EXISTS (SELECT 1 FROM p.pictures WHERE kind = 'player' AND id = c.id AND slot = 'photo'), '',
+               EXISTS (SELECT 1 FROM p.pictures WHERE kind = 'player' AND id = c.id AND slot = 'photo'), CAST(c.id AS TEXT),
                CASE WHEN {BLANK_PLAYER} THEN {_blank_player_raw('t.raw')} ELSE t.raw END, 1
         FROM p.created c LEFT JOIN p.player_sources s ON s.player_id = c.id
              LEFT JOIN players t ON t.id = CASE WHEN {BLANK_PLAYER} THEN {fifa14.MODEL_PLAYER} ELSE s.template END

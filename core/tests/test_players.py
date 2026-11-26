@@ -106,7 +106,7 @@ def test_hidden_created_player_is_left_out(installed, tmp_path):
 def test_original_player_generic_head_and_pack_face(installed, tmp_path):
     project = Project(str(tmp_path / 'p.sqlite'))
     project.save('player', fakegame.STAR, None, {'face': {'source': 'generic'}, 'hairtypecode': 12})
-    files = {'head': b'RX3l pack head', 'face': b'RX3l pack face', 'hair': b'RX3l pack hair'}
+    files = {'head': b'RX3l pack head', 'bump': b'RX3b pack bump', 'face': b'RX3l pack face', 'hair': b'RX3l pack hair'}
     project.save('player', fakegame.KEEPER, None, {'face': {'source': 'pack', 'pack': 'x', 'id': 51318}})
     project.set_player_files(fakegame.KEEPER, files)
     _summary, tables, patch_dir = _build(installed, tmp_path, project)
@@ -194,6 +194,17 @@ def test_face_pack_reader(tmp_path):
     manifest, warnings = facepack.read_manifest(assets, str(tmp_path))
     assert manifest == {77: {'name': 'Someone', 'credits': 'Maker'}} and warnings == []
     assert set(facepack.read_face(assets, 77)) == {'head', 'face', 'hair'}
+
+
+def test_face_pack_keeps_optional_rx3b_parts(tmp_path):
+    """PC patches ship hair and bump maps as RX3b and the game reads them: they are kept, not dropped."""
+    pack = tmp_path / 'data' / 'sceneassets'
+    files = {'head': b'RX3l head', 'face': b'RX3l face', 'hair': b'RX3b hair', 'bump': b'RX3b bump', 'eyes': b'junk'}
+    for kind, data in files.items():
+        path = pack / facepack.FILES[kind].format(77)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    assert facepack.read_files(str(pack), 77) == {k: v for k, v in files.items() if k != 'eyes'}
 
 
 # ---- a face that lacks parts, filled in with the game's generic eyes and hair (facefill)
