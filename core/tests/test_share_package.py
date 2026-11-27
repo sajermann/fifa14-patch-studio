@@ -132,6 +132,37 @@ def test_the_package_formation_wins_and_a_missing_one_comes_from_the_starters(tm
     assert 'formation' not in share.read(path).by_key()['team:1043']['fields']
 
 
+def test_names_of_every_language_keep_the_ones_that_differ():
+    """language_names of the package: the text most languages share goes to every language, the others their own."""
+    from f14mod import package
+    by_lang = {'full': {'eng_us': 'S01', 'fre_fr': 'S01', 'ita_it': 'S01', 'por_br': 'S01 BR', 'spa_es': ' '}}
+    assert package._names({'full': 'S01'}, ('full',), by_lang) == {'full': {'*': 'S01', 'por_br': 'S01 BR'}}
+    # the package language's text is not the most common one: still the most common goes to every language
+    assert package._names({'full': 'S01 BR'}, ('full',), by_lang) == {'full': {'*': 'S01', 'por_br': 'S01 BR'}}
+    # a tie keeps the package language's text
+    tie = {'full': {'eng_us': 'S02', 'por_br': 'S02 BR'}}
+    assert package._names({'full': 'S02 BR'}, ('full',), tie) == {'full': {'*': 'S02 BR', 'eng_us': 'S02'}}
+    # a key without language names, and a package made before them: one text for every language
+    assert package._names({'full': 'S03', 'abbr3': 'S03'}, ('full', 'abbr3'), {'full': {'eng_us': 'S03'}}) == \
+        {'full': {'*': 'S03'}, 'abbr3': {'*': 'S03'}}
+    assert package._names({'full': 'S04'}, ('full',)) == {'full': {'*': 'S04'}}
+
+
+def test_a_package_with_names_of_every_language_imports_each_one(tmp_path):
+    path = _package(tmp_path)
+
+    def add(manifest, files):
+        manifest['teams'][0]['language_names'] = {'full': {'eng_us': 'T01', 'ita_it': 'T01', 'por_br': 'T01 BR'}}
+        manifest['stadiums'] = [{'source_id': 3, 'names': {'database': 'S01 DB', 'full': 'S01'},
+                                 'language_names': {'full': {'eng_us': 'S01', 'ita_it': 'S01', 'por_br': 'S01 BR'}},
+                                 'raw': {'stadiums': [{'stadiumid': 3}]}}]
+    _rewrite(path, add)
+    records = share.read(path).by_key()
+    assert records['team:1043']['names']['full'] == {'*': 'T01', 'por_br': 'T01 BR'}
+    assert records['team:1043']['names']['abbr3'] == {'*': 'T01'}
+    assert records['stadium:3']['names'] == {'full': {'*': 'S01', 'por_br': 'S01 BR'}}
+
+
 def _rewrite(path, change):
     with zipfile.ZipFile(path) as z:
         manifest = json.loads(z.read('package.json'))

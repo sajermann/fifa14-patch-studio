@@ -68,8 +68,12 @@ def test_team_made_from_scratch(installed, tmp_path):
     team = next(r for r in tables['teams'] if r['teamid'] == NEW)
     assert team['teamname'] == 'Free Team United' and (team['teamcolor1r'], team['teamcolor1b']) == (0, 200)
     assert team['captainid'] in squad
-    formation = next(r for r in tables['formations'] if r['teamid'] == NEW)
-    assert [formation[f'position{i}'] for i in range(11)] == P433
+    # no formation of its own (the game takes 899 at most): it points at the generic one chosen (test FM4)
+    assert NEW not in {r['teamid'] for r in tables['formations']}
+    link = next(r for r in tables['teamformationteamstylelinks'] if r['teamid'] == NEW)
+    generic = next(r for r in tables['formations'] if r['formationid'] == link['formationid'])
+    assert (generic['teamid'], generic['relativeformationid'], link['teamstyleid']) == (-1, 8, 0)
+    assert [generic[f'position{i}'] for i in range(11)] == P433
     links = [r for r in tables['teamplayerlinks'] if r['teamid'] == NEW]
     assert len(links) == 14 and sorted(r['position'] for r in links if r['position'] < 28) == P433
     assert [r['jerseynumber'] for r in links] == list(range(1, 15))
@@ -223,3 +227,102 @@ def test_copy_with_plain_crest(installed, tmp_path):
     assert crest != copied
     r, g, b = images.decode_dds(crest).convert('RGB').getpixel((32, 20))
     assert r < 10 and g < 10 and b > 180  # color 1 (DXT rounds it)
+
+
+def _crowd_files(installed):
+    """The model team's crowd flags and banner, and its warm-up kit (loose files of the game)."""
+    out = {}
+    for path in (f'data/sceneassets/flag/flag_{fakegame.TEAM}.rx3', f'data/sceneassets/banner/banner_{fakegame.TEAM}.rx3',
+                 f'data/sceneassets/warmup/warmup_{fakegame.TEAM}_0.rx3'):
+        full = os.path.join(installed, *path.split('/'))
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, 'wb') as f:
+            f.write(path.encode())
+        out[path.rsplit('/', 1)[0]] = path
+    return out
+
+
+def _made_from(installed, tmp_path, copy):
+    project = Project(str(tmp_path / 'p.sqlite'))
+    project.create('team', NEW, {'full': {'*': 'A01'}})
+    project.set_team_source(NEW, fakegame.TEAM, copy)
+    if not copy:
+        source = __import__('f14mod.fifa14', fromlist=['Fifa14Source']).Fifa14Source(
+            installed, files=catalog.open_game(installed))
+        squad = [link['playerid'] for link in source.team_links[fakegame.TEAM]][:14]
+        project.set_roster(NEW, [{'player': pid, 'jersey': i + 1, 'slot': 29} for i, pid in enumerate(squad)])
+    return project
+
+
+def test_created_team_does_not_take_the_models_crowd_flags_or_board(installed, tmp_path):
+    _crowd_files(installed)
+    summary, tables, patch_dir = _build(installed, tmp_path, _made_from(installed, tmp_path, copy=False))
+    exists = lambda folder, name: os.path.exists(os.path.join(patch_dir, *folder.split('/'), name))
+    assert not exists('data/sceneassets/flag', f'flag_{NEW}.rx3')  # the model's flags show the model's crest
+    assert not exists('data/sceneassets/banner', f'banner_{NEW}.rx3')
+    assert exists('data/sceneassets/warmup', f'warmup_{NEW}_0.rx3')  # the warm-up kit still comes from the model
+    team = next(r for r in tables['teams'] if r['teamid'] == NEW)
+    assert team['adboardid'] == builder.adboards.DEFAULT_BOARD  # not the model's 7: its league is not in the game's table
+
+
+def test_copied_team_keeps_the_models_crowd_flags_and_board(installed, tmp_path):
+    _crowd_files(installed)
+    summary, tables, patch_dir = _build(installed, tmp_path, _made_from(installed, tmp_path, copy=True))
+    assert _file(patch_dir, f'data/sceneassets/flag/flag_{NEW}.rx3') ==         f'data/sceneassets/flag/flag_{fakegame.TEAM}.rx3'.encode()
+    assert os.path.exists(os.path.join(patch_dir, 'data', 'sceneassets', 'banner', f'banner_{NEW}.rx3'))
+    assert next(r for r in tables['teams'] if r['teamid'] == NEW)['adboardid'] == 7
+
+
+def test_formations_get_ids_in_sequence_and_a_hidden_game_team_frees_its_own(installed, tmp_path):
+    """The game takes formations 1-899 only (tests FM1-FM4): the rows get ids 1-N, a hidden game team's row leaves,
+    a created team points at the generic formation its model's row was a copy of."""
+    project = _made_from(installed, tmp_path, copy=False)
+    project.set_hidden('team', fakegame.TEAM, True)
+    _, tables, _ = _build(installed, tmp_path, project)
+    rows = tables['formations']
+    assert [r['formationid'] for r in rows] == list(range(1, len(rows) + 1))
+    assert {r['teamid'] for r in rows} == {-1}  # the generic ones stay; the model's row went with its team
+    link = next(r for r in tables['teamformationteamstylelinks'] if r['teamid'] == NEW)
+    generic = next(r for r in rows if r['formationid'] == link['formationid'])
+    assert generic['relativeformationid'] == 13  # the model team's own row is a copy of 13 (4-2-2-2)
+    starters = sorted(r['position'] for r in tables['teamplayerlinks'] if r['teamid'] == NEW and r['position'] < 28)
+    assert starters == sorted(generic[f'position{i}'] for i in range(11))
+
+
+def test_more_formations_than_the_game_takes_stop_the_build(installed, tmp_path, monkeypatch):
+    """Only the game's own rows count: a created team points at a generic formation."""
+    monkeypatch.setattr(builder.fifa14, 'MAX_FORMATIONS', 3)  # the fake game: 2 generic + its team
+    project = _made_from(installed, tmp_path, copy=False)
+    _build(installed, tmp_path, project)  # the created team takes no row
+    monkeypatch.setattr(builder.fifa14, 'MAX_FORMATIONS', 2)
+    with pytest.raises(builder.BuildError) as error:
+        _build(installed, tmp_path, project)
+    assert (error.value.code, error.value.detail) == ('too_many_formations', '1')
+
+
+def test_a_team_only_in_hidden_leagues_frees_its_formation(installed, tmp_path):
+    """Nobody can pick a team whose leagues are all hidden: its formation leaves (the generic ones stay)."""
+    project = Project(str(tmp_path / 'p.sqlite'))
+    project.set_hidden('league', fakegame.LEAGUE, True)  # the fake game's TEAM is only in it
+    _, tables, _ = _build(installed, tmp_path, project)
+    rows = tables['formations']
+    assert fakegame.TEAM not in {r['teamid'] for r in rows}
+    assert [r['formationid'] for r in rows] == list(range(1, len(rows) + 1))
+
+
+def test_a_created_team_only_in_hidden_leagues_stays_out_of_the_patch(installed, tmp_path):
+    """Nobody can pick it: left out like a hidden team (a faster build with leagues put aside), and so is a created
+    player who only plays for it; one league still shown is enough to keep both."""
+    project = _made_from(installed, tmp_path, copy=False)
+    pid = builder.fifa14.FIRST_FREE_PLAYER
+    project.create('player', pid, fields={'name.common': 'P01'})
+    project.set_roster(NEW, project.roster(NEW) + [{'player': pid, 'jersey': 99, 'slot': 29}])
+    project.set_members(fakegame.LEAGUE, [fakegame.TEAM, NEW])
+    project.set_hidden('league', fakegame.LEAGUE, True)
+    assert project.out_by_hidden_leagues() == ({NEW}, {pid})
+    _, tables, _ = _build(installed, tmp_path, project)
+    for table, column in (('teams', 'teamid'), ('leagueteamlinks', 'teamid'), ('teamplayerlinks', 'teamid'),
+                          ('teamformationteamstylelinks', 'teamid'), ('players', 'playerid')):
+        assert not {NEW, pid} & {r[column] for r in tables[table]}, table
+    project.set_members(fakegame.PLAIN_LEAGUE, [fakegame.SMALL_TEAM, NEW])
+    assert project.out_by_hidden_leagues() == (set(), set())

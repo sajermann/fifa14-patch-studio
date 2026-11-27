@@ -33,8 +33,8 @@ log = logging.getLogger('f14api')
 STAGING_DIR = os.path.join(settings.CACHE_DIR, 'share')
 STAGING_TTL = 24 * 3600
 MAX_UPLOAD = share.MAX_TOTAL
-FIRST_OWN_TEAM = 131001
-MAX_TEAM_ID = 262143  # teamid as the database fields that point to a team hold it
+FIRST_OWN_TEAM = fifa14.FIRST_FREE_TEAM
+MAX_TEAM_ID = fifa14.MAX_TEAM_ID  # the highest team id the game takes
 PICTURE_SLOTS = {'country': ('flag',), 'league': ('logo',), 'team': ('crest',), 'player': ('photo',),
                  'adboard': ('board',), 'boot': ('thumbnail',), 'glove': ('thumbnail',), 'ball': ('thumbnail',),
                  'stadium': ('menu_0', 'menu_1', 'menu_3', 'menu_4')}

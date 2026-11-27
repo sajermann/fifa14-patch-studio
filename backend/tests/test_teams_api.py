@@ -5,6 +5,8 @@ import io
 import fakegame
 from PIL import Image
 
+from f14mod import fifa14
+
 from conftest import wait
 
 
@@ -28,7 +30,7 @@ def test_team_from_scratch(client):
         'fields': {'teamcolor1': [0, 0, 200], 'teamcolor2': [255, 255, 255]},
         'league_ids': [fakegame.PLAIN_LEAGUE]}).json()
     tid = team['id']
-    assert tid == 131001 and team['is_new'] and team['roster'] == [] and team['template'] == fakegame.TEAM
+    assert tid == fifa14.FIRST_FREE_TEAM and team['is_new'] and team['roster'] == [] and team['template'] == fakegame.TEAM
     assert not team['copied'] and [k['default'] for k in team['kits']] == ['generic', 'generic', 'generic', None]
     assert len(team['formations']) == 2 and team['values']['formation'] == 13
     league = client.get(f'/api/leagues/{fakegame.PLAIN_LEAGUE}').json()
@@ -193,3 +195,18 @@ def test_country_and_league_copies(client):
     assert league['own_logo']
     empty = client.post('/api/leagues', json={'names': {'full': {'*': 'A04 League'}}, 'template': fakegame.LEAGUE}).json()
     assert empty['team_ids'] == [] and {**empty['values'], **empty['saved']}['countryid'] == 54
+
+
+def test_team_ids_stay_under_the_games_limit():
+    """The game takes team ids only up to 131071 (17 bits): the kit select screen crashes above it (27/11/2026)."""
+    import sqlite3
+
+    from f14api import queries
+    con = sqlite3.connect(':memory:')
+    con.execute('CREATE TABLE v_teams (id INTEGER)')
+    con.execute('CREATE TABLE team_kits (team_id INTEGER)')
+    assert queries.free_team_id(con) == fifa14.FIRST_FREE_TEAM <= fifa14.MAX_TEAM_ID == 131071
+    con.executemany('INSERT INTO v_teams VALUES (?)', [(i,) for i in range(fifa14.FIRST_FREE_TEAM, 131071)])
+    assert queries.free_team_id(con) == 131071
+    con.execute('INSERT INTO v_teams VALUES (131071)')
+    assert queries.free_team_id(con) is None

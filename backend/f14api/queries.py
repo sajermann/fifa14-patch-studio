@@ -618,14 +618,12 @@ def kit_models(con) -> list[int]:
                                       'ORDER BY team_id', (MASKS.start, MASKS.stop - 1))]
 
 
-def free_team_id(con, first: int = 131001) -> int:
-    """The first team id the game and the project do not use (nor any file named after it)."""
+def free_team_id(con, first: int = fifa14.FIRST_FREE_TEAM) -> int | None:
+    """The first team id the game and the project do not use (nor any file named after it), up to the highest id the
+    game takes (fifa14.MAX_TEAM_ID); None when none is left."""
     used = {r[0] for r in con.execute('SELECT id FROM v_teams')} | {r[0] for r in con.execute(
         'SELECT team_id FROM team_kits WHERE team_id >= ?', (first,))}
-    tid = first
-    while tid in used:
-        tid += 1
-    return tid
+    return next((tid for tid in range(first, fifa14.MAX_TEAM_ID + 1) if tid not in used), None)
 
 
 def league(con, lang: str, lid: int) -> dict | None:

@@ -151,6 +151,17 @@ TRAITS2 = ('fancy_feet', 'fancy_passes', 'fancy_flicks', 'stutter_penalty', 'chi
            'diving_header', 'driven_pass', 'gk_flat_kick', 'one_club_player', 'team_player')
 TRAITS = {**{k: ('trait1', i) for i, k in enumerate(TRAITS1)}, **{k: ('trait2', i) for i, k in enumerate(TRAITS2)}}
 
+# new teams: the game's executable keeps a team id in 17 bits somewhere (the kit select screen finds no kit of a team
+# with id 131072 or more and crashes, 27/11/2026: 131071 works, 131072 crashes). The clean game uses ids up to 112679
+# and 130000/130001; no file of the game is named after an id in 120001-131071.
+FIRST_FREE_TEAM = 120001
+MAX_TEAM_ID = 131071
+
+# formations: without a DLL the game uses formation ids 1-899 only, and every team that plays needs a row of its own
+# (27/11/2026, tests FM1-FM3: a team with a formation id of 900 or more, or without a row, shows all its starters as
+# goalkeepers and the match crashes when it starts). The clean game has 670 rows (33 generic + 637 teams).
+MAX_FORMATIONS = 899
+
 # new players
 FIRST_FREE_PLAYER = 300001  # new players get the first id from here the game does not use (nor any file named after it)
 MAX_PLAYER_ID = 524287      # players.playerid has 19 bits

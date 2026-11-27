@@ -588,6 +588,28 @@ def test_issues(client):
     assert client.get('/api/issues').json()['issues'] == []
 
 
+
+def test_issue_too_many_formations(client, monkeypatch):
+    """One formation per team that plays, 899 at most (builder.compact_formations): shown before any build; a hidden
+    game team frees its own."""
+    from f14mod import fifa14
+    monkeypatch.setattr(fifa14, 'MAX_FORMATIONS', 2)  # the fake game: 2 generic + TEAM's own
+    formations = lambda: [i for i in client.get('/api/issues').json()['issues'] if i['code'] == 'too_many_formations']
+    new_team = client.post('/api/teams', json={'names': {'full': {'*': 'F01'}}, 'template': fakegame.TEAM}).json()['id']
+    try:
+        # the created team points at a generic formation (builder.write_formation_links): only TEAM's row is over
+        found = formations()
+        assert [(i['severity'], i['params']) for i in found] == [('error', {'count': 3, 'max': 2, 'over': 1})]
+        client.put(f'/api/teams/{fakegame.TEAM}/hidden', json={'hidden': True})
+        assert formations() == []
+        client.put(f'/api/teams/{fakegame.TEAM}/hidden', json={'hidden': False})
+        client.put(f'/api/leagues/{fakegame.LEAGUE}/hidden', json={'hidden': True})  # TEAM's only league: same
+        assert formations() == []
+    finally:
+        client.put(f'/api/leagues/{fakegame.LEAGUE}/hidden', json={'hidden': False})
+        client.put(f'/api/teams/{fakegame.TEAM}/hidden', json={'hidden': False})
+        client.delete(f'/api/teams/{new_team}')
+
 def test_build_progress_cache_and_up_to_date(client):
     client.put(f'/api/teams/{fakegame.TEAM}', json={'names': {'full': {'*': 'Progress FC'}}})
     assert client.get('/api/status').json()['patch']['up_to_date'] is False

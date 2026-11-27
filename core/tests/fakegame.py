@@ -31,10 +31,11 @@ TEAMS = [
     {'teamid': TEAM, 'balltype': GAME_BALL, 'teamname': 'Test Athletic Club', 'teamcolor1r': 200, 'teamcolor1g': 10, 'teamcolor1b': 20,
      'teamcolor2r': 250, 'teamcolor2g': 250, 'teamcolor2b': 250, 'captainid': STAR, 'penaltytakerid': STAR,
      'freekicktakerid': 8004, 'longkicktakerid': 8004, 'leftcornerkicktakerid': 8005,
-     'rightcornerkicktakerid': 8005},
+     'rightcornerkicktakerid': 8005, 'adboardid': 7},
     {'teamid': SMALL_TEAM, 'teamname': 'Small Team FC', 'teamcolor1r': 0, 'teamcolor1g': 0, 'teamcolor1b': 200,
      'teamcolor2r': 255, 'teamcolor2g': 255, 'teamcolor2b': 255, 'captainid': 0, 'penaltytakerid': 0,
-     'freekicktakerid': 0, 'longkicktakerid': 0, 'leftcornerkicktakerid': 0, 'rightcornerkicktakerid': 0},
+     'freekicktakerid': 0, 'longkicktakerid': 0, 'leftcornerkicktakerid': 0, 'rightcornerkicktakerid': 0,
+     'adboardid': 3},
 ]
 LEAGUE_TEAM_LINKS = [{'leagueid': LEAGUE, 'teamid': TEAM}, {'leagueid': PLAIN_LEAGUE, 'teamid': SMALL_TEAM}]
 
@@ -179,7 +180,7 @@ def _encode(text, codes, prefix_len):
 def _table(rows, types=None):
     """Bytes of one table; fields = the keys of the rows (an int column or a string column)."""
     types = dict(types or {})
-    fields = list(dict.fromkeys(k for r in rows for k in r))
+    fields = list(dict.fromkeys([*types, *(k for r in rows for k in r)]))  # typed fields first (an empty table)
     for f in fields:
         if f not in types:
             types[f] = STRING_SHORT if any(isinstance(r.get(f), str) for r in rows) else INT
@@ -380,7 +381,8 @@ FACE_FILES = ['heads/head_{}_0.rx3', 'faces/face_{}_0_0_0_0_0_0_0_0_textures.rx3
 def build(root):
     """Writes the fake installation under root (root/Game/data, the layout of the patches) and returns root."""
     data = os.path.join(root, 'Game', 'data')
-    write_db(os.path.join(data, 'db', 'fifa_ng_db.db'), _tables(), os.path.join(data, 'db', 'fifa_ng_db-meta.xml'))
+    write_db(os.path.join(data, 'db', 'fifa_ng_db.db'), _tables(), os.path.join(data, 'db', 'fifa_ng_db-meta.xml'),
+             types={'teamformationteamstylelinks': dict.fromkeys(('teamid', 'formationid', 'teamstyleid', 'cddl'), INT)})
     write_strings_db(os.path.join(data, 'loc', 'eng_us.db'), STRINGS)
     write_strings_db(os.path.join(data, 'loc', 'eng_us_upd.db'), STRINGS_UPD)
 
@@ -488,6 +490,7 @@ def _tables():
             'editedplayernames': [{'playerid': KEEPER, 'firstname': 'Edited', 'surname': 'Keeper',
                                    'commonname': '', 'playerjerseyname': 'EDITED'}],
             'teamstadiumlinks': [{'teamid': TEAM, 'stadiumid': 3}], 'formations': _formations(),
+            'teamformationteamstylelinks': [],  # a team pointing at a generic formation (empty in the game)
             'stadiums': [{'stadiumid': 3, 'name': 'Test Ground', 'capacity': 12345, 'yearbuilt': 1901,
                           'countrycode': 54, 'hometeamid': TEAM, 'timeofday1': 1, 'timeofday2': 3, 'timeofday3': 5,
                           'timeofday4': 5, 'tod1weather': 3, 'tod2weather': 1, 'tod3weather': 0, 'tod4weather': 0}],

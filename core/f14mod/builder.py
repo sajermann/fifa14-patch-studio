@@ -611,6 +611,9 @@ def _flag_files(files: GameFiles, nid: int, png_data: bytes) -> dict[str, bytes]
 # ---- teams (test TN1) ----------------------------------------------------------------------------------------------
 
 TEAM_COPIED_FILES = re.compile(r'data/sceneassets/(?:warmup|warmup/tra|adboard|banner|flag)/')  # copied from the model
+# the crowd's flags and banners (and any board) of the model show the model's own crest and colors: only a copy of a
+# team keeps them; a team made from scratch or imported has none (the game shows no team flag then, as in other patches)
+TEAM_CROWD_FILES = re.compile(r'data/sceneassets/(?:adboard|banner|flag)/')
 TEAM_LOOKS = re.compile(r'data/(?:sceneassets/kit/|ui/imgassets/(?:crest|crest16x16|crest32x32|crest50x50|kits)/)')
 STARTERS = 11
 BENCH, RESERVE = 28, 29  # teamplayerlinks.position of a substitute and of a player out of the squad
@@ -653,6 +656,7 @@ def add_created_teams(db: Database, project: Project) -> int:
     teams, kits, formations = db.table('teams'), db.table('teamkits'), db.table('formations')
     stadiums, row_links = _table(db, 'teamstadiumlinks'), _table(db, 'rowteamnationlinks')
     links = db.table('teamplayerlinks')
+    pointing = _table(db, FORMATION_LINKS) is not None
     for tid in created:
         if teams.find(teamid=tid):
             raise BuildError('team_id_taken', str(tid))
@@ -670,7 +674,7 @@ def add_created_teams(db: Database, project: Project) -> int:
         for table in (row_links,) if blank else (stadiums, row_links):
             if table is not None and table.find(teamid=template):
                 _clone(table, table.find(teamid=template)[0], teamid=tid)
-        own = None if blank else formations.find(teamid=template)
+        own = None if blank or pointing else formations.find(teamid=template)  # pointing: write_formation_links
         if own:
             _clone(formations, own[0], teamid=tid, formationid=_next(formations, 'formationid'))
         for r in [r for r in kits.records if kits.get(r, 'teamtechid') == template and kits.get(r, 'year') == 0]:
@@ -681,6 +685,26 @@ def add_created_teams(db: Database, project: Project) -> int:
                 _clone(links, r, teamid=tid, artificialkey=key)
                 key += 1
     return len(created)
+
+
+def write_created_adboard_ids(db: Database, project: Project) -> int:
+    """teams.adboardid of each created team that is not a copy: the board the game gives its league
+    (adboards.GAME_TABLE, else adboards.DEFAULT_BOARD), not the model team's (Palmeiras' board, 27/11/2026). Run after
+    write_members, when every team is in its leagues."""
+    teams, links = db.table('teams'), db.table('leagueteamlinks')
+    if not _has(teams, 'adboardid'):
+        return 0
+    league_of = {}
+    for r in links.records:
+        league_of.setdefault(links.get(r, 'teamid'), links.get(r, 'leagueid'))
+    count = 0
+    for tid in project.created('team'):
+        if _team_source(project, tid)[1]:
+            continue  # a copy keeps the board of the team it copies
+        for row in teams.find(teamid=tid):
+            teams.set(row, 'adboardid', adboards.GAME_TABLE.get(league_of.get(tid), adboards.DEFAULT_BOARD))
+            count += 1
+    return count
 
 
 def write_team_stadiums(db: Database, project: Project) -> int:
@@ -710,10 +734,11 @@ def write_formations(db: Database, project: Project) -> int:
     formations, teams = db.table('formations'), db.table('teams')
     generic = {formations.get(r, 'relativeformationid'): r for r in formations.records
                if formations.get(r, 'teamid') == -1}
+    pointing = set(project.created('team')) if _table(db, FORMATION_LINKS) is not None else set()
     count = 0
     for tid, values in project.all_fields('team').items():
         chosen = generic.get(values.get('formation'))
-        if chosen is None or not teams.find(teamid=tid):
+        if chosen is None or tid in pointing or not teams.find(teamid=tid):
             continue
         own = formations.find(teamid=tid)
         if own:
@@ -724,6 +749,119 @@ def write_formations(db: Database, project: Project) -> int:
             _clone(formations, chosen, teamid=tid, formationid=_next(formations, 'formationid'))
         count += 1
     return count
+
+
+FORMATION_LINKS = 'teamformationteamstylelinks'  # a team pointing at one of the game's generic formations
+
+
+def write_formation_links(db: Database, project: Project) -> dict[int, list]:
+    """Created teams point at one of the game's 33 generic formations instead of a row of their own (test FM4,
+    27/11/2026: the game takes formations 1-899 only; when the user picks a formation in Edit teams the game itself
+    writes this link): one teamformationteamstylelinks row each (formationid of the generic one, teamstyleid 0). The
+    generic one: the formation the user chose, else the one of the team it was made from (the base of that team's own
+    row, or that team's choice when it is a created team too), else the model team's.
+    {team id: the generic formation's row}."""
+    links = _table(db, FORMATION_LINKS)
+    teams = db.table('teams')
+    present = {teams.get(r, 'teamid') for r in teams.records}
+    created = [t for t in project.created('team') if t in present]
+    if links is None or not created:
+        return {}
+    formations = db.table('formations')
+    generic = {formations.get(r, 'relativeformationid'): r for r in formations.records
+               if formations.get(r, 'teamid') == -1}
+    own = {formations.get(r, 'teamid'): formations.get(r, 'relativeformationid') for r in formations.records
+           if formations.get(r, 'teamid') != -1}
+    if not generic:
+        return {}
+    fallback = own.get(teamkits.MODEL_TEAM)
+    if fallback not in generic:
+        fallback = next(iter(generic))
+    fields_of = project.all_fields('team')
+    made = set(created)
+
+    def base(tid: int, seen=()) -> int:
+        chosen = (fields_of.get(tid) or {}).get('formation')
+        if chosen in generic:
+            return chosen
+        if tid not in made:  # a team of the game: its own row
+            return own[tid] if own.get(tid) in generic else fallback
+        template = _team_source(project, tid)[0]
+        if template != tid and template not in seen:
+            return base(template, (*seen, tid))
+        return fallback
+
+    pointed = {tid: generic[base(tid)] for tid in created}
+    raws = links.raw_records + [bytes(links.rec_size)] * (len(links.records) - len(links.raw_records))
+    kept = [(r, raw) for r, raw in zip(links.records, raws) if links.get(r, 'teamid') not in pointed]
+    links.records, links.raw_records = [r for r, _ in kept], [raw for _, raw in kept]
+    for tid, row in sorted(pointed.items()):
+        new = [0] * len(links.fields)
+        for column, value in (('teamid', tid), ('formationid', formations.get(row, 'formationid')),
+                              ('teamstyleid', 0), ('cddl', 0)):
+            if _has(links, column):
+                links.set(new, column, value)
+        links.records.append(new)
+        links.raw_records.append(bytes(links.rec_size))
+    return pointed
+
+
+def place_pointed_starters(db: Database, pointed: dict[int, list]) -> int:
+    """The starters of a team pointing at a generic formation stand on its slots (a squad copied from a team with a
+    row of its own may use others): a starter on a slot the formation lacks takes a free one. Starters moved."""
+    if not pointed:
+        return 0
+    formations, links = db.table('formations'), db.table('teamplayerlinks')
+    starters: dict[int, list] = {}
+    for r in links.records:
+        tid = links.get(r, 'teamid')
+        if tid in pointed and links.get(r, 'position') < BENCH:
+            starters.setdefault(tid, []).append(r)
+    moved = 0
+    for tid, rows in starters.items():
+        free = [formations.get(pointed[tid], f'position{i}') for i in range(STARTERS)]
+        wrong = []
+        for r in rows:
+            if links.get(r, 'position') in free:
+                free.remove(links.get(r, 'position'))
+            else:
+                wrong.append(r)
+        for r, slot in zip(wrong, free):
+            links.set(r, 'position', slot)
+            moved += 1
+    return moved
+
+
+def compact_formations(db: Database, project: Project, hidden_leagues=()) -> int:
+    """The formations table as the game takes it (fifa14.MAX_FORMATIONS): a team that cannot be picked loses its row -
+    hidden in the game, or with leagues that are all hidden by the user (hidden_leagues: write_visibility's; the leagues
+    the game itself hides count as shown; a team with no league keeps it) -; the generic ones (team -1) stay, and the
+    rows get ids 1-N in their order (the teams' formations keep their content). More rows than the game takes:
+    BuildError with how many too many (the user hides that many teams or leagues of the game that are not played)."""
+    formations, teams, links = db.table('formations'), db.table('teams'), db.table('leagueteamlinks')
+    hidden_leagues = set(hidden_leagues)
+    leagues_of: dict[int, set] = {}
+    for r in links.records:
+        leagues_of.setdefault(links.get(r, 'teamid'), set()).add(links.get(r, 'leagueid'))
+    playing = {t for t in (teams.get(r, 'teamid') for r in teams.records)
+               if not leagues_of.get(t) or leagues_of[t] - hidden_leagues} - project.hidden_in_game('team')
+    raws = formations.raw_records + [bytes(formations.rec_size)] * (len(formations.records) - len(formations.raw_records))
+    kept = [(row, raw) for row, raw in zip(formations.records, raws)
+            if formations.get(row, 'teamid') == -1 or formations.get(row, 'teamid') in playing]
+    if len(kept) > fifa14.MAX_FORMATIONS:
+        raise BuildError('too_many_formations', str(len(kept) - fifa14.MAX_FORMATIONS))
+    formations.records, formations.raw_records = [r for r, _ in kept], [raw for _, raw in kept]
+    new_id = {}
+    for n, row in enumerate(formations.records, 1):
+        new_id[formations.get(row, 'formationid')] = n
+        formations.set(row, 'formationid', n)
+    style_links = _table(db, 'teamformationteamstylelinks')  # the only other table naming a formation (empty in the game)
+    if style_links is not None and _has(style_links, 'formationid'):
+        for row in style_links.records:
+            old = style_links.get(row, 'formationid')
+            if old in new_id:
+                style_links.set(row, 'formationid', new_id[old])
+    return len(formations.records)
 
 
 def lineup(rows: list[dict], positions: list[int]) -> list[dict]:
@@ -748,7 +886,7 @@ def lineup(rows: list[dict], positions: list[int]) -> list[dict]:
     return rows
 
 
-def write_rosters(db: Database, project: Project) -> int:
+def write_rosters(db: Database, project: Project, pointed: dict[int, list] | None = None) -> int:
     """The squad of every team whose squad the user changed: its teamplayerlinks rows replaced (jersey number and
     lineup slot); a captain or taker outside the new squad becomes its last starter."""
     rosters = project.all_rosters()
@@ -758,7 +896,7 @@ def write_rosters(db: Database, project: Project) -> int:
     team_rows_of = {}
     for r in teams.records:
         team_rows_of.setdefault(teams.get(r, 'teamid'), r)
-    formation_of = {}
+    formation_of = dict(pointed or {})  # a created team: the generic formation it points at
     for r in formations.records:
         formation_of.setdefault(formations.get(r, 'teamid'), r)
     # the squads replaced: their links go in one pass (a big project has hundreds of teams and thousands of links)
@@ -949,8 +1087,9 @@ def _renamed(name: str, old: int, new: int) -> str | None:
 
 
 def team_files(files: GameFiles, db: Database, project: Project, builder: 'PatchBuilder') -> dict:
-    """Crest, kit and minikit files of the teams the user changed or created, and the model's other files (warm-up,
-    banners, flags, adboards) for a created team; kit colors and collar go into its teamkits rows."""
+    """Crest, kit and minikit files of the teams the user changed or created, and the model's other files for a created
+    team (warm-up; banners, flags and boards only for a copy: TEAM_CROWD_FILES); kit colors and collar go into its
+    teamkits rows."""
     created = set(project.created('team'))
     all_kits = project.all_kits()
     teams = created | set(project.with_picture('team', 'crest')) | set(all_kits)
@@ -970,7 +1109,8 @@ def team_files(files: GameFiles, db: Database, project: Project, builder: 'Patch
             if (template, copy) not in model_files:
                 model_files[template, copy] = [
                     (path, *path.rsplit('/', 1)) for path in listed
-                    if (copy or not TEAM_LOOKS.match(path)) and _renamed(path.rsplit('/', 1)[1], template, template)]
+                    if (copy or not (TEAM_LOOKS.match(path) or TEAM_CROWD_FILES.match(path)))
+                    and _renamed(path.rsplit('/', 1)[1], template, template)]
             for path, folder, name in model_files[template, copy]:
                 new_name = _renamed(name, template, tid)
                 if new_name:
@@ -1157,9 +1297,21 @@ def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder', 
     part('fields')
     result = apply_database(db, project)
     result['created'] = created
+    pointed: dict[int, list] = {}
+
+    def formations_and_links() -> int:
+        count = write_formations(db, project)
+        pointed.update(write_formation_links(db, project))
+        return count
+
+    def rosters() -> int:
+        count = write_rosters(db, project, pointed)
+        place_pointed_starters(db, pointed)
+        return count
+
     for key, code, make in (
-            ('formations', 'rosters', lambda: write_formations(db, project)),
-            ('rosters', None, lambda: write_rosters(db, project)),
+            ('formations', 'rosters', formations_and_links),
+            ('rosters', None, rosters),
             ('team_stadiums', None, lambda: write_team_stadiums(db, project)),
             ('team_files', 'kits', lambda: team_files(files, db, project, builder)),
             ('player_files', 'faces', lambda: write_player_files(
@@ -1172,9 +1324,11 @@ def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder', 
     if rows := write_equipment_rows(db, project):
         result['equipment'] = rows
     result['league_links'] = write_members(db, project)
+    write_created_adboard_ids(db, project)
     visibility = write_visibility(db, project)
     if visibility:
         result['visibility'] = visibility
+    compact_formations(db, project, (visibility or {}).get('hidden_leagues', ()))
     part('save')
     builder.put(DATABASE, db.build())
     builder.put(fifa14.META, meta_raw)

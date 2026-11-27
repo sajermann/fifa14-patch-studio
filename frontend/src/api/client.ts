@@ -1,5 +1,5 @@
 import { hasMessage, translate } from '@/i18n'
-import type { ShareInspect, ShareKind, ShareTree, Adboard, AdboardBody, AdboardList, Equipment, EquipmentBody, EquipmentFiles, EquipmentKind, EquipmentList, BuildProgress, ImportProgress, InstallProgress, BulkKind, BulkDeleteProgress, Config, CountryDetail, CountryRow, FaceChoice, FacePackCheck, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, MachineInfo, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, SetupRequest, Status, StadiumDetail, StadiumRow, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook, ProjectIssue } from './types'
+import type { ShareInspect, ShareKind, ShareTree, Adboard, AdboardBody, AdboardList, Equipment, EquipmentBody, EquipmentFiles, EquipmentKind, EquipmentList, BuildProgress, ImportProgress, InstallProgress, BulkKind, BulkDeleteProgress, CacheClearProgress, CacheInfo, Config, CountryDetail, CountryRow, FaceChoice, FacePackCheck, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, MachineInfo, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, SetupRequest, Status, StadiumDetail, StadiumRow, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook, ProjectIssue } from './types'
 
 /** Error of the backend; `message` is in the interface language when the app knows its code. */
 export class ApiError extends Error {
@@ -174,6 +174,10 @@ export const api = {
   bulkDeleteProgress: () => get<BulkDeleteProgress>('/api/bulk-delete/progress'),
   /** Stops the running bulk delete before the next item: what was already deleted stays deleted. */
   cancelBulkDelete: () => post<{ stopping: boolean }>('/api/bulk-delete/cancel'),
+  cacheInfo: () => get<CacheInfo>('/api/cache'),
+  /** Deletes the parts of the cache the app makes again; answers when it ends (progress: cacheClearProgress). */
+  clearCache: () => post<{ files: number; bytes: number; failed: number }>('/api/cache/clear'),
+  cacheClearProgress: () => get<CacheClearProgress>('/api/cache/progress'),
   limits: () => get<Limits>('/api/limits'),
   player: (id: number) => get<PlayerDetail>(`/api/players/${id}`),
   /** The whole form of a player: fields (face included) and, when given, his teams. */

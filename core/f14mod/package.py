@@ -92,10 +92,34 @@ def _values(kind: str, row: dict, names: dict | None = None) -> dict:
     return out
 
 
-def _names(names: dict, keys) -> dict:
-    """{key: {'*': text}}: the package has one language (manifest source.language), kept for every language."""
-    return {key: {'*': text.strip()} for key in keys
-            if isinstance((text := (names or {}).get(key)), str) and text.strip()}
+def _key_names(text, by_language) -> dict:
+    """{'*': text, language: text}: the text most languages share goes to every language ('*'; a tie keeps the
+    package language's text), and only the languages whose text differs get their own."""
+    texts = {lang: t.strip() for lang, t in (by_language or {}).items()
+             if isinstance(lang, str) and lang and lang != '*' and isinstance(t, str) and t.strip()}
+    single = text.strip() if isinstance(text, str) and text.strip() else None
+    if not texts:
+        return {'*': single} if single else {}
+    counts: dict[str, int] = {}
+    for t in texts.values():
+        counts[t] = counts.get(t, 0) + 1
+    top = max(counts.values())
+    common = single if counts.get(single) == top else min(t for t, n in counts.items() if n == top)
+    return {'*': common, **{lang: t for lang, t in sorted(texts.items()) if t != common}}
+
+
+def _names(names: dict, keys, by_language: dict | None = None) -> dict:
+    """{key: {'*': text, language: text}}. `by_language` = the package's `language_names` ({key: {language: text}},
+    every language database of the source); a package without it has one language (manifest source.language),
+    kept for every language."""
+    by_language = by_language if isinstance(by_language, dict) else {}
+    out = {}
+    for key in keys:
+        found = by_language.get(key)
+        texts = _key_names((names or {}).get(key), found if isinstance(found, dict) else None)
+        if texts:
+            out[key] = texts
+    return out
 
 
 def _formation_of(roster: list[dict], formations: dict[int, list[int]]) -> int | None:
@@ -152,7 +176,7 @@ class _Converter:
 
     # ---- kinds
     def country(self, n: dict) -> None:
-        names = _names(n.get('names') or {}, fifa14.COUNTRY_NAME_STRINGS)
+        names = _names(n.get('names') or {}, fifa14.COUNTRY_NAME_STRINGS, n.get('language_names'))
         if 'full' not in names and isinstance(n.get('name'), str):
             names['full'] = {'*': n['name']}
         self.record('country', n['source_id'], names, pictures={'flag': self.image(n.get('flag'))})
@@ -174,7 +198,7 @@ class _Converter:
         if board is not None:
             tables['league_adboards'] = [{'adboard_id': board}]
         images = lg.get('images') or {}
-        self.record('league', lg['source_id'], _names(names, fifa14.LEAGUE_NAME_STRINGS), values,
+        self.record('league', lg['source_id'], _names(names, fifa14.LEAGUE_NAME_STRINGS, lg.get('language_names')), values,
                     {'logo': self.image(images.get('logo'))}, tables)
 
     def team(self, t: dict) -> None:
@@ -226,7 +250,7 @@ class _Converter:
         if kits:
             tables['team_kits'] = kits
         links = {'leagues': [x for x in t.get('league_ids') or [] if _int(x)]}
-        self.record('team', tid, _names(t.get('names') or {}, fifa14.TEAM_NAME_STRINGS), values, pictures, tables,
+        self.record('team', tid, _names(t.get('names') or {}, fifa14.TEAM_NAME_STRINGS, t.get('language_names')), values, pictures, tables,
                     links)
 
     def player(self, pl: dict) -> None:
@@ -303,7 +327,7 @@ class _Converter:
         tables = {'stadium_sources': [{'template': None, 'folder_stadium': None}]}
         if scene:
             tables['stadium_scene'] = scene
-        self.record('stadium', sid, _names(names, fifa14.STADIUM_NAME_STRINGS), values, pictures, tables)
+        self.record('stadium', sid, _names(names, fifa14.STADIUM_NAME_STRINGS, s.get('language_names')), values, pictures, tables)
 
     def adboard(self, a: dict) -> None:
         img = self.image(a)

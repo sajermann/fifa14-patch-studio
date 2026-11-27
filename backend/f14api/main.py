@@ -1076,6 +1076,8 @@ def create_team(body: CreateTeamBody):
             if queries.league(con, lang(), lid) is None:
                 raise ApiError(400, 'unknown_league', str(lid))
         tid = queries.free_team_id(con)
+        if tid is None:
+            raise ApiError(409, 'team_no_free_id')
         names = _clean_names('team', body.names, {}, set(queries.languages(con)))
         values = {} if template is None else fields.original_values('team', json.loads(
             con.execute('SELECT raw FROM teams WHERE id = ?', (template,)).fetchone()[0]))
@@ -1696,6 +1698,7 @@ from . import adboard_routes  # noqa: E402,F401 - the advertising boards (before
 from . import equipment_routes  # noqa: E402,F401 - boots, gloves and balls (before the interface's catch-all)
 from . import stadium_routes  # noqa: E402 - the stadiums the user creates (before the interface's catch-all)
 from . import share_routes  # noqa: E402,F401 - import and export (before the interface's catch-all)
+from . import cache_routes  # noqa: E402,F401 - the cache folder of the settings screen (before the catch-all)
 
 
 # ---- bulk delete (the lists' checkboxes) ----------------------------------------------------------------------------

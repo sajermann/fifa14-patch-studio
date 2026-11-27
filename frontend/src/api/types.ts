@@ -176,6 +176,26 @@ export interface Page<T> {
   own_ids?: number[]
 }
 
+/** The app's cache folder (settings screen): its whole size and what clearing deletes. */
+export interface CacheInfo {
+  folder: string
+  bytes: number
+  files: number
+  clearable_bytes: number
+  clearable_files: number
+}
+
+/** Where the running (or last) clearing of the cache is: files done and bytes freed. */
+export interface CacheClearProgress {
+  running: boolean
+  done: number
+  total: number
+  bytes_done: number
+  bytes_total: number
+  failed: number
+  elapsed?: number
+}
+
 /** what the lists' bulk delete takes */
 export type BulkKind = 'country' | 'league' | 'team' | 'player' | 'stadium' | 'adboard' | 'boot' | 'glove' | 'ball'
 

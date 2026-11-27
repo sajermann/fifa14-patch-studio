@@ -1,14 +1,25 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, CheckCircle2, CircleAlert, Loader2, Settings2 } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { AlertTriangle, CheckCircle2, CircleAlert, Loader2, Settings2, Trash2 } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '@/api/client'
 import type { Config, Status } from '@/api/types'
 import { BuildResourcesFields } from '@/components/common/BuildResources'
+import { CacheClearProgressDialog } from '@/components/common/CacheClearProgress'
 import { Facts } from '@/components/common/detail'
 import { FacePackFolders } from '@/components/common/FacePackFolders'
 import { Field } from '@/components/common/form'
 import { SupportActions } from '@/components/common/SupportActions'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -19,6 +30,7 @@ import { APP_NAME, APP_VERSION, AUTHOR_GITHUB, AUTHOR_NAME, REPO_URL } from '@/l
 import { buildResourcesErrors, useMachine, type BuildResourcesValue } from '@/lib/buildResources'
 import { cleanFolders } from '@/lib/folders'
 import { toast } from '@/lib/notify'
+import { fileSize } from '@/lib/size'
 import { useOptions, useStatus } from '@/state/queries'
 
 // The Street Studio's settings screen, card by card; FIFA 14 has no save to delete
@@ -224,6 +236,76 @@ function NamesCard({ status }: { status: Status }) {
   )
 }
 
+/** The app's cache folder: its size, and clearing what the app makes again (asks first, then shows the progress). */
+function CacheCard() {
+  const { t, lang } = useI18n()
+  const qc = useQueryClient()
+  const { data: info } = useQuery({ queryKey: ['cache'], queryFn: api.cacheInfo })
+  const [asking, setAsking] = useState(false)
+  const [clearing, setClearing] = useState(false)
+  const [finished, setFinished] = useState(false)
+
+  const clear = async () => {
+    setAsking(false)
+    setFinished(false)
+    setClearing(true)
+    try {
+      await api.clearCache()
+      await qc.invalidateQueries({ queryKey: ['cache-clear-progress'] }) // the last numbers, for the result
+      setFinished(true)
+    } catch (e) {
+      setClearing(false)
+      toast.error((e as Error).message)
+    } finally {
+      void qc.invalidateQueries({ queryKey: ['cache'] })
+    }
+  }
+  const size = (bytes: number, files: number) => t('cache.size', { size: fileSize(bytes, lang), files })
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t('cache.title')}</CardTitle>
+        <CardDescription>{t('cache.description')}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[12rem_1fr]">
+          <dt className="text-muted-foreground">{t('cache.folder')}</dt>
+          <dd className="font-mono break-all">{info?.folder ?? '—'}</dd>
+          <dt className="text-muted-foreground">{t('cache.total')}</dt>
+          <dd className="tabular-nums">{info ? size(info.bytes, info.files) : <Loader2 className="size-4 animate-spin" />}</dd>
+          <dt className="text-muted-foreground">{t('cache.clearable')}</dt>
+          <dd className="tabular-nums">{info ? size(info.clearable_bytes, info.clearable_files) : '—'}</dd>
+        </dl>
+        <p className="text-xs text-muted-foreground">{t('cache.keptHint')}</p>
+        <div className="flex items-center gap-3">
+          <Button variant="destructive" onClick={() => setAsking(true)} disabled={!info?.clearable_files || clearing}>
+            <Trash2 /> {t('cache.clear')}
+          </Button>
+          {info && !info.clearable_files && <span className="text-sm text-muted-foreground">{t('cache.empty')}</span>}
+        </div>
+      </CardContent>
+      <AlertDialog open={asking} onOpenChange={setAsking}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('cache.confirmTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('cache.confirmDescription', { size: fileSize(info?.clearable_bytes ?? 0, lang), files: info?.clearable_files ?? 0 })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={(e) => (e.preventDefault(), void clear())}>
+              <Trash2 /> {t('cache.confirm')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <CacheClearProgressDialog open={clearing} finished={finished} onClose={() => (setClearing(false), setFinished(false))} />
+    </Card>
+  )
+}
+
 export function SettingsPage() {
   const { t } = useI18n()
   const status = useStatus().data
@@ -235,6 +317,7 @@ export function SettingsPage() {
       <FoldersCard status={status} />
       <BuildCard status={status} />
       <NamesCard status={status} />
+      <CacheCard />
       <Card>
         <CardHeader>
           <CardTitle>{t('settings.patchTitle')}</CardTitle>

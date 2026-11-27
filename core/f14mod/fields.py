@@ -133,7 +133,7 @@ TEAM = [
     *(FieldSpec(f'teamcolor{i}', 'colors', 'color') for i in (1, 2, 3)),
     FieldSpec('domesticprestige', 'club', 'int', 0, 20),
     FieldSpec('internationalprestige', 'club', 'int', 0, 20),
-    FieldSpec('rivalteam', 'club', 'team', 1, 262143),
+    FieldSpec('rivalteam', 'club', 'team', 1, fifa14.MAX_TEAM_ID),
     FieldSpec('transferbudget', 'club', 'int', 0, 500_000_000),
     *(FieldSpec(column, 'takers', 'roster', 1, 524287) for column in
       ('captainid', *fifa14.TAKERS.values())),
@@ -183,7 +183,7 @@ COUNTRY = [
 STADIUM = [
     FieldSpec('name', 'info', 'text', max_length=60),  # the database name (the menus show StadiumName_<id>)
     FieldSpec('countrycode', 'info', 'nation', 0, 255, optional=True),
-    FieldSpec('hometeamid', 'info', 'team', 0, 262143, optional=True),
+    FieldSpec('hometeamid', 'info', 'team', 0, fifa14.MAX_TEAM_ID, optional=True),
     FieldSpec('capacity', 'info', 'int', 0, 262143),
     FieldSpec('yearbuilt', 'info', 'int', 1800, 2055),
     # the times of day and the weather the match screen offers (four slots; time 5 = slot not used; weather bits:

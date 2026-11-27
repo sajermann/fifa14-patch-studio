@@ -672,9 +672,42 @@ class Project:
         out['stadium'] |= self.incomplete_stadiums()
         out['team'] |= self.incomplete_teams()
         out['player'] |= self.incomplete_players()
+        teams, players = self.out_by_hidden_leagues(out['team'], out['player'])
+        out['team'] |= teams
+        out['player'] |= players
         for kind in EQUIPMENT_KINDS:
             out[kind] |= self.incomplete_equipment(kind)
         return VisibleProject(self, out) if any(self.hidden(kind) for kind in KINDS) or any(out.values()) else self
+
+    def out_by_hidden_leagues(self, teams_out: set[int] = frozenset(),
+                              players_out: set[int] = frozenset()) -> tuple[set[int], set[int]]:
+        """Created teams nobody can pick because every league they are in is hidden by the user (a team in no league
+        stays), and the created players who only play for teams left out of the patch (teams_out and those; a player
+        in no squad stays): left out of the patch like hidden ones, so a build of a project with leagues put aside
+        is faster. (teams, players)."""
+        hidden_leagues = self.hidden('league')
+        if not hidden_leagues:
+            return set(), set()
+        con = self.connect()
+        try:
+            created_teams = {r[0] for r in con.execute("SELECT id FROM created WHERE kind = 'team'")}
+            leagues_of: dict[int, set[int]] = {}
+            for lid, tid in con.execute('SELECT league_id, team_id FROM league_members WHERE COALESCE(hidden, 0) = 0'):
+                if tid in created_teams:
+                    leagues_of.setdefault(tid, set()).add(lid)
+            teams = {t for t, leagues in leagues_of.items() if leagues <= hidden_leagues} - set(teams_out)
+            gone = teams | set(teams_out)
+            if not gone:
+                return teams, set()
+            created_players = {r[0] for r in con.execute("SELECT id FROM created WHERE kind = 'player'")}
+            teams_of: dict[int, set[int]] = {}
+            for tid, pid in con.execute('SELECT team_id, player_id FROM team_rosters WHERE COALESCE(hidden, 0) = 0'):
+                if pid in created_players:
+                    teams_of.setdefault(pid, set()).add(tid)
+        finally:
+            con.close()
+        players = {p for p, squads in teams_of.items() if squads <= gone} - set(players_out)
+        return teams, players
 
     def incomplete_stadiums(self) -> set[int]:
         """Created stadiums made from scratch still without a 3D scene or a field the game needs: left out of the
