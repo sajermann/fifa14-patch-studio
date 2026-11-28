@@ -224,6 +224,10 @@ class Writer:
                'names': project.names(kind, oid), 'fields': project.fields(kind, oid),
                'hidden': oid in project.hidden(kind), 'dates': {'created_at': created_at, 'updated_at': updated_at},
                'pictures': {}, 'tables': {}, 'links': links or {}}
+        shape = project.formation(rec['fields'].get('formation')) if kind == 'team' and isinstance(
+            rec['fields'].get('formation'), int) else None
+        if shape:  # a formation of the project goes inside the team (absorbed again where it comes in)
+            rec['fields'] = {**rec['fields'], 'formation': shape['base'], 'formation_shape': shape}
         # where it comes from: where it came in from, else this project
         self.project_uid = self.project_uid or project.uid()
         came = project.origin(kind, oid)
@@ -805,6 +809,7 @@ def apply(project: Project, bundle: Bundle, ids: dict[str, dict], chosen: set[st
         check()
         report('save')
         con.commit()
+        project.absorb_formation_shapes()  # a formation a team brought becomes one of the project's
     except BaseException:
         con.rollback()
         raise

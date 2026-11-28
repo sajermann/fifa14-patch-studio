@@ -1,5 +1,5 @@
 import { hasMessage, translate } from '@/i18n'
-import type { ShareInspect, ShareKind, ShareTree, Adboard, AdboardBody, AdboardList, Equipment, EquipmentBody, EquipmentFiles, EquipmentKind, EquipmentList, BuildProgress, ImportProgress, InstallProgress, BulkKind, BulkDeleteProgress, CacheClearProgress, CacheInfo, Config, CountryDetail, CountryRow, FaceChoice, FacePackCheck, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, MachineInfo, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, SetupRequest, Status, StadiumDetail, StadiumRow, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook, ProjectIssue } from './types'
+import type { ShareInspect, ShareKind, ShareTree, Adboard, AdboardBody, AdboardList, FormationBody, FormationDetail, FormationList, Equipment, EquipmentBody, EquipmentFiles, EquipmentKind, EquipmentList, BuildProgress, ImportProgress, InstallProgress, BulkKind, BulkDeleteProgress, CacheClearProgress, CacheInfo, Config, CountryDetail, CountryRow, FaceChoice, FacePackCheck, FacePackFolder, FacePage, FieldValue, GameCheck, GameStatus, Job, LeagueDetail, LeagueRow, Limits, MachineInfo, NameTable, Options, Page, PlayerDetail, PlayerOptions, PlayerRow, SetupRequest, Status, StadiumDetail, StadiumRow, TeamDetail, TeamRow, SquadRow, KitConfig, KitFonts, KitPart, KitPrintBody, PreviewLook, ProjectIssue } from './types'
 
 /** Error of the backend; `message` is in the interface language when the app knows its code. */
 export class ApiError extends Error {
@@ -108,6 +108,12 @@ export const api = {
   deleteAdboard: (id: number) => request<{ deleted: number }>('DELETE', `/api/adboards/${id}`),
   resetAdboard: (id: number) => request<Adboard>('DELETE', `/api/adboards/${id}/edits`),
   setAdboardHidden: (id: number, hidden: boolean) => request<Adboard>('PUT', `/api/adboards/${id}/hidden`, { hidden }),
+  formations: () => get<FormationList>('/api/formations'),
+  formation: (id: number) => get<FormationDetail>(`/api/formations/${id}`),
+  createFormation: (body: FormationBody) => post<FormationDetail>('/api/formations', body),
+  saveFormation: (id: number, body: FormationBody) => request<FormationDetail>('PUT', `/api/formations/${id}`, body),
+  deleteFormation: (id: number) => request<{ deleted: number; base: number }>('DELETE', `/api/formations/${id}`),
+  setFormationHidden: (id: number, hidden: boolean) => request<FormationDetail>('PUT', `/api/formations/${id}/hidden`, { hidden }),
   setTeamAdboard: (id: number, adboard: number | null) => request<TeamDetail>('PUT', `/api/teams/${id}/adboard`, { adboard }),
   setLeagueAdboard: (id: number, adboard: number | null) => request<LeagueDetail>('PUT', `/api/leagues/${id}/adboard`, { adboard }),
   equipmentList: (kind: EquipmentKind) => get<EquipmentList>(`/api/equipment/${kind}`),

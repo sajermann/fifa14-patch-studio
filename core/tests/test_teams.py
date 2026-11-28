@@ -7,7 +7,7 @@ import fakegame
 import pytest
 from PIL import Image
 
-from f14mod import builder, catalog, images, rx3, t3db, teamkits
+from f14mod import builder, catalog, fifa14, images, rx3, t3db, teamkits
 from f14mod.project import Project
 
 NEW = 131001
@@ -326,3 +326,80 @@ def test_a_created_team_only_in_hidden_leagues_stays_out_of_the_patch(installed,
         assert not {NEW, pid} & {r[column] for r in tables[table]}, table
     project.set_members(fakegame.PLAIN_LEAGUE, [fakegame.SMALL_TEAM, NEW])
     assert project.out_by_hidden_leagues() == (set(), set())
+
+
+WM = [0, 3, 5, 7, 10, 12, 16, 18, 23, 25, 26]
+
+
+def _shape(name='WM', positions=WM):
+    return {'name': name, 'base': 8, 'columns': {f'position{i}': p for i, p in enumerate(positions)}}
+
+
+def test_a_drawing_the_game_lacks_is_one_shared_formation(installed, tmp_path):
+    """Teams with the same drawing (f14mod.formation, from a package) share one formation of the project, written as
+    a new generic formation made from its base; the teams point at it."""
+    project = _made_from(installed, tmp_path, copy=False)
+    project.save('team', NEW, {}, {'formation': 8, 'formation_shape': _shape()})
+    project.create('team', NEW + 1, {'full': {'*': 'A02'}})
+    project.set_team_source(NEW + 1, fakegame.TEAM, False)
+    project.set_roster(NEW + 1, project.roster(NEW))
+    project.save('team', NEW + 1, {}, {'formation': 8, 'formation_shape': _shape()})
+    assert project.absorb_formation_shapes() == 2
+    fid = fifa14.FIRST_OWN_FORMATION
+    assert project.created('formation') == [fid] and project.formation(fid) == _shape()
+    assert project.fields('team', NEW) == {'formation': fid} and project.formation_users(fid) == [NEW, NEW + 1]
+    _, tables, _ = _build(installed, tmp_path, project)
+    rows = tables['formations']
+    drawn = [r for r in rows if r['formationname'] == 'WM']
+    assert len(drawn) == 1 and drawn[0]['teamid'] == -1 and drawn[0]['relativeformationid'] == 8
+    assert drawn[0]['formationfullnameid'] == -1  # not the base's text: the game shows the row's name
+    assert [drawn[0][f'position{i}'] for i in range(11)] == WM
+    links = {r['teamid']: r['formationid'] for r in tables['teamformationteamstylelinks']}
+    assert links[NEW] == links[NEW + 1] == drawn[0]['formationid']
+    for team in (NEW, NEW + 1):
+        starters = sorted(r['position'] for r in tables['teamplayerlinks'] if r['teamid'] == team and r['position'] < 28)
+        assert starters == sorted(WM)
+    assert [r['formationid'] for r in rows] == list(range(1, len(rows) + 1))
+
+
+def test_a_game_team_with_a_drawing_keeps_it_in_its_own_row(installed, tmp_path):
+    project = Project(str(tmp_path / 'p.sqlite'))
+    fid = project.next_formation_id()
+    project.create('formation', fid, fields=_shape('Zona'))
+    project.save('team', fakegame.TEAM, {}, {'formation': fid})
+    _, tables, _ = _build(installed, tmp_path, project)
+    own = next(r for r in tables['formations'] if r['teamid'] == fakegame.TEAM)
+    assert own['formationname'] == 'Zona' and [own[f'position{i}'] for i in range(11)] == WM
+    assert own['formationfullnameid'] == -1
+    assert sum(r['teamid'] == -1 for r in tables['formations']) == 3  # the project's formation is in the patch too
+    project.set_hidden('formation', fid, True)  # left out: the team keeps the game's one it is based on
+    _, tables, _ = _build(installed, tmp_path, project)
+    own = next(r for r in tables['formations'] if r['teamid'] == fakegame.TEAM)
+    assert own['formationname'] == '4-3-3' and sum(r['teamid'] == -1 for r in tables['formations']) == 2
+
+
+def test_an_older_project_turns_its_drawings_into_formations(tmp_path):
+    """Schema 16 kept a package's drawing on the team (formation_shape): opened again it is a formation of the
+    project, one per drawing."""
+    import json
+    import sqlite3
+    path = str(tmp_path / 'p.sqlite')
+    Project(path).save('team', fakegame.TEAM, {}, {'formation': 8})
+    con = sqlite3.connect(path)
+    con.execute("INSERT INTO fields VALUES ('team', ?, 'formation_shape', ?)", (fakegame.TEAM, json.dumps(_shape())))
+    con.execute("UPDATE meta SET value = '16' WHERE key = 'schema'")
+    con.commit()
+    con.close()
+    project = Project(path)
+    fid = fifa14.FIRST_OWN_FORMATION
+    assert project.formations() == {fid: _shape()} and project.fields('team', fakegame.TEAM) == {'formation': fid}
+
+
+def test_a_drawing_is_checked():
+    from f14mod import fields, formation
+    good = fields.clean('team', {'formation_shape': {**_shape(), 'name': 'X' * 40}}, {})['formation_shape']
+    assert len(good['name']) == formation.NAME_BYTES and good['columns']['position0'] == 0
+    for bad in ({**_shape(), 'base': 40}, _shape(positions=[3, 0, *WM[2:]]), _shape(positions=WM[:10] + [5]),
+                {'name': 'X', 'base': 8, 'columns': {**_shape()['columns'], 'attackingrole_1': 9}}):
+        with pytest.raises(fields.FieldError):
+            fields.clean('team', {'formation_shape': bad}, {})

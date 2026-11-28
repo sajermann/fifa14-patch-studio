@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query'
 import { ChevronDown, Loader2, Plus, RotateCcw, Save, Undo2, X } from 'lucide-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useBlocker } from 'react-router-dom'
 import {
   AlertDialog,
@@ -694,9 +694,12 @@ export function FieldsEditor({
   extra,
   bars = false,
   skip = [],
+  headings = {},
 }: {
   form: EditForm
   groups: string[]
+  /** A heading shown above a field (the field's name -> the heading): the parts of a group, as the game shows them. */
+  headings?: Record<string, ReactNode>
   /** Fields edited elsewhere on the page (not shown here). */
   skip?: string[]
   fields: Fields
@@ -723,13 +726,16 @@ export function FieldsEditor({
               {specs.map((spec) => {
                 const name = spec.name
                 return (
-                  <div key={spec.name} className="grid items-center gap-1 sm:grid-cols-[minmax(9rem,40%)_1fr] sm:gap-3">
+                  <Fragment key={spec.name}>
+                  {headings[name] && <p className="pt-1 text-xs font-medium tracking-wide text-muted-foreground uppercase first:pt-0">{headings[name]}</p>}
+                  <div className="grid items-center gap-1 sm:grid-cols-[minmax(9rem,40%)_1fr] sm:gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-sm">{label(name)}</p>
                       {hint(name) && <p className="text-xs text-muted-foreground">{hint(name)}</p>}
                     </div>
                     <FieldInput spec={spec} value={fields[spec.name]} original={form.values[spec.name]} onChange={(v) => setField(spec.name, v)} roster={roster} bar={bars} />
                   </div>
+                  </Fragment>
                 )
               })}
             </div>

@@ -121,6 +121,7 @@ def _formations():
     """Two of the game's formations (team -1: 13 = 4-2-2-2, 8 = 4-3-3) and TEAM's own (a copy of 13)."""
     def row(team, fid, rel, name, positions):
         return {'teamid': team, 'formationid': fid, 'relativeformationid': rel, 'formationname': name,
+                'formationfullnameid': 4 if rel == 8 else -1,  # the game's text Formation_FullName_4 for the 4-3-3
                 **{f'position{i}': p for i, p in enumerate(positions)}}
     p4222 = [0, 3, 4, 6, 7, 9, 11, 17, 19, 24, 26]
     p433 = [0, 3, 4, 6, 7, 13, 14, 15, 23, 25, 27]

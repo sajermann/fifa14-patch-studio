@@ -26,6 +26,9 @@ const ITEM_LABELS: Record<Exclude<BuildItemKind, 'part'>, MessageKey> = {
   language: 'build.itemLanguage',
   adboard: 'build.itemAdboard',
   stadium: 'build.itemStadium',
+  boot: 'build.itemBoot',
+  glove: 'build.itemGlove',
+  ball: 'build.itemBall',
 }
 const PART_LABELS: Record<BuildPart, MessageKey> = {
   check: 'build.partCheck',
@@ -104,7 +107,7 @@ export function BuildProgressDialog({ open }: { open: boolean }) {
                 ) : (
                   <Circle className="size-4" />
                 )}
-                <span className="flex-1">{t(STEP_LABELS[step])}</span>
+                <span className="flex-1">{STEP_LABELS[step] ? t(STEP_LABELS[step]) : step}</span>
                 {/* the database step's done/total is its share (the bar), not a count: its part says its own */}
                 {state === 'running' && (prog!.item?.count || (step !== 'database' && prog!.total > 1)) && (
                   <span className="text-xs text-muted-foreground tabular-nums">
@@ -123,7 +126,10 @@ export function BuildProgressDialog({ open }: { open: boolean }) {
           ) : prog?.item?.kind === 'part' ? (
             PART_LABELS[prog.item.name as BuildPart] && <p className="truncate">{t(PART_LABELS[prog.item.name as BuildPart])}</p>
           ) : prog?.item ? (
-            <p className="truncate">{t(ITEM_LABELS[prog.item.kind], { name: prog.item.name })}</p>
+            // a kind this screen does not know yet shows just the name (never a missing key)
+            <p className="truncate">
+              {ITEM_LABELS[prog.item.kind] ? t(ITEM_LABELS[prog.item.kind], { name: prog.item.name }) : prog.item.name}
+            </p>
           ) : (
             prog?.message && <p className="truncate">{prog.message}</p>
           )}

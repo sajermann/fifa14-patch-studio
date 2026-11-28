@@ -12,12 +12,12 @@ import sqlite3
 import time
 import unicodedata
 
-from . import fifa14, installer, kitfonts, t3db, teamkits
+from . import fifa14, formation, installer, kitfonts, t3db, teamkits
 from .gamefs import DATABASE, GameFiles
 
-SCHEMA_VERSION = 7  # 2: country names and flags; 3: formations and the kit files of each team; 4: kit print, fonts;
+SCHEMA_VERSION = 8  # 2: country names and flags; 3: formations and the kit files of each team; 4: kit print, fonts;
 #                    5: the country's confederation; 6: the country's row and its sound row (audionation);
-#                    7: stadiums (rows, names, files) and the teams' stadium links
+#                    7: stadiums (rows, names, files) and the teams' stadium links; 8: each formation's row
 LOCALE = 'data/loc/locale.big'
 
 SCHEMA = """
@@ -37,7 +37,7 @@ CREATE TABLE players (id INTEGER PRIMARY KEY, name TEXT, first TEXT, last TEXT, 
 CREATE TABLE team_players (team_id INTEGER, player_id INTEGER, jersey INTEGER, position INTEGER,
                            PRIMARY KEY (team_id, player_id));
 CREATE TABLE formations (team_id INTEGER, formation_id INTEGER, generic INTEGER, base INTEGER, name TEXT,
-                         positions TEXT, PRIMARY KEY (team_id, formation_id));
+                         positions TEXT, row TEXT, PRIMARY KEY (team_id, formation_id));
 CREATE TABLE team_kits (team_id INTEGER, kind INTEGER, PRIMARY KEY (team_id, kind));
 CREATE TABLE kit_print (team_id INTEGER, kind INTEGER, print TEXT, PRIMARY KEY (team_id, kind));
 CREATE TABLE stadiums (id INTEGER PRIMARY KEY, name TEXT, raw TEXT);
@@ -194,9 +194,11 @@ def build(game_dir: str, path: str, progress=None) -> str:
         for links in src.team_links.values() for ln in links])
     # formations: the 33 generic ones (teamid -1, `relativeformationid` 1-33) and each team's own (a copy of one)
     # base = which of the 33 generic ones the row is (or was copied from)
-    con.executemany('INSERT OR IGNORE INTO formations VALUES (?,?,?,?,?,?)', [
+    # row = the columns a formation of the project copies (f14mod.formation.COLUMNS)
+    con.executemany('INSERT OR IGNORE INTO formations VALUES (?,?,?,?,?,?,?)', [
         (r['teamid'], r['relativeformationid'] if r['teamid'] == -1 else r['formationid'], int(r['teamid'] == -1),
-         r.get('relativeformationid'), r.get('formationname'), json.dumps([r.get(f'position{i}') for i in range(11)]))
+         r.get('relativeformationid'), r.get('formationname'), json.dumps([r.get(f'position{i}') for i in range(11)]),
+         json.dumps({c: r[c] for c in formation.COLUMNS if r.get(c) is not None}))
         for r in src.rows('formations')])
     kit_rows = set()
     for kit_path in files.list('data/sceneassets/kit/kit_'):

@@ -209,3 +209,26 @@ def test_a_stopped_import_changes_nothing(tmp_path):
     else:
         raise AssertionError('not stopped')
     assert _dump(dst) == before
+
+
+def test_a_formation_of_the_project_travels_inside_its_team(tmp_path):
+    """Exported, a team with a formation of the project carries its drawing (formation_shape); where it comes in it
+    is a formation of that project again (Project.absorb_formation_shapes), the same one for the same drawing."""
+    src = _source(tmp_path)
+    shape = {'name': 'WM', 'base': 8, 'columns': {f'position{i}': p for i, p in
+                                                  enumerate([0, 3, 5, 7, 10, 12, 16, 18, 23, 25, 26])}}
+    fid = src.next_formation_id()
+    src.create('formation', fid, fields=shape)
+    src.save('team', 131001, src.names('team', 131001), {**src.fields('team', 131001), 'formation': fid})
+    zip_path = _export(src, tmp_path, [('team', 131001)])
+    rec = share.read(zip_path).by_key()['team:131001']
+    assert rec['fields']['formation'] == 8 and rec['fields']['formation_shape'] == shape
+    dst = Project(os.path.join(tmp_path, 'dst.sqlite'))
+    other = dst.next_formation_id()
+    dst.create('formation', other, fields={**shape, 'name': 'Other'})  # another drawing: a new one is made
+    bundle = share.read(zip_path)
+    ids = share.plan(bundle, FakeDest(dst))
+    share.apply(dst, bundle, ids, set(ids), FakeDest(dst))
+    team = ids['team:131001']['id']
+    made = dst.fields('team', team)['formation']
+    assert made == other + 1 and dst.formation(made) == shape and 'formation_shape' not in dst.fields('team', team)

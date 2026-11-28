@@ -1,4 +1,4 @@
-import { AlertTriangle, FileDown, Flag, Footprints, Hammer, Hand, Heart, Landmark, Loader2, Megaphone, Settings, Shield, Trophy, Users, Volleyball } from 'lucide-react'
+import { AlertTriangle, FileDown, Flag, Footprints, Hammer, Hand, Heart, Landmark, LayoutGrid, Loader2, Megaphone, Settings, Shield, Trophy, Users, Volleyball } from 'lucide-react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { useI18n, type MessageKey } from '@/i18n'
@@ -16,6 +16,7 @@ const NAV: { to: string; label: MessageKey; icon: typeof Trophy; kind: string }[
   { to: '/teams', label: 'nav.teams', icon: Shield, kind: 'team' },
   { to: '/players', label: 'nav.players', icon: Users, kind: 'player' },
   { to: '/stadiums', label: 'nav.stadiums', icon: Landmark, kind: 'stadium' },
+  { to: '/formations', label: 'nav.formations', icon: LayoutGrid, kind: 'formation' },
   { to: '/adboards', label: 'nav.adboards', icon: Megaphone, kind: 'adboard' },
   { to: '/boots', label: 'nav.boots', icon: Footprints, kind: 'boot' },
   { to: '/gloves', label: 'nav.gloves', icon: Hand, kind: 'glove' },

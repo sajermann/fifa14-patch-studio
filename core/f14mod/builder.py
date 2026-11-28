@@ -729,15 +729,28 @@ def write_team_stadiums(db: Database, project: Project) -> int:
     return written
 
 
+def _project_formation(project: Project, fid) -> tuple[int | None, dict | None]:
+    """A formation id of a team: (the game's generic one it is or is based on, the project's drawing when it is one of
+    the project's and in the patch; a hidden one: its base only)."""
+    if not isinstance(fid, int) or fid <= fifa14.GAME_FORMATIONS:
+        return fid, None
+    shape = project.formation(fid)
+    if shape is None:
+        return None, None
+    return shape['base'], (shape if fid in project.formations() else None)
+
+
 def write_formations(db: Database, project: Project) -> int:
-    """The formation each team got (field `formation` = one of the game's 33): its own row takes the positions."""
+    """The formation each team got (field `formation` = one of the game's 33, or one of the project's: its base
+    then its drawing): its own row takes the positions."""
     formations, teams = db.table('formations'), db.table('teams')
     generic = {formations.get(r, 'relativeformationid'): r for r in formations.records
                if formations.get(r, 'teamid') == -1}
     pointing = set(project.created('team')) if _table(db, FORMATION_LINKS) is not None else set()
     count = 0
     for tid, values in project.all_fields('team').items():
-        chosen = generic.get(values.get('formation'))
+        base, shape = _project_formation(project, values.get('formation'))
+        chosen = generic.get(base)
         if chosen is None or tid in pointing or not teams.find(teamid=tid):
             continue
         own = formations.find(teamid=tid)
@@ -745,16 +758,49 @@ def write_formations(db: Database, project: Project) -> int:
             for f in formations.fields:
                 if f.name not in ('teamid', 'formationid'):
                     formations.set(own[0], f.name, formations.get(chosen, f.name))
+            row = own[0]
         else:
-            _clone(formations, chosen, teamid=tid, formationid=_next(formations, 'formationid'))
+            row = _clone(formations, chosen, teamid=tid, formationid=_next(formations, 'formationid'))
+        if shape:  # a game team keeps its own row: the drawing goes there
+            _draw(formations, row, shape)
         count += 1
     return count
+
+
+def _draw(formations, row: list, shape: dict) -> None:
+    """A formation row takes a drawing (f14mod.formation): its name and columns. The game shows the text
+    Formation_FullName_<formationfullnameid> when that id is set (a copy of the generic 9 showed '4-3-3 Conservador',
+    27/11/2026), the row's own name only with -1: the drawing's name needs -1."""
+    for column, value in shape['columns'].items():
+        if _has(formations, column):
+            formations.set(row, column, value)
+    if _has(formations, 'formationname'):
+        formations.set(row, 'formationname', shape['name'])
+    if _has(formations, 'formationfullnameid'):
+        formations.set(row, 'formationfullnameid', -1)
+
+
+def add_project_formations(db: Database, shapes: dict) -> dict:
+    """One generic formation (team -1) per formation of the project (shapes: {id: drawing}, f14mod.formation), made
+    from the game's one it is based on: {id: its row}. The created teams with it point at it (it is one of the 899
+    the game takes, and the game offers it to every team like its own)."""
+    formations = db.table('formations')
+    generic = {formations.get(r, 'relativeformationid'): r for r in formations.records
+               if formations.get(r, 'teamid') == -1}
+    rows = {}
+    for key, shape in shapes.items():
+        model = generic.get(shape['base']) or next(iter(generic.values()), None)
+        if model is None:
+            continue
+        rows[key] = _clone(formations, model, teamid=-1, formationid=_next(formations, 'formationid'))
+        _draw(formations, rows[key], shape)
+    return rows
 
 
 FORMATION_LINKS = 'teamformationteamstylelinks'  # a team pointing at one of the game's generic formations
 
 
-def write_formation_links(db: Database, project: Project) -> dict[int, list]:
+def write_formation_links(db: Database, project: Project, drawn: dict[int, list] | None = None) -> dict[int, list]:
     """Created teams point at one of the game's 33 generic formations instead of a row of their own (test FM4,
     27/11/2026: the game takes formations 1-899 only; when the user picks a formation in Edit teams the game itself
     writes this link): one teamformationteamstylelinks row each (formationid of the generic one, teamstyleid 0). The
@@ -779,9 +825,14 @@ def write_formation_links(db: Database, project: Project) -> dict[int, list]:
         fallback = next(iter(generic))
     fields_of = project.all_fields('team')
     made = set(created)
+    drawn = drawn or {}
 
-    def base(tid: int, seen=()) -> int:
+    def base(tid: int, seen=()):
+        """The generic formation id, or the id of a formation of the project (drawn)."""
         chosen = (fields_of.get(tid) or {}).get('formation')
+        if chosen in drawn:
+            return chosen
+        chosen = _project_formation(project, chosen)[0]
         if chosen in generic:
             return chosen
         if tid not in made:  # a team of the game: its own row
@@ -791,7 +842,8 @@ def write_formation_links(db: Database, project: Project) -> dict[int, list]:
             return base(template, (*seen, tid))
         return fallback
 
-    pointed = {tid: generic[base(tid)] for tid in created}
+    bases = {tid: base(tid) for tid in created}
+    pointed = {tid: drawn[b] if b in drawn else generic.get(b, generic[fallback]) for tid, b in bases.items()}
     raws = links.raw_records + [bytes(links.rec_size)] * (len(links.records) - len(links.raw_records))
     kept = [(r, raw) for r, raw in zip(links.records, raws) if links.get(r, 'teamid') not in pointed]
     links.records, links.raw_records = [r for r, _ in kept], [raw for _, raw in kept]
@@ -1300,8 +1352,9 @@ def write_database(files: GameFiles, project: Project, builder: 'PatchBuilder', 
     pointed: dict[int, list] = {}
 
     def formations_and_links() -> int:
+        drawn = add_project_formations(db, project.formations())
         count = write_formations(db, project)
-        pointed.update(write_formation_links(db, project))
+        pointed.update(write_formation_links(db, project, drawn))
         return count
 
     def rosters() -> int:

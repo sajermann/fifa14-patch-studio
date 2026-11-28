@@ -25,6 +25,7 @@ export function NewItemDialog({
   groups,
   chosen,
   onCreate,
+  copyOnly = false,
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
@@ -41,9 +42,11 @@ export function NewItemDialog({
   groups: (query: string) => PickerGroup<number>[]
   chosen: (id: number) => ReactNode
   onCreate: (item: { name: string; copyOf: number | null }) => void
+  /** an item is always a copy of another (no "from scratch") */
+  copyOnly?: boolean
 }) {
   const { t } = useI18n()
-  const [mode, setMode] = useState<'scratch' | 'copy'>('scratch')
+  const [mode, setMode] = useState<'scratch' | 'copy'>(copyOnly ? 'copy' : 'scratch')
   const [copyOf, setCopyOf] = useState<number | null>(null)
   const [picking, setPicking] = useState(false)
   const [q, setQ] = useState('')
@@ -72,10 +75,14 @@ export function NewItemDialog({
         pending={pending}
         onCreate={(name) => (mode === 'copy' && copyOf === null ? setPicking(true) : onCreate({ name, copyOf: mode === 'copy' ? copyOf : null }))}
       >
-        <div className="flex gap-2 pt-2">
-          {choice('scratch', t('create.fromScratch'), scratchHint)}
-          {choice('copy', copyLabel, copyHint)}
-        </div>
+        {copyOnly ? (
+          <p className="pt-2 text-xs text-muted-foreground">{copyHint}</p>
+        ) : (
+          <div className="flex gap-2 pt-2">
+            {choice('scratch', t('create.fromScratch'), scratchHint)}
+            {choice('copy', copyLabel, copyHint)}
+          </div>
+        )}
         {mode === 'copy' && (
           <div className="pt-1">
             <Button type="button" variant="outline" className="w-full justify-between font-normal" onClick={() => setPicking(true)}>

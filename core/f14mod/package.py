@@ -22,7 +22,7 @@ import re
 import zipfile
 
 from . import facefill, fields as fieldspecs
-from . import fifa14
+from . import fifa14, formation
 from .share import Bundle, ShareError, package_source as share_source
 
 FORMAT = 'fifa-patch-package'
@@ -174,6 +174,37 @@ class _Converter:
         self.record('adboard', self._board, values={'name': name[:60]}, pictures={'board': img})
         return self._board
 
+    def formation(self, f) -> dict:
+        """The team's formation fields: one of the game's 33 when its 11 positions are one of theirs and it has no
+        work rate or run arrow of its own (players moved a little are not kept); a drawing with those, or another
+        drawing (a patch's 2-3-5, 'Zona Mista'...) is kept
+        whole (`formation_shape`, f14mod.formation) with the game's nearest one as `formation`. A package without
+        positions: its base, when it is one of the game's."""
+        if not isinstance(f, dict):
+            return {}
+        positions = [p.get('code') if isinstance(p, dict) else None for p in f.get('positions') or []]
+        options = range(1, fifa14.GAME_FORMATIONS + 1)
+        if len(positions) != formation.STARTERS or not all(_int(p) for p in positions) or not self.formations:
+            base = f.get('base')
+            return {'formation': base} if _int(base) and base in options else {}
+        match = formation.game_match(positions, self.formations)
+        row = f.get('row') if isinstance(f.get('row'), dict) else {}
+        if match is not None and not formation.has_settings(row):
+            return {'formation': match}  # the game's drawing (spots moved a little are not kept: every team has them)
+        columns = {c: row[c] for c in formation.COLUMNS if c in row}
+        for i, p in enumerate(f['positions']):  # an older package: the positions only
+            columns[f'position{i}'] = positions[i]
+            for axis in 'xy':
+                if f'offset{i}{axis}' not in columns and isinstance(p.get(axis), (int, float)):
+                    columns[f'offset{i}{axis}'] = p[axis]
+        base = match if match is not None else formation.nearest(positions, self.formations)
+        try:
+            shape = formation.check({'name': f.get('name') or row.get('formationname'), 'base': base,
+                                     'columns': columns})
+        except formation.ShapeError:  # a drawing the game cannot take: the nearest of the game's
+            return {'formation': base} if base in options else {}
+        return {'formation': base, 'formation_shape': shape}
+
     # ---- kinds
     def country(self, n: dict) -> None:
         names = _names(n.get('names') or {}, fifa14.COUNTRY_NAME_STRINGS, n.get('language_names'))
@@ -204,9 +235,7 @@ class _Converter:
     def team(self, t: dict) -> None:
         tid = t['source_id']
         values = _values('team', _first_row(t, 'teams'))
-        formation = (t.get('formation') or {}).get('base')
-        if _int(formation) and formation in fieldspecs.BY_NAME['team']['formation'].options:
-            values['formation'] = formation
+        values.update(self.formation(t.get('formation')))
         if values.get('rivalteam') not in self.ids['team']:  # a rival outside the package: another team of it
             others = sorted(self.ids['team'] - {tid})
             values['rivalteam'] = others[0] if others else tid

@@ -389,6 +389,10 @@ def _clean_fields(con, kind: str, oid: int, body: dict, detail: dict) -> dict:
             raise ApiError(400, 'field_out_of_range', name)
         if spec.kind == 'roster' and value not in {p['id'] for p in detail['roster']}:
             raise ApiError(400, 'field_out_of_range', name)
+        if spec.kind == 'formation' and not (
+                con.execute('SELECT 1 FROM formations WHERE generic = 1 AND formation_id = ?', (value,)).fetchone()
+                or con.execute("SELECT 1 FROM p.created WHERE kind = 'formation' AND id = ?", (value,)).fetchone()):
+            raise ApiError(400, 'field_out_of_range', name)
     return kept
 
 
@@ -417,6 +421,8 @@ def _save(kind: str, oid: int, body: EntityBody):
             raise ApiError(400, 'bad_request', 'names')
         kept = _clean_fields(con, kind, oid, body.fields, detail)
     project().save(kind, oid, names, kept)
+    if kept.get('formation_shape'):  # a drawing: one of the project's formations (Project.absorb_formation_shapes)
+        project().absorb_formation_shapes()
     with db() as con:
         return DETAILS[kind](con, lang(), oid)
 
@@ -1695,6 +1701,7 @@ def job_status():
 
 from . import player_routes  # noqa: E402,F401 - the player routes (before the interface's catch-all)
 from . import adboard_routes  # noqa: E402,F401 - the advertising boards (before the interface's catch-all)
+from . import formation_routes  # noqa: E402,F401 - the formations (before the interface's catch-all)
 from . import equipment_routes  # noqa: E402,F401 - boots, gloves and balls (before the interface's catch-all)
 from . import stadium_routes  # noqa: E402 - the stadiums the user creates (before the interface's catch-all)
 from . import share_routes  # noqa: E402,F401 - import and export (before the interface's catch-all)

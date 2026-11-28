@@ -249,3 +249,45 @@ def test_a_bald_player_needs_no_hair(tmp_path):
         hairtypecode=0))
     files, face = _imported(tmp_path, path, True, {'eyes': set(), 'hair': {0}, 'hairlod': {0}})
     assert files == {'head': b'game/h', 'bump': b'game/b', 'face': b'game/f', 'eyes': b'E9'} and 'fill' not in face
+
+
+def _with_formation(path, f) -> None:
+    with zipfile.ZipFile(path) as z:
+        manifest = json.loads(z.read('package.json'))
+        others = {n: z.read(n) for n in z.namelist() if n != 'package.json'}
+    manifest['teams'][0]['formation'] = f
+    with zipfile.ZipFile(path, 'w') as z:
+        z.writestr('package.json', json.dumps(manifest))
+        for name, data in others.items():
+            z.writestr(name, data)
+
+
+def test_a_formation_the_game_has_is_found_by_its_positions_another_is_kept_whole(tmp_path):
+    """A patch's generic formations are not the game's (its base 24 may be a 2-3-5): the positions decide."""
+    game = {12: [0, 3, 4, 6, 7, 13, 14, 15, 23, 25, 27], 24: [0, 4, 5, 6, 10, 12, 14, 16, 18, 21, 25]}
+    path = _package(tmp_path)
+    positions = lambda codes: [{'code': c, 'x': 0.1 * i, 'y': 0.05 * i} for i, c in enumerate(codes)]
+    _with_formation(path, {'name': '4-3-3 X', 'base': 24, 'positions': positions([0, 27, 25, 23, 15, 14, 13, 7, 6, 4, 3])})
+    fields = share.read(path, game).by_key()['team:1043']['fields']
+    assert fields['formation'] == 12 and 'formation_shape' not in fields  # the game's, in another order
+    wm = [0, 3, 5, 7, 10, 12, 16, 18, 23, 25, 27]  # shares 6 positions with 12, 7 with 24
+    row = {'formationname': 'WM', 'relativeformationid': 24, 'attackingrole_5': 2, 'defenders': 3.5,
+           **{f'position{i}': c for i, c in enumerate(wm)}, 'offset1x': 0.33}
+    _with_formation(path, {'name': 'WM', 'base': 24, 'shared': True, 'positions': positions(wm), 'row': row})
+    fields = share.read(path, game).by_key()['team:1043']['fields']
+    shape = fields['formation_shape']
+    assert fields['formation'] == 24 and shape['base'] == 24 and shape['name'] == 'WM'  # the nearest one
+    assert [shape['columns'][f'position{i}'] for i in range(11)] == wm
+    assert shape['columns']['attackingrole_5'] == 2 and shape['columns']['defenders'] == 3.5
+    assert shape['columns']['offset1x'] == 0.33 and shape['columns']['offset2x'] == 0.2  # the row, else the position
+    # the game's positions with work rates or run arrows of its own: kept whole, on the game's formation
+    row12 = {'formationname': '4-3-3 X', **{f'position{i}': c for i, c in enumerate(game[12])}, 'attackingrole_3': 0,
+             'attackingdirection_5': 3}
+    _with_formation(path, {'name': '4-3-3 X', 'positions': positions(game[12]), 'row': row12})
+    fields = share.read(path, game).by_key()['team:1043']['fields']
+    assert fields['formation'] == 12 and fields['formation_shape']['base'] == 12
+    assert fields['formation_shape']['columns']['attackingrole_3'] == 0
+    assert fields['formation_shape']['columns']['attackingdirection_5'] == 3
+    _with_formation(path, {'name': 'Bad', 'positions': positions([3, 0, 5, 7, 10, 12, 16, 18, 23, 25, 27])})
+    fields = share.read(path, game).by_key()['team:1043']['fields']
+    assert fields['formation'] == 24 and 'formation_shape' not in fields  # no goalkeeper first: the nearest one

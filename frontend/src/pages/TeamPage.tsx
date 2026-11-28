@@ -228,7 +228,16 @@ export function TeamPage() {
               </Section>
               <FieldsEditor form={team} groups={['club']} fields={entity.form.fields} setField={entity.setField} roster={team.roster} columns="md:grid-cols-1" bars />
             </div>
-            <FieldsEditor form={team} groups={['tactics']} fields={entity.form.fields} setField={entity.setField} roster={team.roster} columns="md:grid-cols-1" bars />
+            <FieldsEditor
+              form={team}
+              groups={['tactics']}
+              fields={entity.form.fields}
+              setField={entity.setField}
+              roster={team.roster}
+              columns="md:grid-cols-1"
+              bars
+              headings={{ busbuildupspeed: t('tactics.buildUp'), ccpassing: t('tactics.chanceCreation'), defmentality: t('tactics.defence') }}
+            />
           </div>
           <NamesGrid
             kind="team"
@@ -267,7 +276,7 @@ export function TeamPage() {
             rows={squad}
             setRows={setSquad}
             formation={formation}
-            setFormation={(f) => entity.setField('formation', f)}
+            setFormation={(f) => entity.setField('formation', f.id)}
             fields={entity.form.fields}
             setField={entity.setField}
             linkState={from.state}

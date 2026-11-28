@@ -610,6 +610,42 @@ def test_issue_too_many_formations(client, monkeypatch):
         client.put(f'/api/teams/{fakegame.TEAM}/hidden', json={'hidden': False})
         client.delete(f'/api/teams/{new_team}')
 
+
+def test_formations_screen_creates_saves_and_deletes_and_teams_take_them(client, monkeypatch):
+    """The Formations screen: the game's (read only) and the user's (a copy of one, its drawing saved); a team takes
+    one, it counts once toward the 899; deleted, its teams go back to the game's one it was based on."""
+    from f14mod import fifa14
+    items = client.get('/api/formations').json()['items']
+    assert [(f['id'], f['is_new']) for f in items] == [(8, False), (13, False)]
+    made = client.post('/api/formations', json={'name': 'WM', 'copy_of': 8}).json()
+    fid = made['id']
+    assert fid == fifa14.FIRST_OWN_FORMATION and made['base'] == 8 and made['positions'] == items[0]['positions']
+    wm = [0, 3, 5, 7, 10, 12, 16, 18, 23, 25, 26]
+    columns = {**made['columns'], **{f'position{i}': p for i, p in enumerate(wm)}, 'attackingdirection_4': 2}
+    saved = client.put(f'/api/formations/{fid}', json={'name': 'WM 2', 'columns': columns}).json()
+    assert saved['name'] == 'WM 2' and saved['positions'] == wm and saved['columns']['attackingdirection_4'] == 2
+    bad = {**columns, 'position1': 0}  # two goalkeepers
+    assert client.put(f'/api/formations/{fid}', json={'name': 'X', 'columns': bad}).status_code == 400
+    assert client.put('/api/formations/8', json={'name': 'X'}).status_code == 400  # the game's: copy it instead
+    team = client.post('/api/teams', json={'names': {'full': {'*': 'F01'}}, 'template': fakegame.TEAM}).json()['id']
+    try:
+        assert client.put(f'/api/teams/{team}', json={'fields': {'formation': 555}}).status_code == 400
+        assert client.put(f'/api/teams/{team}', json={'fields': {'formation': fid}}).status_code == 200
+        detail = client.get(f'/api/teams/{team}').json()
+        assert [(f['id'], f['teams']) for f in detail['formations'] if f.get('is_new')] == [(fid, 1)]
+        assert [t['id'] for t in client.get(f'/api/formations/{fid}').json()['teams']] == [team]
+        monkeypatch.setattr(fifa14, 'MAX_FORMATIONS', 3)  # 2 generic + TEAM's own + the user's = 4
+        over = lambda: [i['params'] for i in client.get('/api/issues').json()['issues'] if i['code'] == 'too_many_formations']
+        assert over() == [{'count': 4, 'max': 3, 'over': 1}]
+        client.put(f'/api/formations/{fid}/hidden', json={'hidden': True})  # out of the patch: it counts no more
+        assert over() == []
+        assert client.delete(f'/api/formations/{fid}').json() == {'deleted': fid, 'base': 8}
+        assert client.get(f'/api/teams/{team}').json()['saved']['formation'] == 8
+        assert client.get(f'/api/formations/{fid}').status_code == 404
+    finally:
+        client.delete(f'/api/teams/{team}')
+
+
 def test_build_progress_cache_and_up_to_date(client):
     client.put(f'/api/teams/{fakegame.TEAM}', json={'names': {'full': {'*': 'Progress FC'}}})
     assert client.get('/api/status').json()['patch']['up_to_date'] is False

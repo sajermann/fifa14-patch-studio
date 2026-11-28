@@ -252,7 +252,8 @@ def _formations(con, out, hidden, created, saved, states):
     """Formations 1-899 only (builder.compact_formations): the game's generic ones and the own row of each team of the
     game that can be picked - not hidden and not only in leagues the user hid (the leagues the game itself does not
     list count as shown; a team with no league counts) -, plus one for such a team without a row once the user picks
-    its formation. Created teams point at a generic one instead (builder.write_formation_links): they do not count."""
+    its formation. Created teams point at a generic one instead (builder.write_formation_links): they do not count,
+    and each formation the user created is one (f14mod.formation)."""
     hidden_teams = {i for k, i in hidden if k == 'team'}
     out_leagues = {lid for lid, state in states.items() if state in ('hidden', 'countries', 'no_country')}
     leagues_of: dict[int, set] = {}
@@ -266,6 +267,8 @@ def _formations(con, out, hidden, created, saved, states):
     playing = {t for t in game_teams if not leagues_of.get(t) or leagues_of[t] - out_leagues} - hidden_teams
     count = con.execute('SELECT COUNT(*) FROM formations WHERE generic = 1').fetchone()[0]
     count += sum(1 for t in playing if t in own or saved.get(('team', t), {}).get('formation') is not None)
+    # the user's formations (the Formations screen): each one a generic formation of its own, shared by its teams
+    count += sum(1 for k, i in created if k == 'formation' and ('formation', i) not in hidden)
     if count > fifa14.MAX_FORMATIONS:
         out.append(_issue('too_many_formations', 'error', count=count, max=fifa14.MAX_FORMATIONS,
                           over=count - fifa14.MAX_FORMATIONS))

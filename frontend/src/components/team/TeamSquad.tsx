@@ -3,7 +3,7 @@ import { CornerUpLeft, CornerUpRight, Crown, Dices, Goal, Loader2, type LucideIc
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ApiError, api } from '@/api/client'
-import type { FieldValue, PlayerRow, SquadRow, TeamDetail } from '@/api/types'
+import type { FieldValue, Formation, PlayerRow, SquadRow, TeamDetail } from '@/api/types'
 import { FillScroll, OriginalBadge, OverallBadge, Section } from '@/components/common/detail'
 import { EntityIssues } from '@/components/common/form'
 import { OutOfPatchBadge } from '@/components/common/HideButton'
@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useI18n, type MessageKey } from '@/i18n'
@@ -104,7 +104,8 @@ function AddPlayerDialog({ open, onOpenChange, chosen, onPick }: { open: boolean
   )
 }
 
-/** The squad, laid out like the FS4 roster: formation (one of the game's 33), one row per player (name with picture
+/** The squad, laid out like the FS4 roster: formation (one of the game's 33, or one of the user's from the Formations
+ * screen), one row per player (name with picture
  * and badges, number, position in the lineup = a starter's slot, the bench (28) or out of the squad (29), the captain
  * and takers he is, in the patch or not, remove) and, below, the card that picks the captain and each taker.
  * More than `max_squad` stay out of the patch. */
@@ -121,8 +122,9 @@ export function TeamSquad({
   team: TeamDetail
   rows: SquadRow[]
   setRows: (rows: SquadRow[]) => void
+  /** the chosen formation's id (one of the game's 33, or one of the user's) */
   formation: number | null
-  setFormation: (id: number) => void
+  setFormation: (formation: Formation) => void
   /** the captain and takers as edited (database column -> player id) */
   fields: Record<string, FieldValue>
   setField: (name: string, value: FieldValue) => void
@@ -164,13 +166,20 @@ export function TeamSquad({
   }
   const setSlot = (player: number, slot: number) =>
     setRows(rows.map((r) => (r.player === player ? { ...r, slot } : slot < BENCH && r.slot === slot ? { ...r, slot: BENCH } : r)))
-  const changeFormation = (id: number) => {
-    const next = team.formations.find((f) => f.id === id)
+  const changeFormation = (id: string) => {
+    const next = team.formations.find((f) => String(f.id) === id)
     if (!next) return
     // each starter keeps his place in the lineup (the i-th slot of the old formation becomes the i-th of the new)
     setRows(rows.map((r) => (r.slot < BENCH && slots.includes(r.slot) ? { ...r, slot: next.positions[slots.indexOf(r.slot)] } : r)))
-    setFormation(id)
+    setFormation(next)
   }
+  const gameFormations = team.formations.filter((f) => !f.is_new)
+  const projectFormations = team.formations.filter((f) => f.is_new)
+  const formationItem = (f: Formation) => (
+    <SelectItem key={f.id} value={String(f.id)}>
+      {f.name} <span className="text-muted-foreground">({f.positions.slice(1).map(posName).join(' ')})</span>
+    </SelectItem>
+  )
   const freeNumber = () => {
     for (let n = 1; n <= 99; n++) if (!numbers.includes(n)) return n
     return null
@@ -243,22 +252,39 @@ export function TeamSquad({
         <div className="mb-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
           <label className="flex items-center gap-2">
             {t('squad.formation')}
-            <Select value={current ? String(current.id) : ''} onValueChange={(v) => changeFormation(Number(v))}>
+            <Select value={current ? String(current.id) : ''} onValueChange={changeFormation}>
               <SelectTrigger className={cn('w-44', !current && 'border-amber-500 text-amber-700 dark:text-amber-400')}>
                 <SelectValue placeholder={t('squad.formationPick')} />
               </SelectTrigger>
               <SelectContent>
-                {team.formations.map((f) => (
-                  <SelectItem key={f.id} value={String(f.id)}>
-                    {f.name} <span className="text-muted-foreground">({f.positions.slice(1).map(posName).join(' ')})</span>
-                  </SelectItem>
-                ))}
+                {projectFormations.length ? (
+                  <>
+                    <SelectGroup>
+                      <SelectLabel>{t('squad.gameFormations')}</SelectLabel>
+                      {gameFormations.map(formationItem)}
+                    </SelectGroup>
+                    <SelectGroup>
+                      <SelectLabel>{t('squad.importedFormations')}</SelectLabel>
+                      {projectFormations.map(formationItem)}
+                    </SelectGroup>
+                  </>
+                ) : (
+                  gameFormations.map(formationItem)
+                )}
               </SelectContent>
             </Select>
           </label>
           <span className={cn('tabular-nums', starters.length !== 11 && 'text-amber-600 dark:text-amber-400')}>{t('squad.starters', { count: starters.length })}</span>
           <span className="tabular-nums">{t('squad.bench', { count: rows.filter((r) => r.slot === BENCH).length })}</span>
         </div>
+        {current?.is_new && (
+          <p className="mb-2 text-xs text-muted-foreground">
+            {t('squad.importedFormationHint', { count: current.teams ?? 1 })}{' '}
+            <Link to={`/formations/${current.id}`} className="underline underline-offset-4">
+              {t('squad.openFormation')}
+            </Link>
+          </p>
+        )}
         {starters.length < 11 && rows.length >= 11 && <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">{t('squad.fillHint')}</p>}
         {kept.length < 11 && <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">{t('squad.tooFew')}</p>}
         <FillScroll reserve={SCROLL_RESERVE}>

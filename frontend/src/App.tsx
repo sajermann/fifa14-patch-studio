@@ -10,6 +10,8 @@ import { I18nProvider, onLanguageChange, useI18n } from '@/i18n'
 import { ThemeProvider } from '@/lib/theme'
 import { AdboardPage } from '@/pages/AdboardPage'
 import { AdboardsPage } from '@/pages/AdboardsPage'
+import { FormationPage } from '@/pages/FormationPage'
+import { FormationsPage } from '@/pages/FormationsPage'
 import { BallPage } from '@/pages/BallPage'
 import { BallsPage } from '@/pages/BallsPage'
 import { BootPage } from '@/pages/BootPage'
@@ -101,6 +103,8 @@ const router = createBrowserRouter([
           { path: 'stadiums/:id', element: <StadiumPage /> },
           { path: 'adboards', element: <AdboardsPage /> },
           { path: 'adboards/:id', element: <AdboardPage /> },
+          { path: 'formations', element: <FormationsPage /> },
+          { path: 'formations/:id', element: <FormationPage /> },
           { path: 'boots', element: <BootsPage /> },
           { path: 'boots/:id', element: <BootPage /> },
           { path: 'gloves', element: <GlovesPage /> },

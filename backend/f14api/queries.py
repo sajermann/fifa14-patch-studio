@@ -4,7 +4,7 @@ import json
 import math
 import sqlite3
 
-from f14mod import catalog, fields, fifa14, stadium3d, stadium_files
+from f14mod import catalog, fields, fifa14, formation, stadium3d, stadium_files
 from f14mod.overall import compute_overall
 from f14mod.teamkits import MASKS, MODEL_TEAM
 
@@ -541,7 +541,7 @@ def team(con, lang: str, tid: int) -> dict | None:
             'roster': roster, 'roster_changed': con.execute(
                 'SELECT 1 FROM p.team_rosters_set WHERE team_id = ?', (tid,)).fetchone() is not None,
             'leagues': leagues_of, 'template': template if head['is_new'] else None, 'copied': copied,
-            'formations': formations(con), 'kits': team_kits(con, tid, look_from, bool(head['is_new'])),
+            'formations': formations(con) + project_formations(con), 'kits': team_kits(con, tid, look_from, bool(head['is_new'])),
             'adboard_id': adboard_of(con, 'team', tid),
             'max_squad': fifa14.MAX_SQUAD, **form, 'raw': raw}
 
@@ -550,15 +550,19 @@ def team_slots(con, tid: int, is_new: bool) -> list[int]:
     """The 11 lineup positions of a team's formation (the one saved for it, else its own)."""
     saved = con.execute("SELECT json_extract(value, '$') FROM p.fields WHERE kind = 'team' AND id = ? "
                         "AND field = 'formation'", (tid,)).fetchone()
-    formation = saved[0] if saved and saved[0] is not None else None
-    if formation is None:
+    chosen = saved[0] if saved and saved[0] is not None else None
+    if chosen is None:
         source = con.execute('SELECT template FROM p.team_sources WHERE team_id = ?', (tid,)).fetchone()
         template = source['template'] if source else (MODEL_TEAM if is_new else tid)
         own = con.execute('SELECT base FROM formations WHERE team_id = ? AND generic = 0', (template,)).fetchone()
-        formation = own['base'] if own else None
-    if formation is None:
+        chosen = own['base'] if own else None
+    if chosen is None:
         return []
-    row = con.execute('SELECT positions FROM formations WHERE generic = 1 AND formation_id = ?', (formation,)).fetchone()
+    if chosen > fifa14.GAME_FORMATIONS:  # one of the project's
+        row = con.execute("SELECT value FROM p.fields WHERE kind = 'formation' AND id = ? AND field = 'columns'",
+                          (chosen,)).fetchone()
+        return formation.positions_of(json.loads(row[0])) if row else []
+    row = con.execute('SELECT positions FROM formations WHERE generic = 1 AND formation_id = ?', (chosen,)).fetchone()
     return json.loads(row['positions']) if row else []
 
 
@@ -566,6 +570,31 @@ def formations(con) -> list[dict]:
     """The game's 33 formations: {id, name, positions (11 position codes)}."""
     return [{'id': r['formation_id'], 'name': r['name'], 'positions': json.loads(r['positions'])}
             for r in con.execute('SELECT * FROM formations WHERE generic = 1 ORDER BY name, formation_id')]
+
+
+def project_formations(con) -> list[dict]:
+    """The formations the user created (f14mod.formation, the Formations screen): {id, name, positions, is_new,
+    teams (how many have it)}; any team may take one."""
+    out = []
+    for (fid,) in con.execute("SELECT id FROM p.created WHERE kind = 'formation' ORDER BY id"):
+        values = {r[0]: json.loads(r[1]) for r in con.execute(
+            "SELECT field, value FROM p.fields WHERE kind = 'formation' AND id = ?", (fid,))}
+        if not values.get('columns'):
+            continue
+        teams = con.execute("SELECT COUNT(*) FROM p.fields WHERE kind = 'team' AND field = 'formation' AND value = ?",
+                            (json.dumps(fid),)).fetchone()[0]
+        out.append({'id': fid, 'name': values.get('name') or '', 'positions': formation.positions_of(values['columns']),
+                    'is_new': True, 'teams': teams})
+    return out
+
+
+def formation_row(con, fid: int) -> dict | None:
+    """One of the game's 33 formations whole: {id, name, positions, columns (f14mod.formation.COLUMNS)}."""
+    r = con.execute('SELECT * FROM formations WHERE generic = 1 AND formation_id = ?', (fid,)).fetchone()
+    if r is None:
+        return None
+    return {'id': fid, 'name': r['name'], 'positions': json.loads(r['positions']),
+            'columns': json.loads(r['row'] or '{}')}
 
 
 def team_kits(con, tid: int, look_from: int | None, is_new: bool) -> list[dict]:

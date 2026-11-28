@@ -161,6 +161,9 @@ MAX_TEAM_ID = 131071
 # (27/11/2026, tests FM1-FM3: a team with a formation id of 900 or more, or without a row, shows all its starters as
 # goalkeepers and the match crashes when it starts). The clean game has 670 rows (33 generic + 637 teams).
 MAX_FORMATIONS = 899
+GAME_FORMATIONS = 33  # the game's generic formations (team -1): relativeformationid 1-33, the ids the Studio shows
+# the formations the user creates (f14mod.formation, the Formations screen): written as generic ones of their own
+FIRST_OWN_FORMATION, MAX_OWN_FORMATION = 101, 999
 
 # new players
 FIRST_FREE_PLAYER = 300001  # new players get the first id from here the game does not use (nor any file named after it)

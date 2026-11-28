@@ -13,7 +13,7 @@ The overall ratings are not here: the game computes them from the attributes (pl
 import datetime
 from dataclasses import asdict, dataclass
 
-from . import facefill, fifa14
+from . import facefill, fifa14, formation
 
 NAME_FIELDS = {'name.first': 'firstnameid', 'name.last': 'lastnameid', 'name.common': 'commonnameid',
                'name.jersey': 'playerjerseynameid'}
@@ -137,15 +137,19 @@ TEAM = [
     FieldSpec('transferbudget', 'club', 'int', 0, 500_000_000),
     *(FieldSpec(column, 'takers', 'roster', 1, 524287) for column in
       ('captainid', *fifa14.TAKERS.values())),
-    *(FieldSpec(c, 'tactics', 'int', 1, 99) for c in ('busbuildupspeed', 'buspassing', 'busdribbling')),
+    *(FieldSpec(c, 'tactics', 'int', 1, 100) for c in ('busbuildupspeed', 'buspassing', 'busdribbling')),
     FieldSpec('buspositioning', 'tactics', 'select', options=(1, 2)),
-    *(FieldSpec(c, 'tactics', 'int', 1, 99) for c in ('cccrossing', 'ccpassing', 'ccshooting')),
+    *(FieldSpec(c, 'tactics', 'int', 1, 100) for c in ('ccpassing', 'cccrossing', 'ccshooting')),
     FieldSpec('ccpositioning', 'tactics', 'select', options=(1, 2)),
-    *(FieldSpec(c, 'tactics', 'int', 1, 99) for c in ('defmentality', 'defaggression', 'defteamwidth')),
+    *(FieldSpec(c, 'tactics', 'int', 1, 100) for c in ('defmentality', 'defaggression', 'defteamwidth')),
     FieldSpec('defdefenderline', 'tactics', 'select', options=(1, 2)),
-    # one of the game's 33 formations (formations rows of team -1, relativeformationid): the team's own formation row
-    # takes its positions (test TN1); shown on the Squad tab, not with the other fields
-    FieldSpec('formation', 'lineup', 'select', options=tuple(range(1, 34))),
+    # one of the game's 33 formations (formations rows of team -1, relativeformationid) or one the user created
+    # (f14mod.formation, FIRST_OWN_FORMATION and up; the backend checks it exists): the team's own formation row takes
+    # its positions (test TN1); shown on the Squad tab, not with the other fields
+    FieldSpec('formation', 'lineup', 'formation', 1, fifa14.MAX_OWN_FORMATION),
+    # a drawing kept on the team itself (how a package or an exported team brings a formation the game does not have):
+    # Project.absorb_formation_shapes turns it into a formation of the project and points `formation` at it
+    FieldSpec('formation_shape', 'lineup', 'formation_shape', optional=True),
     # the ball of the team's home matches (f14mod.equipment)
     FieldSpec('balltype', 'equipment', 'code', 0, 255),
     # a copied team whose copied crest was removed: the plain crest (short name and colors) instead; edited on the
@@ -168,8 +172,8 @@ LEAGUE = [
     # countries of the league (own or extra) where it is left out of the patch; edited on the country's screen only
     FieldSpec('hidden_in_countries', 'countries', 'nations', 1, 255),
 ]
-NO_COLUMN = {'extra_countries', 'hidden_in_countries', 'flag_from', 'copy_of', 'formation', 'traits', 'face',
-             'plain_crest'}  # fields the builder uses itself (not written as columns)
+NO_COLUMN = {'extra_countries', 'hidden_in_countries', 'flag_from', 'copy_of', 'formation', 'formation_shape',
+             'traits', 'face', 'plain_crest'}  # fields the builder uses itself (not written as columns)
 
 COUNTRY = [
     FieldSpec('flag_from', 'info', 'nation', 1, fifa14.MAX_NATION_ID, optional=True),  # whose flag is copied
@@ -246,8 +250,8 @@ def original_values(kind: str, raw: dict, names: dict | None = None) -> dict:
             out[spec.name] = []  # the game's leagues are in one country
         elif spec.kind == 'traits':
             out[spec.name] = traits_of(raw)
-        elif spec.kind == 'face':
-            out[spec.name] = None  # the player's own head
+        elif spec.kind in ('face', 'formation_shape'):
+            out[spec.name] = None  # the player's own head / one of the game's formations
         else:
             out[spec.name] = raw.get(spec.name)
     return out
@@ -307,6 +311,11 @@ def _check(spec: FieldSpec, value):
         return sorted(set(value), key=list(fifa14.TRAITS).index)
     if spec.kind == 'face':
         return check_face(value)
+    if spec.kind == 'formation_shape':
+        try:
+            return formation.check(value)
+        except formation.ShapeError:
+            raise FieldError('bad_value', spec.name) from None
     if spec.kind == 'nations':
         if not isinstance(value, (list, tuple)):
             raise FieldError('bad_value', spec.name)

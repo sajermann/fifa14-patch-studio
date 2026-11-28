@@ -34,7 +34,7 @@ export interface PatchStatus {
 
 /** Steps of "Gerar patch" in order (f14mod.builder.BUILD_STEPS). */
 export type BuildStep = 'database' | 'images' | 'texts' | 'files'
-export type BuildItemKind = 'face' | 'kit' | 'crest' | 'photo' | 'league' | 'flag' | 'language' | 'adboard' | 'stadium' | 'part'
+export type BuildItemKind = 'face' | 'kit' | 'crest' | 'photo' | 'league' | 'flag' | 'language' | 'adboard' | 'stadium' | 'boot' | 'glove' | 'ball' | 'part'
 /** What the 'database' step is doing (item kind 'part'; builder.DATABASE_PARTS). */
 export type BuildPart = 'check' | 'read' | 'created' | 'fields' | 'rosters' | 'kits' | 'faces' | 'links' | 'save' | 'adboards' | 'equipment' | 'stadiums'
 
@@ -429,7 +429,7 @@ export interface PlayerRow extends Dated {
 export type NameTable = Record<string, Record<string, string>>
 
 export type FieldKind = 'int' | 'select' | 'text' | 'date' | 'color' | 'nation' | 'nations' | 'team' | 'roster' | 'position' | 'code' | 'traits' | 'face'
-export type FieldValue = string | number | number[] | string[] | FaceChoice | null
+export type FieldValue = string | number | number[] | string[] | FaceChoice | Record<string, number> | null
 
 /** The game's generic eyes / hair a pack face lacking them is filled in with (codes of the game's files; the hair is painted with his hair color). */
 export interface FaceFill {
@@ -496,11 +496,42 @@ export interface SquadRow {
   hidden?: boolean
 }
 
-/** One of the game's 33 formations: the position code of each of the 11 slots. */
+/** A formation a team may take: one of the game's 33, or one the user created (`is_new`, the Formations screen;
+ * `teams` = how many teams have it): the position code of each of the 11 slots. */
 export interface Formation {
   id: number
   name: string
   positions: number[]
+  is_new?: boolean
+  teams?: number
+  hidden?: boolean
+}
+
+export interface FormationList {
+  items: Formation[]
+  /** the formations the game takes (its own, the teams' and the user's) */
+  max: number
+}
+
+/** One formation on its screen: the game's (read only) or the user's, its whole drawing (`columns`: per slot i
+ * position<i>, offset<i>x/y, attackingrole_<i>, defensiverole_<i>, attackingdirection_<i>, defensivedirection_<i>). */
+export interface FormationDetail extends EditForm {
+  id: number
+  is_new: boolean
+  name: string
+  base: number
+  hidden: boolean
+  created_at: string | null
+  updated_at: string | null
+  columns: Record<string, number>
+  positions: number[]
+  teams: { id: number; name: string; is_new: boolean }[]
+}
+
+export interface FormationBody {
+  name: string
+  columns?: Record<string, number>
+  copy_of?: number
 }
 
 /** Where a kit comes from: a kit of the game, the user's pictures, or one of the game's mask kits painted. */

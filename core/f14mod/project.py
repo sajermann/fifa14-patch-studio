@@ -88,12 +88,13 @@ import os
 import sqlite3
 import time
 
+from . import fifa14, formation as formations
 from .filestore import EQUIPMENT as EQUIPMENT_FOLDERS, FACES, PICTURES, STADIUMS, FileStore
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17  # 17: formations of the project (a drawing kept on a team becomes one)
 FILES_SUFFIX = '_files'  # project.sqlite keeps its files in project_files/ (f14mod.filestore)
 DEFAULT_LANG = '*'
-KINDS = ('team', 'league', 'player', 'country', 'stadium', 'adboard', 'boot', 'glove', 'ball')
+KINDS = ('team', 'league', 'player', 'country', 'stadium', 'adboard', 'boot', 'glove', 'ball', 'formation')
 EQUIPMENT_KINDS = ('boot', 'glove', 'ball')
 # the pack files a created item needs before it enters the patch (every glove wears the game's one glove mesh)
 EQUIPMENT_NEEDS = {'boot': ('mesh', 'texture'), 'glove': ('texture',), 'ball': ('mesh', 'texture')}
@@ -176,6 +177,7 @@ OWN_TABLES = {
     'boot': (),
     'glove': (),
     'ball': (),
+    'formation': (),
 }
 # where a team or a league keeps its board: (table, id column)
 ADBOARD_LINKS = {'team': ('team_adboards', 'team_id'), 'league': ('league_adboards', 'league_id')}
@@ -198,6 +200,36 @@ def _renumber_boards(con: sqlite3.Connection) -> None:
         for table in ('team_adboards', 'league_adboards'):
             con.execute(f'UPDATE {table} SET adboard_id = ? WHERE adboard_id = ?',
                         (FIRST_OWN_ADBOARD + k, FIRST_OWN_ADBOARD + 1000 + k))
+
+
+def _absorb_formation_shapes(con: sqlite3.Connection, now: float) -> int:
+    """Every team's `formation_shape` (a drawing brought by a package or an exported team, f14mod.formation) becomes a
+    formation of the project - the same drawing, the same one - and the team's `formation` points at it. Teams
+    changed."""
+    rows = con.execute("SELECT id, value FROM fields WHERE kind = 'team' AND field = 'formation_shape'").fetchall()
+    if not rows:
+        return 0
+    known = {}
+    for fid, in con.execute("SELECT id FROM created WHERE kind = 'formation'"):
+        values = {r[0]: json.loads(r[1]) for r in con.execute(
+            "SELECT field, value FROM fields WHERE kind = 'formation' AND id = ?", (fid,))}
+        if values.get('columns'):
+            known.setdefault(formations.key(values), fid)
+    for tid, value in rows:
+        shape = json.loads(value)
+        k = formations.key(shape)
+        if k not in known:
+            fid = max(fifa14.FIRST_OWN_FORMATION, (con.execute(
+                "SELECT MAX(id) FROM created WHERE kind = 'formation'").fetchone()[0] or 0) + 1)
+            con.execute("INSERT INTO created VALUES ('formation', ?, ?)", (fid, now))
+            con.execute("INSERT OR REPLACE INTO dates VALUES ('formation', ?, ?, ?)", (fid, now, now))
+            con.executemany("INSERT INTO fields VALUES ('formation', ?, ?, ?)", [
+                (fid, name, json.dumps(shape[name], ensure_ascii=False)) for name in ('name', 'base', 'columns')])
+            known[k] = fid
+        con.execute("DELETE FROM fields WHERE kind = 'team' AND id = ? AND field IN ('formation', 'formation_shape')",
+                    (tid,))
+        con.execute("INSERT INTO fields VALUES ('team', ?, 'formation', ?)", (tid, json.dumps(known[k])))
+    return len(rows)
 
 
 def _snapshot(con: sqlite3.Connection, kind: str, oid: int) -> list:
@@ -283,6 +315,8 @@ class Project:
                 con.execute('ALTER TABLE league_members ADD COLUMN hidden INTEGER DEFAULT 0')
             if 'folder_stadium' not in {r[1] for r in con.execute('PRAGMA table_info(stadium_sources)')}:
                 con.execute('ALTER TABLE stadium_sources ADD COLUMN folder_stadium INTEGER')
+            if found and row and int(row[0]) < 17:  # a formation drawing kept on a team becomes a formation
+                _absorb_formation_shapes(con, int(time.time()))
             if not row or row[0] != str(SCHEMA_VERSION):  # opening an up-to-date project never writes to it (the
                 # patch's "up to date" compares the file: f14api.patch_info)
                 con.execute("INSERT OR REPLACE INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
@@ -1040,6 +1074,48 @@ class Project:
         finally:
             con.close()
 
+    # ---- formations ----------------------------------------------------------------------------------------------
+
+    def formation(self, fid: int) -> dict | None:
+        """A formation of the project: {name, base, columns} (f14mod.formation), or None."""
+        if not self.is_created('formation', fid):
+            return None
+        values = self.fields('formation', fid)
+        return {k: values.get(k) for k in ('name', 'base', 'columns')}
+
+    def formations(self) -> dict[int, dict]:
+        """{id: formation} of every formation of the project."""
+        return {fid: self.formation(fid) for fid in self.created('formation')}
+
+    def next_formation_id(self) -> int | None:
+        con = self.connect()
+        try:
+            r = con.execute("SELECT MAX(id) FROM created WHERE kind = 'formation'").fetchone()
+        finally:
+            con.close()
+        fid = max(fifa14.FIRST_OWN_FORMATION, (r[0] or 0) + 1)
+        return fid if fid <= fifa14.MAX_OWN_FORMATION else None
+
+    def formation_users(self, fid: int) -> list[int]:
+        """The teams whose saved formation is this one."""
+        con = self.connect()
+        try:
+            return [r[0] for r in con.execute(
+                "SELECT id FROM fields WHERE kind = 'team' AND field = 'formation' AND value = ? ORDER BY id",
+                (json.dumps(fid),))]
+        finally:
+            con.close()
+
+    def absorb_formation_shapes(self) -> int:
+        """_absorb_formation_shapes on the project (after an import, or a team saved with a drawing)."""
+        con = self.connect()
+        try:
+            changed = _absorb_formation_shapes(con, self.now())
+            con.commit()
+            return changed
+        finally:
+            con.close()
+
     def next_adboard_id(self) -> int:
         con = self.connect()
         try:
@@ -1296,6 +1372,9 @@ class VisibleProject:
 
     def created(self, kind: str) -> list[int]:
         return [i for i in self._project.created(kind) if not self._out(kind, i)]
+
+    def formations(self) -> dict[int, dict]:
+        return {i: v for i, v in self._project.formations().items() if not self._out('formation', i)}
 
     def is_created(self, kind: str, oid: int) -> bool:
         return not self._out(kind, oid) and self._project.is_created(kind, oid)
